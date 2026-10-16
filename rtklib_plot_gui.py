@@ -69,6 +69,8 @@ class RTKPlotApp:
         self.dashboard_modes_default = ["Gnd Trk", "Position Error", "Solution Status", "AR Ratio", "Satellites", "Elevation vs C/N0"]
         self.dashboard_modes = list(self.dashboard_modes_default)
         self.selected_dashboard_index = 0; self.focused_dashboard_subplot = None
+        self.multi_solutions = []; self.multi_compare_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#d62728", "#17becf"]
+        self.selected_compare_subplot = 0; self.focused_compare_subplot = None
         self.time_cursors=[];self.sky_current=None;self.sky_labels=[];self.sky_plots=[];self.custom_modes=[];self.custom_panels=[];self.selected_custom_panel=0;self.focused_custom_panel=None;self.visible_panel_indices=[];self._drag_plot_name=None
         self.custom_page=0;self.custom_page_size=6
         self.custom_updaters=[];self.custom_dynamic_artists=[];self.dop_frames={};self.cov_twin_axes={}
@@ -103,7 +105,10 @@ class RTKPlotApp:
         view.add_command(label="Delete selected subplot",command=self.delete_selected_subplot,accelerator="Del")
         view.add_command(label="Reset subplots layout",command=self.reset_subplots_layout)
         view.add_command(label="Fit to Data",command=self.redraw); bar.add_cascade(label="View",menu=view)
-        windows=tk.Menu(bar,tearoff=False); windows.add_command(label="Dashboard",command=lambda:self.set_mode("Dashboard")); bar.add_cascade(label="Windows",menu=windows)
+        windows=tk.Menu(bar,tearoff=False)
+        windows.add_command(label="Dashboard",command=lambda:self.set_mode("Dashboard"))
+        windows.add_command(label="Multi-Compare",command=lambda:self.set_mode("Multi-Compare"))
+        bar.add_cascade(label="Windows",menu=windows)
         helpm=tk.Menu(bar,tearoff=False); helpm.add_command(label="About",command=lambda:messagebox.showinfo("About RTKLIB Plot - Python","Interactive RTKLIB result viewer\nReads .pos, optional .pos.stat and reference CSV.")); bar.add_cascade(label="Help",menu=helpm)
         self.root.config(menu=bar)
 
@@ -111,7 +116,7 @@ class RTKPlotApp:
         row=ttk.Frame(self.root,padding=(8,3)); row.pack(side=tk.TOP,fill=tk.X)
         ttk.Button(row,text="Open…",command=self.open_file).pack(side=tk.LEFT,padx=(0,8))
         ttk.Label(row,text="Plot:").pack(side=tk.LEFT)
-        self.mode_box=ttk.Combobox(row,textvariable=self.mode,values=MODES+['Dashboard','Custom Analysis'],state="readonly",width=18); self.mode_box.pack(side=tk.LEFT,padx=5); self.mode_box.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
+        self.mode_box=ttk.Combobox(row,textvariable=self.mode,values=MODES+['Dashboard','Custom Analysis','Multi-Compare'],state="readonly",width=18); self.mode_box.pack(side=tk.LEFT,padx=5); self.mode_box.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
         ttk.Label(row,text="Solution:").pack(side=tk.LEFT,padx=(10,0))
         self.qbox=ttk.Combobox(row,textvariable=self.qfilter,values=["All Q"]+[f"Q={q}: {name}" for q,name in Q_LABELS.items()],state="readonly",width=13); self.qbox.pack(side=tk.LEFT,padx=5); self.qbox.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
         ttk.Checkbutton(row,text="Grid",variable=self.grid_on,command=self.redraw).pack(side=tk.LEFT,padx=8)
@@ -147,8 +152,11 @@ class RTKPlotApp:
         self.main_pane=ttk.Panedwindow(self.root,orient=tk.HORIZONTAL);self.main_pane.pack(side=tk.TOP,fill=tk.BOTH,expand=True)
         self.sidebar=ttk.Frame(self.main_pane,padding=5);self.plot_frame=ttk.Frame(self.main_pane)
         self.main_pane.add(self.sidebar,weight=0);self.main_pane.add(self.plot_frame,weight=1)
-        ttk.Label(self.sidebar,text="Available plots",font=("Segoe UI",10,"bold")).pack(anchor="w",pady=(0,4))
-        list_frame=ttk.Frame(self.sidebar);list_frame.pack(fill=tk.BOTH,expand=True)
+        
+        # Standard sidebar (Available plots, Custom grid, Segments)
+        self.standard_sidebar=ttk.Frame(self.sidebar); self.standard_sidebar.pack(fill=tk.BOTH,expand=True)
+        ttk.Label(self.standard_sidebar,text="Available plots",font=("Segoe UI",10,"bold")).pack(anchor="w",pady=(0,4))
+        list_frame=ttk.Frame(self.standard_sidebar);list_frame.pack(fill=tk.BOTH,expand=True)
         self.plot_list=tk.Listbox(list_frame,selectmode=tk.EXTENDED,exportselection=False,width=23,height=18)
         list_scroll=ttk.Scrollbar(list_frame,orient=tk.VERTICAL,command=self.plot_list.yview);self.plot_list.configure(yscrollcommand=list_scroll.set)
         self.plot_list.pack(side=tk.LEFT,fill=tk.BOTH,expand=True);list_scroll.pack(side=tk.RIGHT,fill=tk.Y)
@@ -160,26 +168,38 @@ class RTKPlotApp:
         self.plot_list.bind("<ButtonRelease-1>",self._drop_plot_on_panel,add="+")
         self.root.bind_all("<ButtonRelease-1>",self._drop_plot_on_panel,add="+")
         for name in MODES:self.plot_list.insert(tk.END,name)
-        ttk.Button(self.sidebar,text="Show selected plots",command=self.show_selected).pack(fill=tk.X,pady=(5,2))
-        ttk.Button(self.sidebar,text="Select all",command=lambda:self.plot_list.select_set(0,tk.END)).pack(fill=tk.X,pady=2)
-        ttk.Button(self.sidebar,text="Clear",command=lambda:self.plot_list.selection_clear(0,tk.END)).pack(fill=tk.X,pady=2)
-        ttk.Label(self.sidebar,text="Select any combination\nfor a custom analysis grid.",wraplength=160,justify=tk.LEFT).pack(anchor="w",pady=(8,0))
-        ttk.Separator(self.sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=6)
-        ttk.Label(self.sidebar,text="Custom layout · click a panel first",font=("Segoe UI",9,"bold")).pack(anchor="w")
-        ttk.Button(self.sidebar,text="Split left / right",command=lambda:self._split_custom_panel("vertical")).pack(fill=tk.X,pady=(3,2))
-        ttk.Button(self.sidebar,text="Split top / bottom",command=lambda:self._split_custom_panel("horizontal")).pack(fill=tk.X,pady=2)
-        ttk.Button(self.sidebar,text="Put selected plot in panel",command=self._assign_selected_plot).pack(fill=tk.X,pady=2)
-        ttk.Button(self.sidebar,text="Show selected panel only",command=self._focus_custom_panel).pack(fill=tk.X,pady=2)
-        ttk.Button(self.sidebar,text="Clear selected panel",command=self._clear_custom_panel).pack(fill=tk.X,pady=2)
-        ttk.Button(self.sidebar,text="Repack panels",command=self._reset_custom_grid).pack(fill=tk.X,pady=2)
-        ttk.Label(self.sidebar,text="Click a panel to show it alone; right-click to restore the grid. Select a plot and use the button, or drag it into a panel.",wraplength=170,justify=tk.LEFT).pack(anchor="w",pady=(4,0))
-        ttk.Separator(self.sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=7)
-        ttk.Label(self.sidebar,text="Marked time segments",font=("Segoe UI",9,"bold")).pack(anchor="w")
-        seg_frame=ttk.Frame(self.sidebar);seg_frame.pack(fill=tk.X,pady=(3,0))
+        ttk.Button(self.standard_sidebar,text="Show selected plots",command=self.show_selected).pack(fill=tk.X,pady=(5,2))
+        ttk.Button(self.standard_sidebar,text="Select all",command=lambda:self.plot_list.select_set(0,tk.END)).pack(fill=tk.X,pady=2)
+        ttk.Button(self.standard_sidebar,text="Clear",command=lambda:self.plot_list.selection_clear(0,tk.END)).pack(fill=tk.X,pady=2)
+        ttk.Label(self.standard_sidebar,text="Select any combination\nfor a custom analysis grid.",wraplength=160,justify=tk.LEFT).pack(anchor="w",pady=(8,0))
+        ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=6)
+        ttk.Label(self.standard_sidebar,text="Custom layout · click a panel first",font=("Segoe UI",9,"bold")).pack(anchor="w")
+        ttk.Button(self.standard_sidebar,text="Split left / right",command=lambda:self._split_custom_panel("vertical")).pack(fill=tk.X,pady=(3,2))
+        ttk.Button(self.standard_sidebar,text="Split top / bottom",command=lambda:self._split_custom_panel("horizontal")).pack(fill=tk.X,pady=2)
+        ttk.Button(self.standard_sidebar,text="Put selected plot in panel",command=self._assign_selected_plot).pack(fill=tk.X,pady=2)
+        ttk.Button(self.standard_sidebar,text="Show selected panel only",command=self._focus_custom_panel).pack(fill=tk.X,pady=2)
+        ttk.Button(self.standard_sidebar,text="Clear selected panel",command=self._clear_custom_panel).pack(fill=tk.X,pady=2)
+        ttk.Button(self.standard_sidebar,text="Repack panels",command=self._reset_custom_grid).pack(fill=tk.X,pady=2)
+        ttk.Label(self.standard_sidebar,text="Click a panel to show it alone; right-click to restore the grid. Select a plot and use the button, or drag it into a panel.",wraplength=170,justify=tk.LEFT).pack(anchor="w",pady=(4,0))
+        ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=7)
+        ttk.Label(self.standard_sidebar,text="Marked time segments",font=("Segoe UI",9,"bold")).pack(anchor="w")
+        seg_frame=ttk.Frame(self.standard_sidebar);seg_frame.pack(fill=tk.X,pady=(3,0))
         self.segment_box=tk.Listbox(seg_frame,height=4,width=23,exportselection=False)
         seg_scroll=ttk.Scrollbar(seg_frame,orient=tk.VERTICAL,command=self.segment_box.yview);self.segment_box.configure(yscrollcommand=seg_scroll.set)
         self.segment_box.pack(side=tk.LEFT,fill=tk.X,expand=True);seg_scroll.pack(side=tk.RIGHT,fill=tk.Y)
-        ttk.Button(self.sidebar,text="Delete selected segment",command=self.delete_segment).pack(fill=tk.X,pady=(3,0))
+        ttk.Button(self.standard_sidebar,text="Delete selected segment",command=self.delete_segment).pack(fill=tk.X,pady=(3,0))
+
+        # Multi-compare sidebar (Solution overlay manager)
+        self.compare_sidebar=ttk.Frame(self.sidebar)
+        ttk.Label(self.compare_sidebar,text="Multi-Compare",font=("Segoe UI",10,"bold")).pack(anchor="w",pady=(0,4))
+        ttk.Label(self.compare_sidebar,text="Overlay 2–4 solutions side-by-side with ground truth.",wraplength=165,justify=tk.LEFT).pack(anchor="w",pady=(0,6))
+        ttk.Button(self.compare_sidebar,text="+ Add Solution (.pos)…",command=self.add_compare_solution).pack(fill=tk.X,pady=2)
+        ttk.Button(self.compare_sidebar,text="Open Reference (.csv)…",command=self.open_reference_file).pack(fill=tk.X,pady=2)
+        ttk.Separator(self.compare_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=6)
+        ttk.Label(self.compare_sidebar,text="Loaded Solutions:",font=("Segoe UI",9,"bold")).pack(anchor="w")
+        self.compare_list_container=ttk.Frame(self.compare_sidebar);self.compare_list_container.pack(fill=tk.BOTH,expand=True,pady=(4,6))
+        ttk.Button(self.compare_sidebar,text="Clear Extra Solutions",command=self.clear_compare_solutions).pack(fill=tk.X,pady=2)
+
         self.canvas=FigureCanvasTkAgg(self.fig,master=self.plot_frame); self.canvas.get_tk_widget().pack(side=tk.TOP,fill=tk.BOTH,expand=True)
         self.canvas.mpl_connect("draw_event",self._on_canvas_draw)
         self.canvas.mpl_connect("scroll_event",self.on_scroll)
@@ -266,8 +286,86 @@ class RTKPlotApp:
         self._sat_by_time=sat.sort_values("time").reset_index(drop=True) if not sat.empty else sat
         self._sat_times=self._sat_by_time.time.to_numpy() if not self._sat_by_time.empty else np.array([])
         self.slider.configure(from_=0,to=max(0,len(p)-1)); self.slider.set(0); self.epoch.set(0)
+        self.multi_solutions=[{
+            "name": self.pos_path.stem,
+            "path": self.pos_path,
+            "data": self.data,
+            "color": self.multi_compare_colors[0],
+            "visible": tk.BooleanVar(value=True)
+        }]
+        self._refresh_multi_solution_ui()
         self.status.configure(text=f"{self.pos_path}    |    {len(p):,} epochs    |    {len(self.data['sat']):,} satellite records    |    Reference: {'loaded' if self.data['has_truth'] else 'not loaded'}")
         self.redraw()
+
+    def _toggle_sidebar_mode(self, mode_name):
+        if mode_name == "multi_compare":
+            if hasattr(self, "standard_sidebar") and self.standard_sidebar.winfo_manager():
+                self.standard_sidebar.pack_forget()
+            if hasattr(self, "compare_sidebar") and not self.compare_sidebar.winfo_manager():
+                self.compare_sidebar.pack(fill=tk.BOTH, expand=True)
+                self._refresh_multi_solution_ui()
+        else:
+            if hasattr(self, "compare_sidebar") and self.compare_sidebar.winfo_manager():
+                self.compare_sidebar.pack_forget()
+            if hasattr(self, "standard_sidebar") and not self.standard_sidebar.winfo_manager():
+                self.standard_sidebar.pack(fill=tk.BOTH, expand=True)
+
+    def _refresh_multi_solution_ui(self):
+        if not hasattr(self, "compare_list_container"): return
+        for child in self.compare_list_container.winfo_children():
+            child.destroy()
+        for idx, sol in enumerate(self.multi_solutions):
+            row = ttk.Frame(self.compare_list_container, padding=(2, 2))
+            row.pack(fill=tk.X, pady=2)
+            c_canvas = tk.Canvas(row, width=13, height=13, bg=sol["color"], highlightthickness=1, relief=tk.SOLID)
+            c_canvas.pack(side=tk.LEFT, padx=(0, 5))
+            disp_name = sol["name"] if len(sol["name"]) <= 14 else sol["name"][:13] + "…"
+            cb = ttk.Checkbutton(row, text=disp_name, variable=sol["visible"], command=self.redraw)
+            cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            if idx > 0:
+                del_btn = ttk.Button(row, text="✕", width=2, command=lambda i=idx: self.remove_compare_solution(i))
+                del_btn.pack(side=tk.RIGHT)
+
+    def add_compare_solution(self):
+        if self.data is None:
+            messagebox.showwarning("Add solution", "Please open a primary .pos solution file first.")
+            return
+        if len(self.multi_solutions) >= 6:
+            messagebox.showinfo("Limit reached", "You have reached the limit of 6 overlay solutions.")
+            return
+        name = filedialog.askopenfilename(title="Add RTKLIB solution for comparison", filetypes=[("RTKLIB position files", "*.pos *.txt *.csv"), ("All files", "*.*")])
+        if not name: return
+        pos_path = Path(name)
+        ref_path = self.ref_path or self._find_reference(pos_path)
+        try:
+            sol_data = diag.load_data(pos_path, ref_path)
+        except Exception as exc:
+            messagebox.showerror("Failed to load solution", str(exc)); return
+        idx = len(self.multi_solutions)
+        color = self.multi_compare_colors[idx % len(self.multi_compare_colors)]
+        self.multi_solutions.append({
+            "name": pos_path.stem,
+            "path": pos_path,
+            "data": sol_data,
+            "color": color,
+            "visible": tk.BooleanVar(value=True)
+        })
+        self._refresh_multi_solution_ui()
+        self.redraw()
+
+    def remove_compare_solution(self, index):
+        if 0 <= index < len(self.multi_solutions):
+            removed = self.multi_solutions.pop(index)
+            self._refresh_multi_solution_ui()
+            self.segment_status.configure(text=f"Removed comparison solution: {removed['name']}.")
+            self.redraw()
+
+    def clear_compare_solutions(self):
+        if len(self.multi_solutions) > 1:
+            self.multi_solutions = self.multi_solutions[:1]
+            self._refresh_multi_solution_ui()
+            self.segment_status.configure(text="Cleared extra comparison solutions.")
+            self.redraw()
 
     def set_mode(self,name):self.mode.set(name); self.redraw()
 
@@ -454,6 +552,11 @@ class RTKPlotApp:
         self.sky_current=None;self.sky_labels=[];self.sky_plots=[];self.time_cursors=[];self.custom_updaters=[];self.custom_dynamic_artists=[];self.dop_frames={};self.cov_twin_axes={}
         self.track_axes=[];self.datetime_axes=[];self.segment_track_lines=[];self.segment_sky_artists=[];self.segment_artists=[]
         self.ax.clear(); self.fig.clear(); mode=self.mode.get(); p=self._filtered(); full=self.data["pos"]; s=self.data["sat"]
+        if mode=="Multi-Compare":
+            self._toggle_sidebar_mode("multi_compare")
+            self._draw_multi_compare();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
+        else:
+            self._toggle_sidebar_mode("standard")
         if mode=="Dashboard":
             self._draw_dashboard();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
         if mode=="Custom Analysis":
@@ -1130,6 +1233,86 @@ class RTKPlotApp:
         else:
             ax.text(.5, .5, f"{name}", ha="center", transform=ax.transAxes)
 
+    def _draw_multi_compare(self):
+        self.fig.clear(); self.plot_axes = []; self.time_cursors = []
+        visible_sols = [s for s in self.multi_solutions if s["visible"].get()]
+        if not visible_sols:
+            ax = self.fig.add_subplot(111)
+            ax.text(0.5, 0.5, "No solutions visible for comparison.\nClick '+ Add Solution (.pos)...' or check solutions in the left panel.",
+                    ha="center", va="center", transform=ax.transAxes, fontsize=11, color="#666")
+            ax.set_axis_off(); self.plot_axes = [ax]; self.ax = ax
+            self.fig.suptitle("Multi-Solution Comparison Overview", fontsize=14, weight="bold")
+            self.fig.tight_layout(); return
+
+        if self.focused_compare_subplot is not None and self.focused_compare_subplot in (0, 1):
+            ax = self.fig.add_subplot(111)
+            self.plot_axes = [ax]; self.ax = ax
+            if self.focused_compare_subplot == 0:
+                self._draw_compare_track(ax, visible_sols)
+                self.fig.suptitle("Ground Track Comparison (Maximized — Right-click to restore)", fontsize=13, weight="bold")
+            else:
+                self._draw_compare_error(ax, visible_sols)
+                self.fig.suptitle("Horizontal Error Comparison (Maximized — Right-click to restore)", fontsize=13, weight="bold")
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#168aad"); spine.set_linewidth(1.8)
+            ax.grid(self.grid_on.get(), alpha=.3)
+            self.fig.tight_layout(); return
+
+        axs = self.fig.subplots(2, 1)
+        self.plot_axes = list(axs); self.ax = axs[0]
+
+        # Top: Track Overlay
+        self._draw_compare_track(axs[0], visible_sols)
+        is_sel_0 = (self.selected_compare_subplot == 0)
+        for spine in axs[0].spines.values():
+            spine.set_edgecolor("#168aad" if is_sel_0 else "#b9c0c8")
+            spine.set_linewidth(1.8 if is_sel_0 else 0.75)
+        axs[0].grid(self.grid_on.get(), alpha=.3)
+
+        # Bottom: Error Timeseries Overlay
+        self._draw_compare_error(axs[1], visible_sols)
+        is_sel_1 = (self.selected_compare_subplot == 1)
+        for spine in axs[1].spines.values():
+            spine.set_edgecolor("#168aad" if is_sel_1 else "#b9c0c8")
+            spine.set_linewidth(1.8 if is_sel_1 else 0.75)
+        axs[1].grid(self.grid_on.get(), alpha=.3)
+
+        self.fig.suptitle("Multi-Solution Comparison (Track & Horizontal Error)", fontsize=14, weight="bold")
+        self.fig.tight_layout()
+
+    def _draw_compare_track(self, ax, visible_sols):
+        self.track_axes.append(ax)
+        has_truth = any(s["data"]["has_truth"] for s in visible_sols)
+        if has_truth:
+            for s in visible_sols:
+                if s["data"]["has_truth"]:
+                    gt_e = s["data"]["pos"]["gt_E"]
+                    gt_n = s["data"]["pos"]["gt_N"]
+                    ax.plot(gt_e, gt_n, "k--", lw=1.1, label="Truth", zorder=3)
+                    break
+        for s in visible_sols:
+            p = s["data"]["pos"]
+            ax.plot(p.E, p.N, color=s["color"], lw=1.2, alpha=0.85, label=s["name"], zorder=4)
+        ax.set(xlabel="East (m)", ylabel="North (m)", title="Ground Track Comparison (Horizontal Trajectory)")
+        ax.axis("equal" if self.equal_scale.get() else "auto")
+        ax.legend(fontsize=8, loc="best")
+
+    def _draw_compare_error(self, ax, visible_sols):
+        has_any_truth = False
+        for s in visible_sols:
+            p = s["data"]["pos"]
+            if s["data"]["has_truth"] and "eh" in p:
+                has_any_truth = True
+                rmse = np.sqrt(np.mean(p.eh.dropna()**2))
+        if has_any_truth:
+            ax.legend(fontsize=8, loc="upper right")
+        else:
+            ax.text(0.5, 0.5, "Ground truth (.csv) required to plot position errors.\nClick 'Open Reference' in the left sidebar to load truth data.",
+                    ha="center", va="center", transform=ax.transAxes, fontsize=10, color="#666")
+        ax.set(xlabel="Date/time", ylabel="Horizontal Error (m)", title="Horizontal Positioning Error vs Time")
+        self._set_datetime_axis(ax)
+        self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
     def on_scrub(self,value):
         if self.data is None:return
         self.epoch.set(int(float(value)));self._schedule_cursor_update()
@@ -1237,6 +1420,13 @@ class RTKPlotApp:
                     spine.set_edgecolor("#168aad" if i==self.selected_dashboard_index else "#b9c0c8")
                     spine.set_linewidth(1.8 if i==self.selected_dashboard_index else .75)
             self.canvas.draw_idle()
+        elif self.mode.get()=="Multi-Compare" and event.inaxes in self.plot_axes:
+            self.selected_compare_subplot=self.plot_axes.index(event.inaxes)
+            for i,ax in enumerate(self.plot_axes):
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("#168aad" if i==self.selected_compare_subplot else "#b9c0c8")
+                    spine.set_linewidth(1.8 if i==self.selected_compare_subplot else .75)
+            self.canvas.draw_idle()
         elif self.mode.get()=="Custom Analysis" and event.inaxes in self.plot_axes:
             visible_index=self.plot_axes.index(event.inaxes)
             self.selected_custom_panel=(self.visible_panel_indices[visible_index]
@@ -1311,6 +1501,19 @@ class RTKPlotApp:
                         return
                     elif event.button==3:
                         self._restore_axis(ax);return
+                elif self.mode.get()=="Multi-Compare":
+                    if event.button==1 and event.inaxes in self.plot_axes:
+                        clicked_idx=self.plot_axes.index(event.inaxes)
+                        if self.focused_compare_subplot!=clicked_idx:
+                            self.focused_compare_subplot=clicked_idx
+                            self.redraw()
+                        return
+                    elif event.button==3 and self.focused_compare_subplot is not None:
+                        self.focused_compare_subplot=None
+                        self.redraw()
+                        return
+                    elif event.button==3:
+                        self._restore_axis(ax);return
                 elif self.mode.get()=="Custom Analysis":
                     if event.button==1 and event.inaxes in self.plot_axes:
                         panel_index=self.selected_custom_panel
@@ -1326,7 +1529,7 @@ class RTKPlotApp:
                         self._restore_axis(ax);return
 
             if event.button==1 and event.inaxes is ax and event.xdata is not None and event.ydata is not None:
-                if self.mode.get() not in ("Dashboard","Custom Analysis"):
+                if self.mode.get() not in ("Dashboard","Custom Analysis","Multi-Compare"):
                     self._zoom_at_click(ax,event.xdata,event.ydata,.72)
             elif event.button==3:
                 self._restore_axis(ax)

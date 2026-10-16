@@ -11,8 +11,17 @@ python rtklib_plot_gui.py
 程序启动后可打开 `.pos`，自动尝试读取同名 `.pos.stat` 并查找 `reference.csv`；若未自动检测到 `.stat`，系统会弹窗提示是否手动选择，也可以随时通过菜单 `File -> Open Satellite Status (.stat)...` 独立载入。
 
 ### 核心功能与交互增强
+- **多解算方案横向同屏对比 (Multi-Compare Overlay)**：
+  - 在顶部 `Plot:` 下拉菜单中选择 **`Multi-Compare`**（或菜单栏 `Windows -> Multi-Compare`）；
+  - 左侧侧边栏将自动切换为专用的**多方案管理器**：
+    - 点击 **`+ Add Solution (.pos)…`** 可追加载入第二、第三组对比方案（如单频 vs 双频，或优化算法 vs 官方 RTKLIB）；
+    - 方案列表为每个解算分配专属对比色（深蓝、活力橙、翡翠绿、紫罗兰等），支持通过勾选框独立显示/隐藏，或点击 `✕` 随时移除；
+  - **上下双栏经典布局**：
+    - **上方子图**：水平全景运动轨迹叠加（真值为黑色虚线，各方案为多色实线对比）；
+    - **下方子图**：水平定位误差时序曲线叠加（统一 CST 绝对时间轴，自动计算并在图例标注各方案水平 RMSE）；
+  - 支持 **`[☑ Click to Maximize]`**：左键单击上方可全屏放大轨迹对比，单击下方可全屏放大误差对比，右键平滑还原双栏网格。
 - **子图点击放大与右键还原**：
-  - 勾选导航栏的 **`[☑ Click to Maximize]`** 后，鼠标左键单击任一子图（支持 Dashboard 与 Custom Analysis）即可**将其全屏放大**；鼠标右键单击即**恢复多图网格**。
+  - 勾选导航栏的 **`[☑ Click to Maximize]`** 后，鼠标左键单击任一子图（支持 Dashboard、Custom Analysis 与 Multi-Compare）即可**将其全屏放大**；鼠标右键单击即**恢复多图网格**。
   - 取消勾选时，点击仅作为选中子图与普通平移缩放，彻底杜绝操作冲突。
 - **子图删除与自适应排版 (Subplot Deletion & Repack)**：
   - 在 Dashboard 或 Custom Analysis 模式下，单击选中某个子图（其边框高亮为蓝色），点击导航栏 **`🗑️ Del Subplot`** 按钮（或直接按键盘 **`Delete`** 键），即可移除该子图；

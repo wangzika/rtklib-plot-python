@@ -1,0 +1,18 @@
+{
+  "车载RTK综合监控 (轨迹主监控+误差/状态)": {
+    "preset": "Focus Left (左主右副)",
+    "modes": ["Gnd Trk", "ENU Error", "Solution Status", "Satellites"]
+  },
+  "定位精度与时间流全对比 (4列垂直堆叠)": {
+    "preset": "Vertical Stack (纵向流)",
+    "modes": ["ENU Position", "ENU Error", "Height", "AR Ratio"]
+  },
+  "信号质量与多径环境评估 (四分屏)": {
+    "preset": "Auto Grid (自适应等分)",
+    "modes": ["Skyplot", "C/N0", "Elevation", "Multipath Proxy"]
+  },
+  "经典定位误差三联屏 (上主下副)": {
+    "preset": "Focus Top (上主下副)",
+    "modes": ["Gnd Trk", "ENU Error", "Covariance"]
+  }
+}

@@ -106,6 +106,11 @@ class RTKPlotApp:
         self.basemap_provider=tk.StringVar(value="None")
         self.basemap_alpha=tk.DoubleVar(value=0.85)
         self.cached_basemap=None
+        self.custom_preset=tk.StringVar(value="Auto Grid (自适应等分)")
+        self.sync_time_axes=tk.BooleanVar(value=True)
+        self.layout_profiles={}
+        self.selected_profile_name=tk.StringVar(value="")
+        self._load_layout_profiles()
         # Reserve the bottom status/epoch area before packing the expanding
         # canvas.  Packing the expanding plot first can push these controls
         # below the visible window on high-DPI displays.
@@ -181,6 +186,25 @@ class RTKPlotApp:
         view.add_separator()
         layout_m=tk.Menu(view,tearoff=False)
         layout_m.add_command(label="Restore Default Dashboard (恢复默认六宫格)",command=self.reset_subplots_layout)
+        layout_m.add_separator()
+
+        # Presets
+        preset_m=tk.Menu(layout_m,tearoff=False)
+        for p_name in ["Auto Grid (自适应等分)", "Focus Left (左主右副)", "Vertical Stack (纵向流)", "Focus Top (上主下副)"]:
+            preset_m.add_radiobutton(label=p_name,variable=self.custom_preset,value=p_name,command=self._on_custom_preset_changed)
+        layout_m.add_cascade(label="Layout Presets (排版预设)",menu=preset_m)
+        layout_m.add_checkbutton(label="Sync Time Axes (多图时间轴联动)",variable=self.sync_time_axes,command=self.redraw)
+        layout_m.add_separator()
+
+        # Profiles
+        self.profile_menu=tk.Menu(layout_m,tearoff=False)
+        self._rebuild_profile_menu()
+        layout_m.add_cascade(label="Layout Profiles (排版方案库)",menu=self.profile_menu)
+
+        layout_m.add_separator()
+        layout_m.add_command(label="Promote to Primary (设为主图)",command=self._promote_custom_panel_to_primary)
+        layout_m.add_command(label="Move Selected Up (上移)",command=lambda:self._move_custom_panel(-1))
+        layout_m.add_command(label="Move Selected Down (下移)",command=lambda:self._move_custom_panel(1))
         layout_m.add_command(label="Repack Custom Grid (重排自定义网格)",command=self._reset_custom_grid)
         layout_m.add_command(label="Delete Selected Subplot (删除选中子图)",command=self.delete_selected_subplot,accelerator="Del")
         view.add_cascade(label="Subplots Layout (多图排版管理)",menu=layout_m)
@@ -290,13 +314,37 @@ class RTKPlotApp:
         ttk.Button(self.standard_sidebar,text="📸 Export Segment Subplots…",command=self.open_batch_export_dialog).pack(fill=tk.X,pady=(2,0))
 
         ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=5)
-        ttk.Label(self.standard_sidebar,text="Custom layout · click a panel first",font=("Segoe UI",9,"bold")).pack(anchor="w")
-        ttk.Button(self.standard_sidebar,text="Split left / right",command=lambda:self._split_custom_panel("vertical")).pack(fill=tk.X,pady=1)
-        ttk.Button(self.standard_sidebar,text="Split top / bottom",command=lambda:self._split_custom_panel("horizontal")).pack(fill=tk.X,pady=1)
-        ttk.Button(self.standard_sidebar,text="Put selected plot in panel",command=self._assign_selected_plot).pack(fill=tk.X,pady=1)
-        ttk.Button(self.standard_sidebar,text="Show selected panel only",command=self._focus_custom_panel).pack(fill=tk.X,pady=1)
-        ttk.Button(self.standard_sidebar,text="Clear selected panel",command=self._clear_custom_panel).pack(fill=tk.X,pady=1)
-        ttk.Button(self.standard_sidebar,text="Repack panels",command=self._reset_custom_grid).pack(fill=tk.X,pady=1)
+        ttk.Label(self.standard_sidebar,text="Custom Layout (多图排版)",font=("Segoe UI",9,"bold")).pack(anchor="w")
+
+        # 1. Preset Selector
+        p_row = ttk.Frame(self.standard_sidebar); p_row.pack(fill=tk.X, pady=(2, 2))
+        ttk.Label(p_row, text="Preset:").pack(side=tk.LEFT)
+        self.preset_combo = ttk.Combobox(
+            p_row, textvariable=self.custom_preset,
+            values=["Auto Grid (自适应等分)", "Focus Left (左主右副)", "Vertical Stack (纵向流)", "Focus Top (上主下副)"],
+            state="readonly", width=15
+        )
+        self.preset_combo.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+        self.preset_combo.bind("<<ComboboxSelected>>", self._on_custom_preset_changed)
+
+        # 2. Time Sync Checkbutton
+        ttk.Checkbutton(self.standard_sidebar, text="⏱️ Sync Time Axes (时间轴联动)", variable=self.sync_time_axes, command=self.redraw).pack(anchor="w", pady=(1, 2))
+
+        # 3. Order adjustment & Slot actions
+        order_f = ttk.Frame(self.standard_sidebar); order_f.pack(fill=tk.X, pady=(1, 2))
+        ttk.Button(order_f, text="▲ 上移", command=lambda: self._move_custom_panel(-1)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(order_f, text="▼ 下移", command=lambda: self._move_custom_panel(1)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(order_f, text="★ 主图", command=self._promote_custom_panel_to_primary).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=1)
+
+        # 4. Profiles
+        prof_f = ttk.Frame(self.standard_sidebar); prof_f.pack(fill=tk.X, pady=(2, 2))
+        ttk.Label(prof_f, text="Profile:").pack(side=tk.LEFT)
+        self.profile_combo = ttk.Combobox(prof_f, textvariable=self.selected_profile_name, values=list(self.layout_profiles.keys()), state="readonly", width=11)
+        self.profile_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 2))
+        self.profile_combo.bind("<<ComboboxSelected>>", lambda _e: self._apply_layout_profile(self.selected_profile_name.get()))
+        ttk.Button(prof_f, text="💾", width=3, command=self._save_current_layout_profile).pack(side=tk.RIGHT)
+
+        # 5. Paging
         page_f=ttk.Frame(self.standard_sidebar); page_f.pack(fill=tk.X,pady=(2,1))
         ttk.Button(page_f,text="◀ Page",command=lambda:self._change_custom_page(-1)).pack(side=tk.LEFT,fill=tk.X,expand=True,padx=1)
         self.custom_page_label=ttk.Label(page_f,text="Page 1 / 1",anchor="center",width=8); self.custom_page_label.pack(side=tk.LEFT,padx=1)
@@ -582,18 +630,124 @@ class RTKPlotApp:
         if self.data is None:return
         selected=[MODES[i] for i in self.plot_list.curselection()]
         if not selected:return
-        self.custom_modes=selected;self.custom_panels=self._initial_custom_panels(selected);self.custom_page=0;self.selected_custom_panel=0;self.focused_custom_panel=None
+        self.custom_modes=selected;self.custom_panels=self._initial_custom_panels(selected, self.custom_preset.get());self.custom_page=0;self.selected_custom_panel=0;self.focused_custom_panel=None
         self.mode.set("Custom Analysis");self.redraw()
 
     @staticmethod
-    def _initial_custom_panels(modes):
-        n=len(modes);page_size=6;cols=1 if n==1 else 2;rows=3
-        left,right,bottom,top=.075,.985,.105,.91;gap_x=.07;gap_y=.075
-        width=(right-left-gap_x*(cols-1))/cols;height=(top-bottom-gap_y*(rows-1))/rows
-        panels=[]
-        for i,name in enumerate(modes):
-            row,col=divmod(i%page_size,cols);x=left+col*(width+gap_x);y=top-(row+1)*height-row*gap_y
-            panels.append({"mode":name,"rect":(x,y,width,height)})
+    def _initial_custom_panels(modes, preset="Auto Grid (自适应等分)"):
+        n = len(modes)
+        if n == 0:
+            return []
+
+        panels = []
+        p_lower = str(preset).lower()
+        if "focus left" in p_lower or "左主右副" in p_lower:
+            layout_type = "focus_left"
+        elif "vertical" in p_lower or "纵向" in p_lower:
+            layout_type = "vertical_stack"
+        elif "focus top" in p_lower or "上主下副" in p_lower:
+            layout_type = "focus_top"
+        else:
+            layout_type = "auto_grid"
+
+        if layout_type == "vertical_stack":
+            page_size = 4
+            for i, name in enumerate(modes):
+                page_idx = i % page_size
+                page_total = min(page_size, n - (i // page_size) * page_size)
+                k = max(1, page_total)
+                gap_y = 0.05
+                top, bottom, left, width = 0.93, 0.09, 0.075, 0.89
+                total_h = top - bottom
+                h = (total_h - (k - 1) * gap_y) / k
+                y = top - (page_idx + 1) * h - page_idx * gap_y
+                panels.append({"mode": name, "rect": (left, y, width, h)})
+
+        elif layout_type == "focus_left":
+            page_size = 7
+            for i, name in enumerate(modes):
+                page_idx = i % page_size
+                page_total = min(page_size, n - (i // page_size) * page_size)
+                if page_idx == 0 or page_total == 1:
+                    if page_total == 1:
+                        panels.append({"mode": name, "rect": (0.075, 0.09, 0.89, 0.83)})
+                    else:
+                        panels.append({"mode": name, "rect": (0.065, 0.09, 0.54, 0.83)})
+                else:
+                    sub_idx = page_idx - 1
+                    sub_total = page_total - 1
+                    if sub_total <= 3:
+                        gap_y = 0.055
+                        top, bottom, right_x, right_w = 0.92, 0.09, 0.67, 0.295
+                        h = (top - bottom - (sub_total - 1) * gap_y) / sub_total
+                        y = top - (sub_idx + 1) * h - sub_idx * gap_y
+                        panels.append({"mode": name, "rect": (right_x, y, right_w, h)})
+                    else:
+                        r_cols = 2
+                        r_rows = (sub_total + 1) // 2
+                        r_row, r_col = divmod(sub_idx, r_cols)
+                        gap_x, gap_y = 0.035, 0.045
+                        top, bottom, right_x = 0.92, 0.09, 0.64
+                        total_w = 0.33
+                        sub_w = (total_w - gap_x) / 2
+                        h = (top - bottom - (r_rows - 1) * gap_y) / r_rows
+                        x = right_x + r_col * (sub_w + gap_x)
+                        y = top - (r_row + 1) * h - r_row * gap_y
+                        panels.append({"mode": name, "rect": (x, y, sub_w, h)})
+
+        elif layout_type == "focus_top":
+            page_size = 5
+            for i, name in enumerate(modes):
+                page_idx = i % page_size
+                page_total = min(page_size, n - (i // page_size) * page_size)
+                if page_idx == 0 or page_total == 1:
+                    if page_total == 1:
+                        panels.append({"mode": name, "rect": (0.075, 0.09, 0.89, 0.83)})
+                    else:
+                        panels.append({"mode": name, "rect": (0.075, 0.53, 0.89, 0.39)})
+                else:
+                    sub_idx = page_idx - 1
+                    sub_total = page_total - 1
+                    gap_x = 0.045
+                    left, right, bottom, h = 0.075, 0.965, 0.09, 0.36
+                    sub_w = (right - left - (sub_total - 1) * gap_x) / sub_total
+                    x = left + sub_idx * (sub_w + gap_x)
+                    panels.append({"mode": name, "rect": (x, bottom, sub_w, h)})
+
+        else: # auto_grid
+            if n == 1:
+                panels.append({"mode": modes[0], "rect": (0.075, 0.09, 0.89, 0.83)})
+            elif n == 2:
+                w = 0.425; gap_x = 0.06; left = 0.075
+                panels.append({"mode": modes[0], "rect": (left, 0.09, w, 0.82)})
+                panels.append({"mode": modes[1], "rect": (left + w + gap_x, 0.09, w, 0.82)})
+            elif n == 3:
+                w_top = 0.425; gap_x = 0.06; left = 0.075
+                panels.append({"mode": modes[0], "rect": (left, 0.54, w_top, 0.38)})
+                panels.append({"mode": modes[1], "rect": (left + w_top + gap_x, 0.54, w_top, 0.38)})
+                panels.append({"mode": modes[2], "rect": (left, 0.09, 0.89, 0.37)})
+            elif n == 4:
+                w = 0.425; gap_x = 0.06; left = 0.075
+                h = 0.38; gap_y = 0.07
+                panels.append({"mode": modes[0], "rect": (left, 0.54, w, h)})
+                panels.append({"mode": modes[1], "rect": (left + w + gap_x, 0.54, w, h)})
+                panels.append({"mode": modes[2], "rect": (left, 0.09, w, h)})
+                panels.append({"mode": modes[3], "rect": (left + w + gap_x, 0.09, w, h)})
+            else:
+                page_size = 6
+                cols = 3
+                rows = 2
+                left, right, bottom, top = 0.065, 0.985, 0.09, 0.93
+                gap_x, gap_y = 0.045, 0.065
+                width = (right - left - gap_x * (cols - 1)) / cols
+                height = (top - bottom - gap_y * (rows - 1)) / rows
+                for i, name in enumerate(modes):
+                    page_idx = i % page_size
+                    row, col = divmod(page_idx, cols)
+                    x = left + col * (width + gap_x)
+                    y = top - (row + 1) * height - row * gap_y
+                    panels.append({"mode": name, "rect": (x, y, width, height)})
+
         return panels
 
     def _change_custom_page(self,step):
@@ -657,11 +811,178 @@ class RTKPlotApp:
         self.custom_panels[i]["mode"]=None;self.custom_modes=[p["mode"] for p in self.custom_panels];self.focused_custom_panel=None;self.redraw()
 
     def _reset_custom_grid(self):
-        if self.mode.get()!="Custom Analysis":return
-        modes=[p["mode"] for p in self.custom_panels if p["mode"]]
-        if not modes:modes=[MODES[i] for i in self.plot_list.curselection()]
-        if not modes:return
-        self.custom_modes=modes;self.custom_panels=self._initial_custom_panels(modes);self.custom_page=0;self.selected_custom_panel=0;self.focused_custom_panel=None;self.redraw()
+        if self.mode.get() != "Custom Analysis":
+            return
+        modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+        if not modes:
+            modes = [MODES[i] for i in self.plot_list.curselection()]
+        if not modes:
+            return
+        self.custom_modes = modes
+        self.custom_panels = self._initial_custom_panels(modes, self.custom_preset.get())
+        self.custom_page = 0
+        self.selected_custom_panel = 0
+        self.focused_custom_panel = None
+        self.redraw()
+
+    def _on_custom_preset_changed(self, event=None):
+        if self.mode.get() != "Custom Analysis":
+            self.mode.set("Custom Analysis")
+        modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+        if not modes:
+            modes = [MODES[i] for i in self.plot_list.curselection()]
+        if not modes:
+            modes = ["Gnd Trk", "ENU Error", "Solution Status", "Satellites"]
+        self.custom_modes = modes
+        self.custom_panels = self._initial_custom_panels(modes, self.custom_preset.get())
+        self.custom_page = 0
+        self.selected_custom_panel = 0
+        self.focused_custom_panel = None
+        self.segment_status.configure(text=f"布局预设已切换为: {self.custom_preset.get()} ({len(modes)} 个子图)")
+        self.redraw()
+
+    def _move_custom_panel(self, direction):
+        if self.mode.get() != "Custom Analysis" or len(self.custom_panels) < 2:
+            return
+        idx = min(max(0, self.selected_custom_panel), len(self.custom_panels) - 1)
+        new_idx = idx + direction
+        if 0 <= new_idx < len(self.custom_panels):
+            self.custom_panels[idx], self.custom_panels[new_idx] = self.custom_panels[new_idx], self.custom_panels[idx]
+            modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+            self.custom_modes = modes
+            self.custom_panels = self._initial_custom_panels(modes, self.custom_preset.get())
+            self.selected_custom_panel = new_idx
+            self.focused_custom_panel = None
+            self.segment_status.configure(text=f"已移动子图: {self.custom_modes[new_idx]} 到槽位 {new_idx+1}")
+            self.redraw()
+
+    def _promote_custom_panel_to_primary(self, ax=None):
+        if self.mode.get() != "Custom Analysis" or len(self.custom_panels) < 2:
+            return
+        if ax in self.plot_axes:
+            idx = self.plot_axes.index(ax)
+            panel_idx = self.visible_panel_indices[idx] if idx < len(self.visible_panel_indices) else idx
+        else:
+            panel_idx = self.selected_custom_panel
+        if panel_idx <= 0 or panel_idx >= len(self.custom_panels):
+            return
+        promoted = self.custom_panels.pop(panel_idx)
+        self.custom_panels.insert(0, promoted)
+        modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+        self.custom_modes = modes
+        self.custom_panels = self._initial_custom_panels(modes, self.custom_preset.get())
+        self.selected_custom_panel = 0
+        self.focused_custom_panel = None
+        self.segment_status.configure(text=f"已将 [{promoted.get('mode')}] 设为主图 (首位槽位)")
+        self.redraw()
+
+    def _swap_custom_panels(self, idx1, idx2):
+        if self.mode.get() != "Custom Analysis":
+            return
+        if 0 <= idx1 < len(self.custom_panels) and 0 <= idx2 < len(self.custom_panels) and idx1 != idx2:
+            self.custom_panels[idx1], self.custom_panels[idx2] = self.custom_panels[idx2], self.custom_panels[idx1]
+            modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+            self.custom_modes = modes
+            self.custom_panels = self._initial_custom_panels(modes, self.custom_preset.get())
+            self.selected_custom_panel = idx2
+            self.focused_custom_panel = None
+            self.segment_status.configure(text=f"已互换槽位: {self.custom_modes[idx2]} ⇄ {self.custom_modes[idx1]}")
+            self.redraw()
+
+    def _load_layout_profiles(self):
+        self.layout_profiles = {}
+        prof_file = HERE / "configs" / "custom_layout_profiles.json"
+        if prof_file.exists():
+            try:
+                import json
+                with open(prof_file, "r", encoding="utf-8") as f:
+                    self.layout_profiles = json.load(f)
+            except Exception as e:
+                print(f"Error loading layout profiles: {e}")
+
+    def _rebuild_profile_menu(self):
+        if not hasattr(self, "profile_menu"):
+            return
+        self.profile_menu.delete(0, tk.END)
+        self.profile_menu.add_command(label="💾 保存当前排版为新方案…", command=self._save_current_layout_profile)
+        self.profile_menu.add_separator()
+        if self.layout_profiles:
+            for p_name in self.layout_profiles:
+                self.profile_menu.add_command(
+                    label=p_name,
+                    command=lambda name=p_name: self._apply_layout_profile(name)
+                )
+        else:
+            self.profile_menu.add_command(label="(暂无保存方案)", state="disabled")
+
+    def _update_profile_combobox(self):
+        if hasattr(self, "profile_combo"):
+            keys = list(self.layout_profiles.keys())
+            self.profile_combo.configure(values=keys)
+        self._rebuild_profile_menu()
+
+    def _save_current_layout_profile(self):
+        modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+        if not modes:
+            messagebox.showwarning("提示", "当前没有正在显示的自定义子图，请先选择子图后再保存方案。")
+            return
+        name_win = tk.Toplevel(self.root)
+        name_win.title("保存自定义多图方案")
+        name_win.geometry("400x170")
+        name_win.resizable(False, False)
+        name_win.transient(self.root)
+        name_win.grab_set()
+
+        ttk.Label(name_win, text="请输入方案名称 (例如: 车载RTK动态评估、高程精度对比):", wraplength=360).pack(padx=16, pady=(16, 6), anchor="w")
+        name_var = tk.StringVar(value=f"方案 {len(self.layout_profiles)+1}")
+        entry = ttk.Entry(name_win, textvariable=name_var, width=34)
+        entry.pack(padx=16, pady=4, fill=tk.X)
+        entry.focus_set()
+
+        def do_save():
+            p_name = name_var.get().strip()
+            if not p_name:
+                messagebox.showwarning("提示", "方案名称不能为空。")
+                return
+            self.layout_profiles[p_name] = {
+                "preset": self.custom_preset.get(),
+                "modes": modes
+            }
+            prof_file = HERE / "configs" / "custom_layout_profiles.json"
+            try:
+                prof_file.parent.mkdir(parents=True, exist_ok=True)
+                import json
+                with open(prof_file, "w", encoding="utf-8") as f:
+                    json.dump(self.layout_profiles, f, ensure_ascii=False, indent=2)
+                self.segment_status.configure(text=f"多图方案 [{p_name}] 已成功保存")
+                self._update_profile_combobox()
+                self.selected_profile_name.set(p_name)
+                name_win.destroy()
+                messagebox.showinfo("成功", f"多图方案 [{p_name}] 已保存至配置库！")
+            except Exception as exc:
+                messagebox.showerror("保存失败", str(exc))
+
+        btn_f = ttk.Frame(name_win)
+        btn_f.pack(padx=16, pady=14, fill=tk.X)
+        ttk.Button(btn_f, text="确定保存", command=do_save).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_f, text="取消", command=name_win.destroy).pack(side=tk.RIGHT)
+
+    def _apply_layout_profile(self, profile_name):
+        if profile_name not in self.layout_profiles:
+            return
+        prof = self.layout_profiles[profile_name]
+        preset = prof.get("preset", "Auto Grid (自适应等分)")
+        modes = prof.get("modes", ["Gnd Trk", "ENU Error"])
+        self.custom_preset.set(preset)
+        self.custom_modes = list(modes)
+        self.custom_panels = self._initial_custom_panels(modes, preset)
+        self.custom_page = 0
+        self.selected_custom_panel = 0
+        self.focused_custom_panel = None
+        self.selected_profile_name.set(profile_name)
+        self.mode.set("Custom Analysis")
+        self.segment_status.configure(text=f"已成功载入多图方案: [{profile_name}]")
+        self.redraw()
 
     def delete_selected_subplot(self):
         if self.data is None:return
@@ -1014,11 +1335,17 @@ class RTKPlotApp:
         self.visible_panel_indices=([self.focused_custom_panel] if self.focused_custom_panel is not None
                                     and 0<=self.focused_custom_panel<len(self.custom_panels)
                                     else list(range(page_start,min(page_start+self.custom_page_size,len(self.custom_panels)))))
+        base_time_ax = None
         for i in self.visible_panel_indices:
             panel=self.custom_panels[i]
             name=panel["mode"]
             rect=(.065,.09,.92,.82) if self.focused_custom_panel is not None else panel["rect"]
-            ax=self.fig.add_axes(rect,projection="polar" if name=="Skyplot" else None);self.plot_axes.append(ax)
+            is_time_series = name not in ("Gnd Trk","Skyplot","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary")
+            share = base_time_ax if (self.sync_time_axes.get() and is_time_series and self.focused_custom_panel is None) else None
+            ax=self.fig.add_axes(rect,projection="polar" if name=="Skyplot" else None, sharex=share)
+            if self.sync_time_axes.get() and is_time_series and base_time_ax is None and self.focused_custom_panel is None:
+                base_time_ax = ax
+            self.plot_axes.append(ax)
             for spine in ax.spines.values():spine.set_edgecolor("#168aad" if i==self.selected_custom_panel else "#b9c0c8");spine.set_linewidth(1.6 if i==self.selected_custom_panel else .75)
             if not name:
                 # Keep the drop hint inside its own axes. A long title overlaps
@@ -1948,6 +2275,29 @@ class RTKPlotApp:
         menu.add_command(label="↺ 重置此子图视野 (Reset Zoom)", command=lambda: self._restore_axis(ax))
 
         mode = self.mode.get()
+        if mode == "Custom Analysis":
+            idx = self.plot_axes.index(ax) if ax in self.plot_axes else self.selected_custom_panel
+            panel_idx = self.focused_custom_panel if self.focused_custom_panel is not None else (
+                self.visible_panel_indices[idx] if idx < len(self.visible_panel_indices) else idx
+            )
+            menu.add_separator()
+            if panel_idx > 0 and len(self.custom_panels) > 1:
+                menu.add_command(label="★ 设为当前主图 (Promote to Primary)", command=lambda: self._promote_custom_panel_to_primary(ax))
+            if len(self.custom_panels) > 1:
+                swap_m = tk.Menu(menu, tearoff=False)
+                for other_idx, p in enumerate(self.custom_panels):
+                    if other_idx != panel_idx:
+                        swap_m.add_command(
+                            label=f"槽位 {other_idx+1}: {p.get('mode', 'Empty')}",
+                            command=lambda t=other_idx: self._swap_custom_panels(panel_idx, t)
+                        )
+                menu.add_cascade(label="⇄ 与其他子图互换 (Swap Position)", menu=swap_m)
+
+            preset_m = tk.Menu(menu, tearoff=False)
+            for p_name in ["Auto Grid (自适应等分)", "Focus Left (左主右副)", "Vertical Stack (纵向流)", "Focus Top (上主下副)"]:
+                preset_m.add_radiobutton(label=p_name, variable=self.custom_preset, value=p_name, command=self._on_custom_preset_changed)
+            menu.add_cascade(label="📐 切换布局预设 (Layout Presets)", menu=preset_m)
+
         if mode in ("Dashboard", "Custom Analysis"):
             menu.add_separator()
             menu.add_command(label="🗑️ 删除此子图 (Delete Subplot)", command=lambda: self._delete_subplot(ax))

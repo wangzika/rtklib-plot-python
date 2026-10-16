@@ -16,6 +16,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+try:
+    from rtklib_map_tiles import export_kml_3d, export_geojson, get_stitched_tiles_enu, TILE_PROVIDERS
+except ImportError:
+    pass
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_POS = ROOT / "results_pos" / "6_RTK_Multi_L1L2.pos"
 DEFAULT_REF = ROOT.parent / "Tokyo_Data" / "Tokyo_Data" / "Odaiba" / "reference.csv"
@@ -41,6 +46,21 @@ def _geodetic_to_ecef(lat_deg: float | np.ndarray, lon_deg: float | np.ndarray, 
     y = (N + h) * np.cos(lat) * np.sin(lon)
     z = (N * (1 - e2) + h) * np.sin(lat)
     return x, y, z
+
+
+def _ecef_to_geodetic(x: float | np.ndarray, y: float | np.ndarray, z: float | np.ndarray):
+    a, f = 6378137.0, 1.0 / 298.257223563
+    e2 = f * (2.0 - f)
+    lon = np.arctan2(y, x)
+    p = np.hypot(x, y)
+    lat = np.arctan2(z, p * (1.0 - e2))
+    for _ in range(8):
+        N = a / np.sqrt(1.0 - e2 * np.sin(lat)**2)
+        h = p / np.cos(lat) - N
+        lat = np.arctan2(z, p * (1.0 - e2 * N / (N + h)))
+    N = a / np.sqrt(1.0 - e2 * np.sin(lat)**2)
+    h = p / np.cos(lat) - N
+    return np.rad2deg(lat), np.rad2deg(lon), h
 
 
 def _ecef_to_enu(xyz: np.ndarray, lat_deg: float, lon_deg: float) -> np.ndarray:
@@ -100,7 +120,7 @@ def load_data(pos_path: Path, reference_path: Path | None = None,
                 sdxy, sdyz, sdzx = s12, s23, s31
             else:
                 x, y, z = v1, v2, v3
-                lat, lon, h = np.nan, np.nan, np.nan
+                lat, lon, h = _ecef_to_geodetic(x, y, z)
                 sdx, sdy, sdz = s1, s2, s3
                 sdxy, sdyz, sdzx = s12, s23, s31
                 sdn, sde, sdu = np.nan, np.nan, np.nan

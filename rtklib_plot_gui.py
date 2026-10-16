@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import rtklib_diagnostics as diag
+import rtklib_map_tiles as mt
 
 Q_LABELS = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}
 Q_COLORS = {1: "#07851d", 2: "#dc8a12", 3: "#5b83c4", 4: "#9b59b6", 5: "#777777", 6: "#17a2a4"}
@@ -87,6 +88,9 @@ class RTKPlotApp:
         self.marker_style=tk.StringVar(value="None")
         self.marker_size=tk.DoubleVar(value=3.0)
         self.curve_styles={}
+        self.basemap_provider=tk.StringVar(value="None")
+        self.basemap_alpha=tk.DoubleVar(value=0.85)
+        self.cached_basemap=None
         # Reserve the bottom status/epoch area before packing the expanding
         # canvas.  Packing the expanding plot first can push these controls
         # below the visible window on high-DPI displays.
@@ -124,12 +128,18 @@ class RTKPlotApp:
         filem.add_command(label="Generate Diagnostic Report…",command=self.open_report_dialog,accelerator="Ctrl+R")
         filem.add_command(label="Export Current Plot…",command=self.export_plot,accelerator="Ctrl+S")
         filem.add_command(label="Batch Export Subplots…",command=self.open_batch_export_dialog,accelerator="Ctrl+E")
+        filem.add_command(label="Export Google Earth KML (3D)…",command=self.export_kml)
+        filem.add_command(label="Export Standard GeoJSON…",command=self.export_geojson)
         filem.add_separator(); filem.add_command(label="Exit",command=self.root.destroy); bar.add_cascade(label="File",menu=filem)
         edit=tk.Menu(bar,tearoff=False); edit.add_command(label="Save Plot As…",command=self.export_plot); edit.add_command(label="Reset View",command=self.redraw); bar.add_cascade(label="Edit",menu=edit)
         view=tk.Menu(bar,tearoff=False)
         view.add_checkbutton(label="Grid",variable=self.grid_on,command=self.redraw)
         view.add_checkbutton(label="Hover scrubs timeline",variable=self.follow_mouse)
         view.add_checkbutton(label="Click to maximize / restore",variable=self.click_to_maximize)
+        basemap_m=tk.Menu(view,tearoff=False)
+        for p_name in ["None","Esri Satellite","OpenStreetMap","CartoDB Dark"]:
+            basemap_m.add_radiobutton(label=p_name,variable=self.basemap_provider,value=p_name,command=self._on_basemap_changed)
+        view.add_cascade(label="Basemap Layer (底图图层)",menu=basemap_m)
         view.add_separator()
         view.add_command(label="Delete selected subplot",command=self.delete_selected_subplot,accelerator="Del")
         view.add_command(label="Reset subplots layout",command=self.reset_subplots_layout)
@@ -149,6 +159,10 @@ class RTKPlotApp:
         ttk.Label(row,text="Solution:").pack(side=tk.LEFT,padx=(10,0))
         self.qbox=ttk.Combobox(row,textvariable=self.qfilter,values=["All Q"]+[f"Q={q}: {name}" for q,name in Q_LABELS.items()],state="readonly",width=13); self.qbox.pack(side=tk.LEFT,padx=5); self.qbox.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
         ttk.Checkbutton(row,text="Grid",variable=self.grid_on,command=self.redraw).pack(side=tk.LEFT,padx=8)
+        ttk.Label(row,text="🗺️ Map:").pack(side=tk.LEFT,padx=(10,2))
+        self.basemap_combo=ttk.Combobox(row,textvariable=self.basemap_provider,values=["None","Esri Satellite","OpenStreetMap","CartoDB Dark"],state="readonly",width=13)
+        self.basemap_combo.pack(side=tk.LEFT,padx=3)
+        self.basemap_combo.bind("<<ComboboxSelected>>",self._on_basemap_changed)
 
         nav=ttk.Frame(self.root,padding=(8,2));nav.pack(side=tk.TOP,fill=tk.X)
         ttk.Label(nav,text="Drag: pan · Right-drag: zoom · Wheel Y at 0:").pack(side=tk.LEFT,padx=(0,4))
@@ -178,6 +192,8 @@ class RTKPlotApp:
         ttk.Button(marks,text="🔍 Auto Detect Issues",command=self.auto_detect_issues).pack(side=tk.LEFT,padx=4)
         ttk.Button(marks,text="📋 Diagnostic Report",command=self.open_report_dialog).pack(side=tk.LEFT,padx=4)
         ttk.Button(marks,text="📸 Export Subplots…",command=self.open_batch_export_dialog).pack(side=tk.LEFT,padx=4)
+        ttk.Button(marks,text="🌐 Google Earth 3D…",command=self.export_kml).pack(side=tk.LEFT,padx=3)
+        ttk.Button(marks,text="🗺️ GeoJSON…",command=self.export_geojson).pack(side=tk.LEFT,padx=3)
         self.segment_status=ttk.Label(marks,text="Shift+Drag to mark segment · Double-click segment to zoom · Double-click subplot to maximize.",anchor="w");self.segment_status.pack(side=tk.LEFT,padx=8,fill=tk.X,expand=True)
 
     def _build_plot(self):
@@ -1239,6 +1255,7 @@ class RTKPlotApp:
     def _draw_track(self,ax,p,full):
         self.track_axes.append(ax)
         self._track_e=full.E.to_numpy();self._track_n=full.N.to_numpy()
+        self._apply_basemap(ax, full)
         ax.set_title("Ground Track / ENU Position — colored by solution status")
         if self.data["has_truth"]:
             ax.plot(full.gt_E,full.gt_N,color="#252525",lw=1.05,ls="--",alpha=.72,label="Ground truth")
@@ -1904,7 +1921,82 @@ class RTKPlotApp:
             kw["ms"] = ms
         return kw
 
+    def _on_basemap_changed(self, event=None):
+        self.cached_basemap = None
+        self.redraw()
+
+    def _apply_basemap(self, ax, full):
+        provider = self.basemap_provider.get()
+        if provider == "None" or not hasattr(full, "lat") or not full.lat.notna().any():
+            return
+        try:
+            cache_key = (provider, str(self.pos_path))
+            if self.cached_basemap and self.cached_basemap[0] == cache_key:
+                img, extent = self.cached_basemap[1], self.cached_basemap[2]
+            else:
+                lat_min, lat_max = float(full.lat.min()), float(full.lat.max())
+                lon_min, lon_max = float(full.lon.min()), float(full.lon.max())
+                origin_lat = float(full.lat.iloc[0])
+                origin_lon = float(full.lon.iloc[0])
+                origin_h = float(full.h.iloc[0]) if "h" in full else 0.0
+                img, extent = mt.get_stitched_tiles_enu(
+                    lat_min, lat_max, lon_min, lon_max,
+                    origin_lat, origin_lon, origin_h,
+                    provider=provider, max_tiles=16, margin=0.20
+                )
+                self.cached_basemap = (cache_key, img, extent)
+
+            if img is not None and extent is not None:
+                ax.imshow(img, extent=extent, origin="upper", zorder=1, alpha=self.basemap_alpha.get())
+                ax.set_facecolor("#151515" if "Dark" in provider else "#f0f0f0")
+        except Exception as e:
+            print(f"Basemap notice: {e}")
+
+    def export_kml(self):
+        if self.data is None:
+            messagebox.showwarning("Warning", "请先打开 .pos 解算文件。")
+            return
+        base = self.pos_path.stem if self.pos_path else "rtklib_solution"
+        path = filedialog.asksaveasfilename(
+            title="导出 Google Earth 3D KML",
+            defaultextension=".kml",
+            initialfile=f"{base}_3d.kml",
+            filetypes=[("Google Earth KML files", "*.kml"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        try:
+            mt.export_kml_3d(self.data["pos"], path, segments=self.segments, pos_name=self.pos_path.name if self.pos_path else base)
+            msg = f"Google Earth 3D KML 文件已成功导出至：\n{path}\n\n是否立即在 Google Earth 中打开？"
+            if messagebox.askyesno("导出成功", msg):
+                try:
+                    os.startfile(path)
+                except Exception:
+                    pass
+        except Exception as exc:
+            messagebox.showerror("导出 KML 失败", str(exc))
+
+    def export_geojson(self):
+        if self.data is None:
+            messagebox.showwarning("Warning", "请先打开 .pos 解算文件。")
+            return
+        base = self.pos_path.stem if self.pos_path else "rtklib_solution"
+        path = filedialog.asksaveasfilename(
+            title="导出标准 GIS GeoJSON",
+            defaultextension=".geojson",
+            initialfile=f"{base}.geojson",
+            filetypes=[("GeoJSON files", "*.geojson"), ("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        try:
+            mt.export_geojson(self.data["pos"], path)
+            messagebox.showinfo("导出成功", f"标准 GIS GeoJSON 要素集已成功导出至：\n{path}\n\n可直接拖入 QGIS 或 ArcGIS 加载分析。")
+        except Exception as exc:
+            messagebox.showerror("导出 GeoJSON 失败", str(exc))
+
     def _draw_track_export(self, ax, p, full):
+        self._apply_basemap(ax, full)
         ax.set_title("Ground Track / ENU Position — colored by solution status", fontsize=11, weight="bold")
         if self.data["has_truth"]:
             ax.plot(full.gt_E, full.gt_N, color="#252525", lw=1.1, ls="--", alpha=0.75, label="Ground Truth", zorder=3)
@@ -2140,6 +2232,12 @@ class BatchExportDialog(tk.Toplevel):
         self.var_crop_pos = tk.BooleanVar(value=True)
         ttk.Checkbutton(opt_frame, text="同时导出该时间段裁剪版 .pos 解算文件 (保留完整RTKLIB头信息与高精度坐标)", variable=self.var_crop_pos).pack(anchor="w", pady=2)
 
+        self.var_kml = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt_frame, text="同时导出 Google Earth 3D 轨迹工程文件 (.kml，含真实高程挤出与分色)", variable=self.var_kml).pack(anchor="w", pady=2)
+
+        self.var_geojson = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt_frame, text="同时导出标准 GIS 空间要素集 (.geojson，包含历元属性，可直接在 QGIS 分析)", variable=self.var_geojson).pack(anchor="w", pady=2)
+
         # 4. Output Path
         path_frame = ttk.LabelFrame(self, text="4. 导出存储目录 (Output Directory)", padding=(10, 8))
         path_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -2208,7 +2306,10 @@ class BatchExportDialog(tk.Toplevel):
         base_name = self.app.pos_path.stem if self.app.pos_path else "rtklib_solution"
 
         self.btn_export.configure(state="disabled")
-        total_tasks = len(selected_modes) + (1 if self.var_crop_pos.get() else 0)
+        total_tasks = (len(selected_modes)
+                       + (1 if self.var_crop_pos.get() else 0)
+                       + (1 if self.var_kml.get() else 0)
+                       + (1 if self.var_geojson.get() else 0))
         self.progress["maximum"] = total_tasks
         current_step = 0
         exported_files = []
@@ -2222,6 +2323,32 @@ class BatchExportDialog(tk.Toplevel):
                 exported_files.append(out_pos_file.name)
             except Exception as e:
                 print(f"Error exporting .pos: {e}")
+            current_step += 1
+            self.progress["value"] = current_step
+            self.update_idletasks()
+
+        if self.var_kml.get():
+            self.status_label.configure(text="正在导出 Google Earth 3D KML 文件...")
+            self.update_idletasks()
+            out_kml_file = out_dir / f"{base_name}_{seg_slug}_3d.kml"
+            try:
+                mt.export_kml_3d(pos_sub, out_kml_file, segments=self.app.segments, pos_name=f"{base_name}_{seg_slug}")
+                exported_files.append(out_kml_file.name)
+            except Exception as e:
+                print(f"Error exporting .kml: {e}")
+            current_step += 1
+            self.progress["value"] = current_step
+            self.update_idletasks()
+
+        if self.var_geojson.get():
+            self.status_label.configure(text="正在导出标准 GIS GeoJSON 要素集...")
+            self.update_idletasks()
+            out_json_file = out_dir / f"{base_name}_{seg_slug}.geojson"
+            try:
+                mt.export_geojson(pos_sub, out_json_file)
+                exported_files.append(out_json_file.name)
+            except Exception as e:
+                print(f"Error exporting .geojson: {e}")
             current_step += 1
             self.progress["value"] = current_step
             self.update_idletasks()

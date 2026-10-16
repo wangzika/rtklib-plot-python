@@ -40,6 +40,7 @@ desktop.ini
 
 # Output plots and reports
 plots_15_diagnostics/
+exports/
 *.png
 *.pdf
 *.svg

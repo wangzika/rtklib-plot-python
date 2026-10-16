@@ -16,10 +16,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_POS = ROOT / "results_pos" / "6_RTK_Multi_L1L2.pos"
-if not DEFAULT_POS.exists() and (ROOT / "examples" / "demo.pos").exists():
-    DEFAULT_POS = ROOT / "examples" / "demo.pos"
 DEFAULT_REF = ROOT.parent / "Tokyo_Data" / "Tokyo_Data" / "Odaiba" / "reference.csv"
 DEFAULT_OUT = ROOT / "plots_15_diagnostics"
 EXPORT_FORMATS = ("png",)
@@ -33,6 +31,18 @@ COLORS = {"E": "#2878B5", "N": "#E07A2D", "U": "#36965A",
           "BeiDou": "#A34FA3", "QZSS": "#D3A11E", "SBAS": "#777777"}
 
 
+def _geodetic_to_ecef(lat_deg: float | np.ndarray, lon_deg: float | np.ndarray, h: float | np.ndarray):
+    a = 6378137.0
+    f = 1.0 / 298.257223563
+    e2 = f * (2 - f)
+    lat, lon = np.deg2rad(lat_deg), np.deg2rad(lon_deg)
+    N = a / np.sqrt(1 - e2 * np.sin(lat)**2)
+    x = (N + h) * np.cos(lat) * np.cos(lon)
+    y = (N + h) * np.cos(lat) * np.sin(lon)
+    z = (N * (1 - e2) + h) * np.sin(lat)
+    return x, y, z
+
+
 def _ecef_to_enu(xyz: np.ndarray, lat_deg: float, lon_deg: float) -> np.ndarray:
     p, l = np.deg2rad([lat_deg, lon_deg])
     rot = np.array([[-np.sin(l), np.cos(l), 0],
@@ -44,6 +54,7 @@ def _ecef_to_enu(xyz: np.ndarray, lat_deg: float, lon_deg: float) -> np.ndarray:
 def load_data(pos_path: Path, reference_path: Path | None = None,
               stat_path: Path | None = None) -> dict:
     """Load RTKLIB .pos and optional reference/.stat inputs into aligned frames."""
+    from datetime import datetime
     pos_path = Path(pos_path)
     stat_path = Path(stat_path) if stat_path else Path(str(pos_path) + ".stat")
     rows = []
@@ -54,23 +65,63 @@ def load_data(pos_path: Path, reference_path: Path | None = None,
         if len(f) < 15:
             continue
         try:
-            rows.append([int(f[0]), float(f[1]), *map(float, f[2:5]), int(f[5]),
-                         int(f[6]), *map(float, f[7:14]), float(f[14])])
-        except ValueError:
+            # 1. 兼容日期时间与 week/tow
+            if "/" in f[0] or "-" in f[0]:
+                t_str = f[0] + " " + f[1]
+                try:
+                    dt = datetime.strptime(t_str, "%Y/%m/%d %H:%M:%S.%f")
+                except ValueError:
+                    dt = datetime.strptime(t_str, "%Y/%m/%d %H:%M:%S")
+                diff = (dt - datetime(1980, 1, 6)).total_seconds()
+                week = int(diff // 604800)
+                tow = float(diff % 604800)
+                v1, v2, v3 = float(f[2]), float(f[3]), float(f[4])
+                q, ns = int(f[5]), int(f[6])
+                s1, s2, s3 = float(f[7]), float(f[8]), float(f[9])
+                s12, s23, s31 = float(f[10]), float(f[11]), float(f[12])
+                age, ratio = float(f[13]), float(f[14])
+            else:
+                week = int(f[0])
+                tow = float(f[1])
+                v1, v2, v3 = float(f[2]), float(f[3]), float(f[4])
+                q, ns = int(f[5]), int(f[6])
+                s1, s2, s3 = float(f[7]), float(f[8]), float(f[9])
+                s12, s23, s31 = float(f[10]), float(f[11]), float(f[12])
+                age, ratio = float(f[13]), float(f[14])
+
+            # 2. 兼容 LLH (纬度/经度/高度) 还是 ECEF (x/y/z)
+            is_llh = abs(v1) <= 90.0 and abs(v2) <= 360.0
+            if is_llh:
+                lat, lon, h = v1, v2, v3
+                x, y, z = _geodetic_to_ecef(lat, lon, h)
+                sdn, sde, sdu = s1, s2, s3
+                sdne, sdeu, sdun = s12, s23, s31
+                sdx, sdy, sdz = s1, s2, s3
+                sdxy, sdyz, sdzx = s12, s23, s31
+            else:
+                x, y, z = v1, v2, v3
+                lat, lon, h = np.nan, np.nan, np.nan
+                sdx, sdy, sdz = s1, s2, s3
+                sdxy, sdyz, sdzx = s12, s23, s31
+                sdn, sde, sdu = np.nan, np.nan, np.nan
+                sdne, sdeu, sdun = np.nan, np.nan, np.nan
+
+            rows.append([week, tow, x, y, z, lat, lon, h, q, ns,
+                         sdx, sdy, sdz, sdxy, sdyz, sdzx,
+                         sdn, sde, sdu, sdne, sdeu, sdun,
+                         age, ratio, is_llh])
+        except (ValueError, IndexError):
             continue
-    cols = ["week", "tow", "x", "y", "z", "q", "ns", "sdx", "sdy", "sdz",
-            "sdxy", "sdyz", "sdzx", "age", "ratio"]
+
+    cols = ["week", "tow", "x", "y", "z", "lat", "lon", "h", "q", "ns",
+            "sdx", "sdy", "sdz", "sdxy", "sdyz", "sdzx",
+            "sdn", "sde", "sdu", "sdne", "sdeu", "sdun",
+            "age", "ratio", "is_llh"]
     pos = pd.DataFrame(rows, columns=cols).sort_values("tow").reset_index(drop=True)
     if pos.empty:
         raise ValueError(f"No position epochs parsed from {pos_path}")
     pos["time"] = pos.tow - pos.tow.iloc[0]
-    # RTKLIB serializes off-diagonal covariance as signed sqrt(|cov|) via
-    # sqvar(); invert that representation while preserving the sign.
-    cov_ecef = np.zeros((len(pos), 3, 3))
-    cov_ecef[:, 0, 0], cov_ecef[:, 1, 1], cov_ecef[:, 2, 2] = pos.sdx**2, pos.sdy**2, pos.sdz**2
-    cov_ecef[:, 0, 1] = cov_ecef[:, 1, 0] = np.sign(pos.sdxy)*pos.sdxy**2
-    cov_ecef[:, 1, 2] = cov_ecef[:, 2, 1] = np.sign(pos.sdyz)*pos.sdyz**2
-    cov_ecef[:, 2, 0] = cov_ecef[:, 0, 2] = np.sign(pos.sdzx)*pos.sdzx**2
+
     ref = None
     if reference_path and Path(reference_path).exists():
         ref = pd.read_csv(reference_path, skipinitialspace=True)
@@ -78,9 +129,11 @@ def load_data(pos_path: Path, reference_path: Path | None = None,
         if all(c in ref for c in needed):
             ref = ref[needed].dropna().sort_values("GPS TOW (s)")
             xyz0 = ref[["ECEF X (m)", "ECEF Y (m)", "ECEF Z (m)"]].to_numpy()
-            enu_ref = _ecef_to_enu(xyz0 - xyz0[0], ref.iloc[0]["Latitude (deg)"], ref.iloc[0]["Longitude (deg)"])
+            ref_lat0 = float(ref.iloc[0]["Latitude (deg)"])
+            ref_lon0 = float(ref.iloc[0]["Longitude (deg)"])
+            enu_ref = _ecef_to_enu(xyz0 - xyz0[0], ref_lat0, ref_lon0)
             xyz = pos[["x", "y", "z"]].to_numpy()
-            enu_pos = _ecef_to_enu(xyz - xyz0[0], ref.iloc[0]["Latitude (deg)"], ref.iloc[0]["Longitude (deg)"])
+            enu_pos = _ecef_to_enu(xyz - xyz0[0], ref_lat0, ref_lon0)
             pos[["E", "N", "U"]] = enu_pos
             for i, c in enumerate(["E", "N", "U"]):
                 pos[f"gt_{c}"] = np.interp(pos.tow, ref["GPS TOW (s)"], enu_ref[:, i], left=np.nan, right=np.nan)
@@ -89,19 +142,36 @@ def load_data(pos_path: Path, reference_path: Path | None = None,
             pos["e3d"] = np.sqrt(pos.de**2 + pos.dn**2 + pos.du**2)
         else:
             ref = None
+
     if "E" not in pos:
-        # Relative ENU trajectory without truth; do not claim positioning error.
-        enu_pos = _ecef_to_enu(pos[["x", "y", "z"]].to_numpy() - pos[["x", "y", "z"]].iloc[0].to_numpy(), 0, 0)
+        ref_lat0 = float(pos.iloc[0]["lat"]) if np.isfinite(pos.iloc[0]["lat"]) else 0.0
+        ref_lon0 = float(pos.iloc[0]["lon"]) if np.isfinite(pos.iloc[0]["lon"]) else 0.0
+        xyz0 = pos[["x", "y", "z"]].iloc[0].to_numpy()
+        enu_pos = _ecef_to_enu(pos[["x", "y", "z"]].to_numpy() - xyz0, ref_lat0, ref_lon0)
         pos[["E", "N", "U"]] = enu_pos
-    # Rotate covariance to local ENU when a truth origin exists (otherwise use local origin).
-    lat = float(ref.iloc[0]["Latitude (deg)"]) if ref is not None else 0.0
-    lon = float(ref.iloc[0]["Longitude (deg)"]) if ref is not None else 0.0
-    p, l = np.deg2rad([lat, lon])
-    R = np.array([[-np.sin(l), np.cos(l), 0], [-np.sin(p)*np.cos(l), -np.sin(p)*np.sin(l), np.cos(p)], [np.cos(p)*np.cos(l), np.cos(p)*np.sin(l), np.sin(p)]])
-    ce = np.einsum("ij,njk,lk->nil", R, cov_ecef, R)
-    pos["sigE"], pos["sigN"], pos["sigU"] = np.sqrt(np.maximum(ce[:, 0, 0], 0)), np.sqrt(np.maximum(ce[:, 1, 1], 0)), np.sqrt(np.maximum(ce[:, 2, 2], 0))
-    pos["covEN"] = ce[:, 0, 1]
-    pos["rhoEN"] = ce[:, 0, 1] / np.maximum(pos.sigE * pos.sigN, 1e-15)
+
+    if pos["is_llh"].iloc[0]:
+        pos["sigE"] = pos["sde"]
+        pos["sigN"] = pos["sdn"]
+        pos["sigU"] = pos["sdu"]
+        pos["covEN"] = np.sign(pos["sdne"]) * pos["sdne"]**2
+        pos["rhoEN"] = pos["covEN"] / np.maximum(pos["sigE"] * pos["sigN"], 1e-15)
+    else:
+        cov_ecef = np.zeros((len(pos), 3, 3))
+        cov_ecef[:, 0, 0], cov_ecef[:, 1, 1], cov_ecef[:, 2, 2] = pos.sdx**2, pos.sdy**2, pos.sdz**2
+        cov_ecef[:, 0, 1] = cov_ecef[:, 1, 0] = np.sign(pos.sdxy)*pos.sdxy**2
+        cov_ecef[:, 1, 2] = cov_ecef[:, 2, 1] = np.sign(pos.sdyz)*pos.sdyz**2
+        cov_ecef[:, 2, 0] = cov_ecef[:, 0, 2] = np.sign(pos.sdzx)*pos.sdzx**2
+        lat = float(ref.iloc[0]["Latitude (deg)"]) if ref is not None else (float(pos.iloc[0]["lat"]) if np.isfinite(pos.iloc[0]["lat"]) else 0.0)
+        lon = float(ref.iloc[0]["Longitude (deg)"]) if ref is not None else (float(pos.iloc[0]["lon"]) if np.isfinite(pos.iloc[0]["lon"]) else 0.0)
+        p_rad, l_rad = np.deg2rad([lat, lon])
+        R = np.array([[-np.sin(l_rad), np.cos(l_rad), 0],
+                      [-np.sin(p_rad)*np.cos(l_rad), -np.sin(p_rad)*np.sin(l_rad), np.cos(p_rad)],
+                      [np.cos(p_rad)*np.cos(l_rad), np.cos(p_rad)*np.sin(l_rad), np.sin(p_rad)]])
+        ce = np.einsum("ij,njk,lk->nil", R, cov_ecef, R)
+        pos["sigE"], pos["sigN"], pos["sigU"] = np.sqrt(np.maximum(ce[:, 0, 0], 0)), np.sqrt(np.maximum(ce[:, 1, 1], 0)), np.sqrt(np.maximum(ce[:, 2, 2], 0))
+        pos["covEN"] = ce[:, 0, 1]
+        pos["rhoEN"] = ce[:, 0, 1] / np.maximum(pos.sigE * pos.sigN, 1e-15)
     sat = []
     if stat_path.exists():
         for line in stat_path.open(encoding="utf-8", errors="replace"):

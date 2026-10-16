@@ -1,0 +1,54 @@
+# RTKLIB Python 结果绘图与综合诊断
+
+本工具读取 RTKLIB 的 `.pos` 解算结果，并在有对应文件时读取 `.pos.stat` 和真值 CSV。功能参考 RTKLIB Plot 的结果浏览思路，同时增加误差统计、卫星观测诊断、Dashboard 和可选的图片导出格式。
+
+## 交互式桌面界面
+
+```powershell
+python .\GNSS_RTKLIB_Experiments\scripts\rtklib_plot_gui.py
+```
+
+程序启动后可打开 `.pos`，自动尝试读取同名 `.pos.stat` 并查找 `reference.csv`。时间轴与历元显示为中国标准时间日期（UTC+08:00）。ENU Position 与 ENU Error 以 E/N/U 三个共享时间轴的子图显示，时间序列采用点线显示。鼠标移动到时间序列上会选中最近历元，并在各时间图同步显示竖直游标；底部随之更新 RTK/真值经纬度、高程、ΔE/ΔN/ΔU、水平误差和三维误差。轨迹视图显示 RTK 与真值轨迹、当前历元标记及误差连线；小车标记和天空图当前卫星位置会随滑块或播放变化。左侧列表可多选图表并组合为自定义分析网格，每个子图都有当前历元高亮。`False Fix Analysis` 使用点图展示 3D 误差：FIX 为绿色、FLOAT 为黄色，超过用户设定的 3D 误差门限时叠加红色叉号；错误 FIX 率以超过门限的 FIX 历元数除以 FIX 总历元数计算，依赖真值和所选门限。`Covariance` 图显示 RTKLIB 协方差传播得到的位置 1σ 估计不确定度，并对照真值误差是否落在名义 95% 包络内，不应将估计不确定度误读成实测误差。NIS 视图会解释当前文件为何不能计算 NIS：`.pos/.stat` 缺少滤波创新向量及其协方差，必须在 RTKLIB 滤波器中记录后重新解算。可选 1x/10x/50x 播放速度。滚轮可缩放选定的横轴、纵轴或双轴；Y 轴滚轮缩放以 0 为锚点。按住鼠标左键拖动可平移视图，右键拖动可框选缩放；`Fit` 恢复数据全范围，`Equal scale` 可切换轨迹轴等比例显示。`Export Image…` 可把当前视图导出成 PNG、PDF 或 SVG。也可以在启动参数中指定输入：
+程序启动后可打开 `.pos`，自动尝试读取同名 `.pos.stat` 并查找 `reference.csv`。时间轴与历元显示为中国标准时间日期（UTC+08:00）。ENU Position 与 ENU Error 以 E/N/U 三个共享时间轴的子图显示，时间序列采用点线显示。鼠标移动到时间序列上会选中最近历元，并在各时间图同步显示竖直游标；底部随之更新 RTK/真值经纬度、高程、ΔE/ΔN/ΔU、水平误差和三维误差。轨迹视图显示 RTK 与真值轨迹、当前历元标记及误差连线；可直接在轨迹线上按住左键拖动来移动当前历元的小车标记。点击“Set segment start at current epoch”设定分段起点，移动历元后点击“Set end & add segment”保存该时间段；左侧分段列表可删除单段，或清空全部分段。已标记区间会以对应颜色显示在时间序列图中，在轨迹图中加粗高亮，并在天空图标出该区间起止时刻的卫星分布；Dashboard 的仰角/C/N₀图也会高亮区间内观测。小车标记和天空图当前卫星位置会随滑块或播放变化。左侧列表可多选图表并组合为自定义分析网格，每个子图都有当前历元高亮。`False Fix Analysis` 使用点图展示 3D 误差：FIX 为绿色、FLOAT 为黄色，超过用户设定的 3D 误差门限时叠加红色叉号；错误 FIX 率以超过门限的 FIX 历元数除以 FIX 总历元数计算，依赖真值和所选门限。`Covariance` 图显示 RTKLIB 协方差传播得到的位置 1σ 估计不确定度，并对照真值误差是否落在名义 95% 包络内，不应将估计不确定度误读成实测误差。NIS 视图会解释当前文件为何不能计算 NIS：`.pos/.stat` 缺少滤波创新向量及其协方差，必须在 RTKLIB 滤波器中记录后重新解算。可选 1x/10x/50x 播放速度。滚轮可缩放选定的横轴、纵轴或双轴；Y 轴滚轮缩放以 0 为锚点。按住鼠标左键拖动可平移视图，右键拖动可框选缩放；`Fit` 恢复数据全范围，`Equal scale` 可切换轨迹轴等比例显示。`Export Image…` 可把当前视图导出成 PNG、PDF 或 SVG。也可以在启动参数中指定输入：
+
+```powershell
+python .\GNSS_RTKLIB_Experiments\scripts\rtklib_plot_gui.py `
+  --pos "D:\data\session.pos" --reference "D:\data\reference.csv"
+```
+
+## 快速开始
+
+在 `D:\BaiduNetdiskDownload` 下运行：
+
+```powershell
+python .\GNSS_RTKLIB_Experiments\scripts\rtklib_diagnostics.py
+```
+
+默认读取项目中的 `6_RTK_Multi_L1L2.pos`、对应 `.pos.stat` 和 Odaiba `reference.csv`，把图保存到 `GNSS_RTKLIB_Experiments\plots_15_diagnostics`。
+
+指定自己的解算文件并导出 PNG 和 PDF：
+
+```powershell
+python .\GNSS_RTKLIB_Experiments\scripts\rtklib_diagnostics.py `
+  --pos "D:\data\session.pos" `
+  --stat "D:\data\session.pos.stat" `
+  --reference "D:\data\reference.csv" `
+  --output "D:\data\diagnostics" `
+  --format png,pdf --dpi 300
+```
+
+也支持 `--format svg`；`--plots 1,2,3` 可只生成指定图。没有真值时可用 `--reference none`，此时位置误差图会标注不可计算。`.stat` 默认按 `<pos 文件名>.stat` 查找。需要 `numpy`、`pandas` 和 `matplotlib`。
+
+## 输出图
+
+运行 `--plots all` 会生成 15 张诊断图及 `dashboard`：位置/高程、ENU 误差、水平与三维误差 CDF、解算状态、AR Ratio、跟踪与使用卫星数、DOP、天空图、C/N₀、高度角、伪距残差诊断、伪距与载波残差、周跳标志、协方差与误差覆盖、创新/NIS 数据可用性说明，以及综合 Dashboard。
+
+主要定义：
+
+- `ΔE, ΔN, ΔU` 为 RTK 位置减去同一 GPST 时刻插值的真值位置；水平和三维误差分别为 `√(ΔE²+ΔN²)` 与 `√(ΔE²+ΔN²+ΔU²)`。
+- 经验 CDF 由排序误差样本的秩除以样本数计算。
+- DOP 按 L1 `vsat=1` 的不同卫星方位/高度角建立视线几何矩阵，计算 `(AᵀA)⁻¹` 的位置子矩阵迹。它是由观测几何重算的 DOP，不是 RTKLIB 文件直接给出的 DOP 字段。
+- RTKLIB `.stat` 的 `resp` 用于伪距后验残差分析。Plot 11 仅把它作为多路径诊断代理量，不能等同于独立的代码多路径组合。
+- `.pos/.stat` 不含滤波创新向量 `v` 和创新协方差 `S`，因此无法可靠计算 `NIS=vᵀS⁻¹v`；Plot 15 会说明这一数据限制。
+
+

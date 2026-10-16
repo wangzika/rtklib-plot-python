@@ -29,6 +29,21 @@ MODES = ["Gnd Trk", "ENU Position", "Height", "ENU Error", "Solution Status",
          "Multipath Proxy", "Cycle Slips", "Covariance", "False Fix Analysis", "Innovation / NIS",
          "Error CDF", "Error Histogram", "Constellation Summary"]
 
+PLOT_CATEGORIES = {
+    "轨迹与高程 (Trajectory & Position)": [
+        "Gnd Trk", "ENU Position", "Height"
+    ],
+    "定位精度与误差 (Accuracy & Errors)": [
+        "ENU Error", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance"
+    ],
+    "解算状态与可靠性 (Status & Reliability)": [
+        "Solution Status", "AR Ratio", "Innovation / NIS"
+    ],
+    "卫星星历与信号质量 (Satellites & Signal Quality)": [
+        "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals", "Multipath Proxy", "Cycle Slips", "Constellation Summary"
+    ]
+}
+
 
 def gpst_to_local_datetime(week, tow):
     """Convert GPST week/TOW to CST, applying the applicable GPS-UTC offset."""
@@ -132,69 +147,90 @@ class RTKPlotApp:
         filem.add_command(label="Export Standard GeoJSON…",command=self.export_geojson)
         filem.add_separator(); filem.add_command(label="Exit",command=self.root.destroy); bar.add_cascade(label="File",menu=filem)
         edit=tk.Menu(bar,tearoff=False); edit.add_command(label="Save Plot As…",command=self.export_plot); edit.add_command(label="Reset View",command=self.redraw); bar.add_cascade(label="Edit",menu=edit)
+        
+        # New Plots Menu with 4 Categorized Submenus
+        plots_m=tk.Menu(bar,tearoff=False)
+        for cat_name, m_list in PLOT_CATEGORIES.items():
+            cat_menu=tk.Menu(plots_m,tearoff=False)
+            for m in m_list:
+                cat_menu.add_radiobutton(label=m,variable=self.mode,value=m,command=self.redraw)
+            plots_m.add_cascade(label=cat_name,menu=cat_menu)
+        plots_m.add_separator()
+        plots_m.add_radiobutton(label="Dashboard (综合六宫格仪表盘)",variable=self.mode,value="Dashboard",command=self.redraw)
+        plots_m.add_radiobutton(label="Custom Analysis (自定义分区网格)",variable=self.mode,value="Custom Analysis",command=self.redraw)
+        plots_m.add_radiobutton(label="Multi-Compare (多方案横向对比)",variable=self.mode,value="Multi-Compare",command=self.redraw)
+        bar.add_cascade(label="Plots (图表库)",menu=plots_m)
+
         view=tk.Menu(bar,tearoff=False)
-        view.add_checkbutton(label="Grid",variable=self.grid_on,command=self.redraw)
-        view.add_checkbutton(label="Hover scrubs timeline",variable=self.follow_mouse)
-        view.add_checkbutton(label="Click to maximize / restore",variable=self.click_to_maximize)
+        view.add_checkbutton(label="Grid (网格)",variable=self.grid_on,command=self.redraw)
+        view.add_checkbutton(label="Hover scrubs timeline (悬停同步时间轴)",variable=self.follow_mouse)
+        view.add_checkbutton(label="Click to maximize / restore (点击放大/还原)",variable=self.click_to_maximize)
+        
         basemap_m=tk.Menu(view,tearoff=False)
         for p_name in ["None","Esri Satellite","OpenStreetMap","CartoDB Dark"]:
             basemap_m.add_radiobutton(label=p_name,variable=self.basemap_provider,value=p_name,command=self._on_basemap_changed)
         view.add_cascade(label="Basemap Layer (底图图层)",menu=basemap_m)
+
+        zoom_m=tk.Menu(view,tearoff=False)
+        for z_opt in ["Both axes","X axis","Y axis"]:
+            zoom_m.add_radiobutton(label=z_opt,variable=self.zoom_axis,value=z_opt)
+        view.add_cascade(label="Zoom Axis Constraint (缩放轴约束)",menu=zoom_m)
+
+        view.add_checkbutton(label="Equal scale (1:1 物理等比)",variable=self.equal_scale,command=self._apply_aspect)
+        view.add_command(label="Toggle Epoch slider (底端滑块显隐)",command=self._toggle_epoch_slider)
         view.add_separator()
-        view.add_command(label="Delete selected subplot",command=self.delete_selected_subplot,accelerator="Del")
-        view.add_command(label="Reset subplots layout",command=self.reset_subplots_layout)
-        view.add_command(label="Fit to Data",command=self.redraw); bar.add_cascade(label="View",menu=view)
+        layout_m=tk.Menu(view,tearoff=False)
+        layout_m.add_command(label="Restore Default Dashboard (恢复默认六宫格)",command=self.reset_subplots_layout)
+        layout_m.add_command(label="Repack Custom Grid (重排自定义网格)",command=self._reset_custom_grid)
+        layout_m.add_command(label="Delete Selected Subplot (删除选中子图)",command=self.delete_selected_subplot,accelerator="Del")
+        view.add_cascade(label="Subplots Layout (多图排版管理)",menu=layout_m)
+        view.add_command(label="Fit to Data (全图视野自适应)",command=self.fit_view); bar.add_cascade(label="View",menu=view)
+
         windows=tk.Menu(bar,tearoff=False)
         windows.add_command(label="Dashboard",command=lambda:self.set_mode("Dashboard"))
+        windows.add_command(label="Custom Analysis",command=lambda:self.set_mode("Custom Analysis"))
         windows.add_command(label="Multi-Compare",command=lambda:self.set_mode("Multi-Compare"))
         bar.add_cascade(label="Windows",menu=windows)
         helpm=tk.Menu(bar,tearoff=False); helpm.add_command(label="About",command=lambda:messagebox.showinfo("About RTKLIB Plot - Python","Interactive RTKLIB result viewer\nReads .pos, optional .pos.stat and reference CSV.")); bar.add_cascade(label="Help",menu=helpm)
         self.root.config(menu=bar)
 
     def _build_controls(self):
-        row=ttk.Frame(self.root,padding=(8,3)); row.pack(side=tk.TOP,fill=tk.X)
-        ttk.Button(row,text="Open…",command=self.open_file).pack(side=tk.LEFT,padx=(0,8))
-        ttk.Label(row,text="Plot:").pack(side=tk.LEFT)
-        self.mode_box=ttk.Combobox(row,textvariable=self.mode,values=MODES+['Dashboard','Custom Analysis','Multi-Compare'],state="readonly",width=18); self.mode_box.pack(side=tk.LEFT,padx=5); self.mode_box.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
-        ttk.Label(row,text="Solution:").pack(side=tk.LEFT,padx=(10,0))
-        self.qbox=ttk.Combobox(row,textvariable=self.qfilter,values=["All Q"]+[f"Q={q}: {name}" for q,name in Q_LABELS.items()],state="readonly",width=13); self.qbox.pack(side=tk.LEFT,padx=5); self.qbox.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
-        ttk.Checkbutton(row,text="Grid",variable=self.grid_on,command=self.redraw).pack(side=tk.LEFT,padx=8)
-        ttk.Label(row,text="🗺️ Map:").pack(side=tk.LEFT,padx=(10,2))
-        self.basemap_combo=ttk.Combobox(row,textvariable=self.basemap_provider,values=["None","Esri Satellite","OpenStreetMap","CartoDB Dark"],state="readonly",width=13)
+        # 1. Main Action Bar (Main Flow)
+        row1=ttk.Frame(self.root,padding=(8,3)); row1.pack(side=tk.TOP,fill=tk.X)
+        ttk.Button(row1,text="Open…",command=self.open_file).pack(side=tk.LEFT,padx=(0,6))
+        ttk.Label(row1,text="Plot:").pack(side=tk.LEFT)
+        self.mode_box=ttk.Combobox(row1,textvariable=self.mode,values=MODES+['Dashboard','Custom Analysis','Multi-Compare'],state="readonly",width=17)
+        self.mode_box.pack(side=tk.LEFT,padx=4); self.mode_box.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
+        ttk.Label(row1,text="Q:").pack(side=tk.LEFT,padx=(6,0))
+        self.qbox=ttk.Combobox(row1,textvariable=self.qfilter,values=["All Q"]+[f"Q={q}: {name}" for q,name in Q_LABELS.items()],state="readonly",width=10)
+        self.qbox.pack(side=tk.LEFT,padx=3); self.qbox.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
+        ttk.Checkbutton(row1,text="Grid",variable=self.grid_on,command=self.redraw).pack(side=tk.LEFT,padx=6)
+        ttk.Label(row1,text="🗺️ Map:").pack(side=tk.LEFT,padx=(6,2))
+        self.basemap_combo=ttk.Combobox(row1,textvariable=self.basemap_provider,values=["None","Esri Satellite","OpenStreetMap","CartoDB Dark"],state="readonly",width=12)
         self.basemap_combo.pack(side=tk.LEFT,padx=3)
         self.basemap_combo.bind("<<ComboboxSelected>>",self._on_basemap_changed)
+        ttk.Separator(row1,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=6,pady=2)
+        ttk.Button(row1,text="Fit",command=self.fit_view).pack(side=tk.LEFT,padx=2)
+        ttk.Button(row1,text="🗑️ Del",command=self.delete_selected_subplot).pack(side=tk.LEFT,padx=2)
+        ttk.Button(row1,text="↺ Reset",command=self.reset_subplots_layout).pack(side=tk.LEFT,padx=2)
+        ttk.Label(row1,text="Speed:").pack(side=tk.LEFT,padx=(6,0))
+        self.speed_box=ttk.Combobox(row1,textvariable=self.speed,values=["1x","10x","50x"],state="readonly",width=5)
+        self.speed_box.pack(side=tk.LEFT,padx=2)
+        self.play_btn=ttk.Button(row1,text="▶ Play",command=self.toggle_play); self.play_btn.pack(side=tk.LEFT,padx=4)
+        ttk.Button(row1,text="Export Image…",command=self.export_plot).pack(side=tk.RIGHT,padx=4)
+        ttk.Button(row1,text="📸 Batch Export…",command=self.open_batch_export_dialog).pack(side=tk.RIGHT,padx=4)
 
-        nav=ttk.Frame(self.root,padding=(8,2));nav.pack(side=tk.TOP,fill=tk.X)
-        ttk.Label(nav,text="Drag: pan · Right-drag: zoom · Wheel Y at 0:").pack(side=tk.LEFT,padx=(0,4))
-        self.zoom_box=ttk.Combobox(nav,textvariable=self.zoom_axis,values=["Both axes","X axis","Y axis"],state="readonly",width=11);self.zoom_box.pack(side=tk.LEFT,padx=4)
-        ttk.Checkbutton(nav,text="Equal scale",variable=self.equal_scale,command=self._apply_aspect).pack(side=tk.LEFT,padx=3)
-        ttk.Button(nav,text="Fit",command=self.fit_view).pack(side=tk.LEFT,padx=3)
-        ttk.Label(nav,text="3D error limit (m):").pack(side=tk.LEFT,padx=(6,0))
-        self.false_fix_box=ttk.Spinbox(nav,from_=0.01,to=10.0,increment=0.05,textvariable=self.false_fix_limit,width=5,command=self.redraw);self.false_fix_box.pack(side=tk.LEFT,padx=3)
-        self.false_fix_box.bind("<Return>",lambda _e:self.redraw());self.false_fix_box.bind("<FocusOut>",lambda _e:self.redraw())
-        ttk.Label(nav,text="Speed:").pack(side=tk.LEFT,padx=(7,0))
-        self.speed_box=ttk.Combobox(nav,textvariable=self.speed,values=["1x","10x","50x"],state="readonly",width=5);self.speed_box.pack(side=tk.LEFT,padx=3)
-        ttk.Checkbutton(nav,text="Hover scrubs timeline",variable=self.follow_mouse).pack(side=tk.LEFT,padx=(5,0))
-        ttk.Checkbutton(nav,text="Click to Maximize",variable=self.click_to_maximize).pack(side=tk.LEFT,padx=(5,0))
-        ttk.Button(nav,text="🗑️ Del Subplot",command=self.delete_selected_subplot).pack(side=tk.LEFT,padx=(4,0))
-        ttk.Button(nav,text="↺ Reset",command=self.reset_subplots_layout).pack(side=tk.LEFT,padx=(2,0))
-        self.epoch_toggle_btn=ttk.Button(nav,text="Hide Epoch slider",command=self._toggle_epoch_slider);self.epoch_toggle_btn.pack(side=tk.LEFT,padx=(5,0))
-        ttk.Button(nav,text="◀ Page",command=lambda:self._change_custom_page(-1)).pack(side=tk.LEFT,padx=(10,1))
-        self.custom_page_label=ttk.Label(nav,text="Page 1 / 1",anchor="center",width=9);self.custom_page_label.pack(side=tk.LEFT,padx=1)
-        ttk.Button(nav,text="Page ▶",command=lambda:self._change_custom_page(1)).pack(side=tk.LEFT,padx=1)
-        ttk.Button(nav,text="📸 Batch Export…",command=self.open_batch_export_dialog).pack(side=tk.RIGHT,padx=4)
-        ttk.Button(nav,text="Export Image…",command=self.export_plot).pack(side=tk.RIGHT,padx=4)
-        self.play_btn=ttk.Button(nav,text="▶ Play",command=self.toggle_play); self.play_btn.pack(side=tk.RIGHT,padx=4)
-        marks=ttk.Frame(self.root,padding=(8,2));marks.pack(side=tk.TOP,fill=tk.X)
-        ttk.Button(marks,text="Set start",command=self.mark_segment_start).pack(side=tk.LEFT,padx=(0,3))
-        ttk.Button(marks,text="Set end & add",command=self.add_segment).pack(side=tk.LEFT,padx=3)
-        ttk.Button(marks,text="Clear",command=self.clear_segments).pack(side=tk.LEFT,padx=3)
-        ttk.Button(marks,text="🔍 Auto Detect Issues",command=self.auto_detect_issues).pack(side=tk.LEFT,padx=4)
-        ttk.Button(marks,text="📋 Diagnostic Report",command=self.open_report_dialog).pack(side=tk.LEFT,padx=4)
-        ttk.Button(marks,text="📸 Export Subplots…",command=self.open_batch_export_dialog).pack(side=tk.LEFT,padx=4)
-        ttk.Button(marks,text="🌐 Google Earth 3D…",command=self.export_kml).pack(side=tk.LEFT,padx=3)
-        ttk.Button(marks,text="🗺️ GeoJSON…",command=self.export_geojson).pack(side=tk.LEFT,padx=3)
-        self.segment_status=ttk.Label(marks,text="Shift+Drag to mark segment · Double-click segment to zoom · Double-click subplot to maximize.",anchor="w");self.segment_status.pack(side=tk.LEFT,padx=8,fill=tk.X,expand=True)
+        # 2. Mark & Diagnostics Bar
+        row2=ttk.Frame(self.root,padding=(8,2)); row2.pack(side=tk.TOP,fill=tk.X)
+        ttk.Button(row2,text="Set start",command=self.mark_segment_start).pack(side=tk.LEFT,padx=(0,3))
+        ttk.Button(row2,text="Set end & add",command=self.add_segment).pack(side=tk.LEFT,padx=3)
+        ttk.Button(row2,text="Clear",command=self.clear_segments).pack(side=tk.LEFT,padx=3)
+        ttk.Button(row2,text="🔍 Auto Detect Issues",command=self.auto_detect_issues).pack(side=tk.LEFT,padx=4)
+        ttk.Button(row2,text="📋 Diagnostic Report",command=self.open_report_dialog).pack(side=tk.LEFT,padx=4)
+        ttk.Button(row2,text="🌐 Google Earth 3D…",command=self.export_kml).pack(side=tk.LEFT,padx=3)
+        ttk.Button(row2,text="🗺️ GeoJSON…",command=self.export_geojson).pack(side=tk.LEFT,padx=3)
+        self.segment_status=ttk.Label(row2,text="右键子图快捷菜单 · 双击满屏放大/还原 · 列表双击聚焦区段 · Shift+拖拽标记区段",anchor="w")
+        self.segment_status.pack(side=tk.LEFT,padx=8,fill=tk.X,expand=True)
 
     def _build_plot(self):
         self.fig=plt.Figure(figsize=(10,6),dpi=100,facecolor="white"); self.ax=self.fig.add_subplot(111)
@@ -261,6 +297,10 @@ class RTKPlotApp:
         ttk.Button(self.standard_sidebar,text="Show selected panel only",command=self._focus_custom_panel).pack(fill=tk.X,pady=1)
         ttk.Button(self.standard_sidebar,text="Clear selected panel",command=self._clear_custom_panel).pack(fill=tk.X,pady=1)
         ttk.Button(self.standard_sidebar,text="Repack panels",command=self._reset_custom_grid).pack(fill=tk.X,pady=1)
+        page_f=ttk.Frame(self.standard_sidebar); page_f.pack(fill=tk.X,pady=(2,1))
+        ttk.Button(page_f,text="◀ Page",command=lambda:self._change_custom_page(-1)).pack(side=tk.LEFT,fill=tk.X,expand=True,padx=1)
+        self.custom_page_label=ttk.Label(page_f,text="Page 1 / 1",anchor="center",width=8); self.custom_page_label.pack(side=tk.LEFT,padx=1)
+        ttk.Button(page_f,text="Page ▶",command=lambda:self._change_custom_page(1)).pack(side=tk.RIGHT,fill=tk.X,expand=True,padx=1)
 
         # Multi-compare sidebar (Solution overlay manager)
         self.compare_sidebar=ttk.Frame(self.sidebar)
@@ -1485,6 +1525,47 @@ class RTKPlotApp:
             self._draw_false_fix(ax, p)
             self._set_datetime_axis(ax)
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "ENU Position":
+            for c, col in zip(["E", "N", "U"], ["#2878B5", "#E07A2D", "#36965A"]):
+                ax.plot(p.time, p[c], lw=.65, label=c, color=col)
+            ax.set(title=name, ylabel="Position (m)")
+            ax.legend(fontsize=6 if not is_single else 8, ncol=3)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "ENU Error":
+            if self.data["has_truth"]:
+                for c, col in zip(["de", "dn", "du"], ["#2878B5", "#E07A2D", "#36965A"]):
+                    ax.plot(p.time, p[c], lw=.65, label=c.upper(), color=col)
+                ax.axhline(0, color="k", lw=.5)
+                ax.legend(fontsize=6 if not is_single else 8, ncol=3)
+            else:
+                ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
+            ax.set(title=name, ylabel="Error (m)")
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name in ("C/N0", "C/N₀"):
+            self._draw_cn0(ax)
+            ax.set_title(name)
+        elif name == "Elevation":
+            self._draw_elevation(ax)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Skyplot":
+            if getattr(ax, "name", "") == "polar":
+                self._draw_sky(ax)
+            else:
+                ax.text(.5, .5, "Skyplot requires polar projection\n(Double-click to maximize or view alone)", ha="center", va="center", transform=ax.transAxes)
+                ax.set(title="Skyplot")
+        elif name == "Multipath Proxy":
+            self._draw_multipath(ax)
+        elif name == "Innovation / NIS":
+            self._draw_nis(ax)
+        elif name == "Error CDF":
+            self._draw_error_cdf(ax, p)
+        elif name == "Error Histogram":
+            self._draw_error_histogram([ax], p)
+        elif name == "Constellation Summary":
+            self._draw_constellation_summary([ax], s)
         else:
             ax.text(.5, .5, f"{name}", ha="center", transform=ax.transAxes)
 
@@ -1782,6 +1863,14 @@ class RTKPlotApp:
         if not press:return
         ax=press["ax"]
         if not press["moved"]:
+            if event.button == 3:
+                target_ax = event.inaxes if (event.inaxes is not None and event.inaxes in self.plot_axes) else ax
+                if target_ax in self.plot_axes:
+                    self._show_subplot_context_menu(target_ax, event)
+                    return
+                else:
+                    self._restore_axis(ax); return
+
             if self.click_to_maximize.get():
                 if self.mode.get()=="Dashboard":
                     if event.button==1 and event.inaxes in self.plot_axes:
@@ -1790,12 +1879,6 @@ class RTKPlotApp:
                             self.focused_dashboard_subplot=clicked_idx
                             self.redraw()
                         return
-                    elif event.button==3 and self.focused_dashboard_subplot is not None:
-                        self.focused_dashboard_subplot=None
-                        self.redraw()
-                        return
-                    elif event.button==3:
-                        self._restore_axis(ax);return
                 elif self.mode.get()=="Multi-Compare":
                     if event.button==1 and event.inaxes in self.plot_axes:
                         clicked_idx=self.plot_axes.index(event.inaxes)
@@ -1803,12 +1886,6 @@ class RTKPlotApp:
                             self.focused_compare_subplot=clicked_idx
                             self.redraw()
                         return
-                    elif event.button==3 and self.focused_compare_subplot is not None:
-                        self.focused_compare_subplot=None
-                        self.redraw()
-                        return
-                    elif event.button==3:
-                        self._restore_axis(ax);return
                 elif self.mode.get()=="Custom Analysis":
                     if event.button==1 and event.inaxes in self.plot_axes:
                         panel_index=self.selected_custom_panel
@@ -1816,18 +1893,10 @@ class RTKPlotApp:
                             self.focused_custom_panel=panel_index
                             self.redraw()
                         return
-                    elif event.button==3 and self.focused_custom_panel is not None:
-                        self.focused_custom_panel=None
-                        self.redraw()
-                        return
-                    elif event.button==3:
-                        self._restore_axis(ax);return
 
             if event.button==1 and event.inaxes is ax and event.xdata is not None and event.ydata is not None:
                 if self.mode.get() not in ("Dashboard","Custom Analysis","Multi-Compare"):
                     self._zoom_at_click(ax,event.xdata,event.ydata,.72)
-            elif event.button==3:
-                self._restore_axis(ax)
             return
         if event.button==3 and event.inaxes is ax and event.xdata is not None and event.ydata is not None:
             mode=self.zoom_axis.get()
@@ -1849,6 +1918,213 @@ class RTKPlotApp:
         limits=getattr(self,"_home_limits",{}).get(id(ax))
         if limits:
             ax.set_xlim(limits[0]);ax.set_ylim(limits[1]);self.canvas.draw_idle()
+
+    def _show_subplot_context_menu(self, ax, event):
+        if not self.data:
+            return
+        menu = tk.Menu(self.root, tearoff=False)
+        current_mode = self._get_subplot_mode_name(ax)
+        is_maximized = self._is_subplot_maximized(ax)
+
+        menu.add_command(label=f"📌 当前子图: {current_mode}", state="disabled")
+        menu.add_separator()
+
+        if is_maximized:
+            menu.add_command(label="🗗 恢复多图显示 (Restore Grid)", command=lambda: self._toggle_maximize_subplot(ax))
+        else:
+            menu.add_command(label="🗖 放大当前子图 (Maximize Subplot)", command=lambda: self._toggle_maximize_subplot(ax))
+
+        # Categorized Submenu for replacing subplots with 20 plot modes
+        replace_menu = tk.Menu(menu, tearoff=False)
+        for cat_name, modes in PLOT_CATEGORIES.items():
+            cat_submenu = tk.Menu(replace_menu, tearoff=False)
+            for m in modes:
+                cat_submenu.add_command(label=m, command=lambda new_m=m: self._replace_subplot(ax, new_m))
+            replace_menu.add_cascade(label=cat_name, menu=cat_submenu)
+        menu.add_cascade(label="🔄 替换此子图为 (Replace Subplot with…)", menu=replace_menu)
+
+        menu.add_separator()
+        menu.add_command(label="📸 单独导出此子图 (300 DPI PNG)…", command=lambda: self._export_single_subplot(ax))
+        menu.add_command(label="↺ 重置此子图视野 (Reset Zoom)", command=lambda: self._restore_axis(ax))
+
+        mode = self.mode.get()
+        if mode in ("Dashboard", "Custom Analysis"):
+            menu.add_separator()
+            menu.add_command(label="🗑️ 删除此子图 (Delete Subplot)", command=lambda: self._delete_subplot(ax))
+
+        try:
+            menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+        finally:
+            menu.grab_release()
+
+    def _get_subplot_mode_name(self, ax):
+        if ax not in self.plot_axes:
+            return self.mode.get()
+        mode = self.mode.get()
+        if mode == "Dashboard":
+            if self.focused_dashboard_subplot is not None:
+                idx = self.focused_dashboard_subplot
+            else:
+                idx = self.plot_axes.index(ax)
+            if 0 <= idx < len(self.dashboard_modes):
+                return self.dashboard_modes[idx]
+            return "Dashboard"
+        elif mode == "Custom Analysis":
+            idx = self.plot_axes.index(ax)
+            panel_idx = self.focused_custom_panel if self.focused_custom_panel is not None else (
+                self.visible_panel_indices[idx] if idx < len(self.visible_panel_indices) else idx
+            )
+            if 0 <= panel_idx < len(self.custom_panels):
+                return self.custom_panels[panel_idx].get("mode") or "Empty Slot"
+            return "Custom Analysis"
+        elif mode == "Multi-Compare":
+            idx = self.focused_compare_subplot if self.focused_compare_subplot is not None else self.plot_axes.index(ax)
+            if idx == 0:
+                return "Multi-Compare Trajectory"
+            return "Multi-Compare Horizontal Error"
+        else:
+            return mode
+
+    def _is_subplot_maximized(self, ax):
+        mode = self.mode.get()
+        if mode == "Dashboard":
+            return self.focused_dashboard_subplot is not None
+        elif mode == "Custom Analysis":
+            return self.focused_custom_panel is not None
+        elif mode == "Multi-Compare":
+            return self.focused_compare_subplot is not None
+        return False
+
+    def _toggle_maximize_subplot(self, ax):
+        mode = self.mode.get()
+        if mode == "Dashboard":
+            if self.focused_dashboard_subplot is not None:
+                self.focused_dashboard_subplot = None
+            else:
+                if ax in self.plot_axes:
+                    self.focused_dashboard_subplot = self.plot_axes.index(ax)
+                elif self.dashboard_modes:
+                    self.focused_dashboard_subplot = min(max(0, self.selected_dashboard_index), len(self.dashboard_modes) - 1)
+            self.redraw()
+        elif mode == "Custom Analysis":
+            if self.focused_custom_panel is not None:
+                self.focused_custom_panel = None
+            else:
+                if ax in self.plot_axes:
+                    idx = self.plot_axes.index(ax)
+                    self.focused_custom_panel = (
+                        self.visible_panel_indices[idx] if idx < len(self.visible_panel_indices) else idx
+                    )
+                elif self.custom_panels:
+                    self.focused_custom_panel = min(max(0, self.selected_custom_panel), len(self.custom_panels) - 1)
+            self.redraw()
+        elif mode == "Multi-Compare":
+            if self.focused_compare_subplot is not None:
+                self.focused_compare_subplot = None
+            else:
+                if ax in self.plot_axes:
+                    self.focused_compare_subplot = self.plot_axes.index(ax)
+                else:
+                    self.focused_compare_subplot = self.selected_compare_subplot
+            self.redraw()
+        else:
+            self.fit_view()
+
+    def _replace_subplot(self, ax, new_mode):
+        mode = self.mode.get()
+        if mode == "Dashboard":
+            if self.focused_dashboard_subplot is not None:
+                idx = self.focused_dashboard_subplot
+            elif ax in self.plot_axes:
+                idx = self.plot_axes.index(ax)
+            else:
+                idx = self.selected_dashboard_index
+            if 0 <= idx < len(self.dashboard_modes):
+                self.dashboard_modes[idx] = new_mode
+                self.selected_dashboard_index = idx
+                self.segment_status.configure(text=f"子图 {idx+1} 已替换为: {new_mode}")
+                self.redraw()
+        elif mode == "Custom Analysis":
+            if not self.custom_panels:
+                self.custom_panels = self._initial_custom_panels([new_mode])
+                self.custom_modes = [new_mode]
+                self.selected_custom_panel = 0
+                self.segment_status.configure(text=f"自定义分区 1 已设置为: {new_mode}")
+                self.redraw()
+                return
+            if ax in self.plot_axes:
+                idx = self.plot_axes.index(ax)
+                panel_idx = self.focused_custom_panel if self.focused_custom_panel is not None else (
+                    self.visible_panel_indices[idx] if idx < len(self.visible_panel_indices) else idx
+                )
+            else:
+                panel_idx = self.selected_custom_panel
+            if 0 <= panel_idx < len(self.custom_panels):
+                self.custom_panels[panel_idx]["mode"] = new_mode
+                self.custom_modes = [p["mode"] for p in self.custom_panels]
+                self.selected_custom_panel = panel_idx
+                self.segment_status.configure(text=f"自定义分区 {panel_idx+1} 已替换为: {new_mode}")
+                self.redraw()
+        else:
+            self.set_mode(new_mode)
+
+    def _delete_subplot(self, ax):
+        mode = self.mode.get()
+        if mode == "Dashboard":
+            if self.focused_dashboard_subplot is not None:
+                self.selected_dashboard_index = self.focused_dashboard_subplot
+            elif ax in self.plot_axes:
+                self.selected_dashboard_index = self.plot_axes.index(ax)
+            self.delete_selected_subplot()
+        elif mode == "Custom Analysis":
+            if ax in self.plot_axes:
+                idx = self.plot_axes.index(ax)
+                self.selected_custom_panel = self.focused_custom_panel if self.focused_custom_panel is not None else (
+                    self.visible_panel_indices[idx] if idx < len(self.visible_panel_indices) else idx
+                )
+            self.delete_selected_subplot()
+        else:
+            self.delete_selected_subplot()
+
+    def _export_single_subplot(self, ax):
+        if self.data is None:
+            messagebox.showwarning("提示", "未加载任何解算数据。")
+            return
+        mode_name = self._get_subplot_mode_name(ax)
+        clean_name = mode_name.lower().replace(" ", "_").replace("/", "_")
+        path = filedialog.asksaveasfilename(
+            title=f"单独导出子图 [{mode_name}]",
+            defaultextension=".png",
+            initialfile=f"subplot_{clean_name}.png",
+            filetypes=[("PNG 图像 (*.png)", "*.png"), ("PDF 文档 (*.pdf)", "*.pdf"), ("SVG 矢量图 (*.svg)", "*.svg")]
+        )
+        if not path:
+            return
+        try:
+            temp_fig = plt.Figure(figsize=(10, 6), dpi=300, facecolor="white")
+            if self.mode.get() == "Multi-Compare":
+                temp_ax = temp_fig.add_subplot(111)
+                visible_sols = [s for s in self.multi_solutions if s["visible"].get()]
+                idx = self.focused_compare_subplot if self.focused_compare_subplot is not None else (
+                    self.plot_axes.index(ax) if ax in self.plot_axes else 0
+                )
+                if idx == 0:
+                    self._draw_compare_track(temp_ax, visible_sols)
+                else:
+                    self._draw_compare_error(temp_ax, visible_sols)
+                temp_ax.grid(self.grid_on.get(), alpha=0.3)
+                temp_fig.tight_layout()
+            else:
+                pos_sub = self._filtered()
+                sat_sub = self.data.get("sat")
+                metrics = diag.compute_segment_metrics(pos_sub, sat_sub)
+                self.export_render_mode(temp_fig, mode_name, pos_sub, sat_sub, metrics, with_hud=True)
+
+            temp_fig.savefig(path, dpi=300 if path.lower().endswith(".png") else None, bbox_inches="tight")
+            self.segment_status.configure(text=f"子图 [{mode_name}] 已成功导出至: {os.path.basename(path)}")
+            messagebox.showinfo("导出成功", f"子图 [{mode_name}] 已成功以 300 DPI 导出至:\n{path}")
+        except Exception as exc:
+            messagebox.showerror("导出失败", f"导出子图时发生异常:\n{str(exc)}")
 
     def _nearest_track_epoch(self,event):
         p=self.data["pos"]
@@ -2137,6 +2413,23 @@ class RTKPlotApp:
                 diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
             fig.tight_layout()
             return
+        elif mode_name == "Innovation / NIS":
+            self._draw_nis(ax)
+        elif mode_name in ("Elevation vs C/N0", "Elevation vs C/N₀"):
+            ss = s.query("freq == 1 and snr > 0") if not s.empty else s
+            if not ss.empty:
+                ax.scatter(ss.el, ss.snr, s=2, alpha=.15)
+            ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
+        elif mode_name in ("Position Error", "Position error"):
+            if self.data["has_truth"]:
+                ax.plot(p.time, p.eh, lw=.8, label="Horizontal")
+                ax.plot(p.time, p.e3d, lw=.8, label="3D")
+                ax.legend(fontsize=8)
+                ax.set(title="Position Error", xlabel="Time (s)", ylabel="Error (m)")
+            else:
+                ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
+                ax.set(title="Position Error")
+            self._set_datetime_axis(ax)
         elif mode_name == "Constellation Summary":
             fig.set_size_inches(13, 4.5)
             fig.clear()

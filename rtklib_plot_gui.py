@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk, scrolledtext
 
 import numpy as np
 import matplotlib
@@ -25,7 +25,8 @@ Q_LABELS = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}
 Q_COLORS = {1: "#07851d", 2: "#dc8a12", 3: "#5b83c4", 4: "#9b59b6", 5: "#777777", 6: "#17a2a4"}
 MODES = ["Gnd Trk", "ENU Position", "Height", "ENU Error", "Solution Status",
          "AR Ratio", "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals",
-         "Multipath Proxy", "Cycle Slips", "Covariance", "False Fix Analysis", "Innovation / NIS"]
+         "Multipath Proxy", "Cycle Slips", "Covariance", "False Fix Analysis", "Innovation / NIS",
+         "Error CDF", "Error Histogram", "Constellation Summary"]
 
 
 def gpst_to_local_datetime(week, tow):
@@ -92,10 +93,26 @@ class RTKPlotApp:
         self._build_menu(); self._build_controls(); self._build_status(); self._build_plot()
         self.root.bind("<Control-o>", lambda _e: self.open_file()); self.root.bind("<Control-s>", lambda _e: self.export_plot())
         self.root.bind("<Control-e>", lambda _e: self.open_batch_export_dialog())
+        self.root.bind("<Control-r>", lambda _e: self.open_report_dialog())
         self.root.bind("<Delete>", lambda _e: self.delete_selected_subplot())
+        self.root.bind("<space>", lambda _e: self.toggle_play())
+        self.root.bind("<Left>", lambda _e: self._step_epoch(-1))
+        self.root.bind("<Right>", lambda _e: self._step_epoch(1))
+        self.root.bind("<Shift-Left>", lambda _e: self._step_epoch(-10))
+        self.root.bind("<Shift-Right>", lambda _e: self._step_epoch(10))
+        self.root.bind("<Home>", lambda _e: self.fit_view())
+        self.root.bind("<r>", lambda _e: self.redraw())
+        self.root.bind("<R>", lambda _e: self.redraw())
         if pos and Path(pos).exists(): self.load_solution(Path(pos), reference)
         elif diag.DEFAULT_POS.exists(): self.load_solution(diag.DEFAULT_POS, diag.DEFAULT_REF if diag.DEFAULT_REF.exists() else None)
         else: self.draw_empty("打开 RTKLIB .pos 文件开始绘图")
+
+    def _step_epoch(self, step):
+        if self.data is None: return
+        n = len(self.data["pos"])
+        cur = int(self.slider.get())
+        nxt = max(0, min(cur + step, n - 1))
+        self.slider.set(nxt)
 
     def _build_menu(self):
         bar=tk.Menu(self.root)
@@ -103,6 +120,8 @@ class RTKPlotApp:
         filem.add_command(label="Open Solution (.pos)…",command=self.open_file,accelerator="Ctrl+O")
         filem.add_command(label="Open Satellite Status (.stat)…",command=self.open_stat_file)
         filem.add_command(label="Open Ground Truth (.csv)…",command=self.open_reference_file)
+        filem.add_separator()
+        filem.add_command(label="Generate Diagnostic Report…",command=self.open_report_dialog,accelerator="Ctrl+R")
         filem.add_command(label="Export Current Plot…",command=self.export_plot,accelerator="Ctrl+S")
         filem.add_command(label="Batch Export Subplots…",command=self.open_batch_export_dialog,accelerator="Ctrl+E")
         filem.add_separator(); filem.add_command(label="Exit",command=self.root.destroy); bar.add_cascade(label="File",menu=filem)
@@ -153,11 +172,13 @@ class RTKPlotApp:
         ttk.Button(nav,text="Export Image…",command=self.export_plot).pack(side=tk.RIGHT,padx=4)
         self.play_btn=ttk.Button(nav,text="▶ Play",command=self.toggle_play); self.play_btn.pack(side=tk.RIGHT,padx=4)
         marks=ttk.Frame(self.root,padding=(8,2));marks.pack(side=tk.TOP,fill=tk.X)
-        ttk.Button(marks,text="Set segment start at current epoch",command=self.mark_segment_start).pack(side=tk.LEFT,padx=(0,4))
-        ttk.Button(marks,text="Set end & add segment",command=self.add_segment).pack(side=tk.LEFT,padx=4)
-        ttk.Button(marks,text="Clear segments",command=self.clear_segments).pack(side=tk.LEFT,padx=4)
-        ttk.Button(marks,text="📸 Export Subplots…",command=self.open_batch_export_dialog).pack(side=tk.LEFT,padx=6)
-        self.segment_status=ttk.Label(marks,text="Shift+Drag on timeline to select time range · or drag vehicle marker.",anchor="w");self.segment_status.pack(side=tk.LEFT,padx=10,fill=tk.X,expand=True)
+        ttk.Button(marks,text="Set start",command=self.mark_segment_start).pack(side=tk.LEFT,padx=(0,3))
+        ttk.Button(marks,text="Set end & add",command=self.add_segment).pack(side=tk.LEFT,padx=3)
+        ttk.Button(marks,text="Clear",command=self.clear_segments).pack(side=tk.LEFT,padx=3)
+        ttk.Button(marks,text="🔍 Auto Detect Issues",command=self.auto_detect_issues).pack(side=tk.LEFT,padx=4)
+        ttk.Button(marks,text="📋 Diagnostic Report",command=self.open_report_dialog).pack(side=tk.LEFT,padx=4)
+        ttk.Button(marks,text="📸 Export Subplots…",command=self.open_batch_export_dialog).pack(side=tk.LEFT,padx=4)
+        self.segment_status=ttk.Label(marks,text="Shift+Drag to mark segment · Double-click segment to zoom · Double-click subplot to maximize.",anchor="w");self.segment_status.pack(side=tk.LEFT,padx=8,fill=tk.X,expand=True)
 
     def _build_plot(self):
         self.fig=plt.Figure(figsize=(10,6),dpi=100,facecolor="white"); self.ax=self.fig.add_subplot(111)
@@ -210,6 +231,7 @@ class RTKPlotApp:
         ttk.Label(self.standard_sidebar,text="Marked time segments",font=("Segoe UI",9,"bold")).pack(anchor="w")
         seg_frame=ttk.Frame(self.standard_sidebar);seg_frame.pack(fill=tk.X,pady=(2,0))
         self.segment_box=tk.Listbox(seg_frame,height=3,width=23,exportselection=False)
+        self.segment_box.bind("<Double-Button-1>",self.on_segment_double_click)
         seg_scroll=ttk.Scrollbar(seg_frame,orient=tk.VERTICAL,command=self.segment_box.yview);self.segment_box.configure(yscrollcommand=seg_scroll.set)
         self.segment_box.pack(side=tk.LEFT,fill=tk.X,expand=True);seg_scroll.pack(side=tk.RIGHT,fill=tk.Y)
         ttk.Button(self.standard_sidebar,text="Delete selected segment",command=self.delete_segment).pack(fill=tk.X,pady=(2,0))
@@ -445,6 +467,61 @@ class RTKPlotApp:
         self.segments.clear();self.segment_start_idx=None;self._refresh_segment_list()
         self.segment_status.configure(text="All marked segments cleared.");self._refresh_segment_overlays()
 
+    def on_segment_double_click(self, event=None):
+        if not hasattr(self, "segment_box"): return
+        sel = self.segment_box.curselection()
+        if not sel or not self.segments or self.data is None: return
+        idx = sel[0]
+        if idx >= len(self.segments): return
+        seg = self.segments[idx]
+        p = self.data["pos"]
+        t0 = float(p.iloc[seg["start"]].time)
+        t1 = float(p.iloc[seg["end"]].time)
+        pad = max(2.0, (t1 - t0) * 0.08)
+
+        # 1. Zoom timeline datetime axes
+        for ax in self.datetime_axes:
+            ax.set_xlim(t0 - pad, t1 + pad)
+
+        # 2. Zoom ground track axes
+        g = p.iloc[seg["start"]:seg["end"]+1]
+        for ax in self.track_axes:
+            e_min, e_max = float(g.E.min()), float(g.E.max())
+            n_min, n_max = float(g.N.min()), float(g.N.max())
+            de = max(3.0, (e_max - e_min) * 0.12)
+            dn = max(3.0, (n_max - n_min) * 0.12)
+            ax.set_xlim(e_min - de, e_max + de)
+            ax.set_ylim(n_min - dn, n_max + dn)
+
+        # 3. Position epoch slider to start of segment
+        self.slider.set(seg["start"])
+        self.canvas.draw_idle()
+        self.segment_status.configure(text=f"🔍 已自动缩放并聚焦至时段: {seg['name']} ({self._epoch_datetime_label(seg['start'])} — {self._epoch_datetime_label(seg['end'])} CST)")
+
+    def auto_detect_issues(self):
+        if self.data is None:
+            messagebox.showwarning("Warning", "请先加载 .pos 解算数据后再进行智能异常探测。")
+            return
+        detected = diag.detect_problematic_segments(self.data["pos"], error_limit=float(self.false_fix_limit.get()), min_duration=2.0)
+        if not detected:
+            messagebox.showinfo("智能诊断结果", "全文未探测到持续失锁（Float/Single）或3D误差超标时段，解算质量表现优异！")
+            return
+        new_count = 0
+        for item in detected:
+            if not any(abs(s["start"] - item["start"]) < 5 and abs(s["end"] - item["end"]) < 5 for s in self.segments):
+                self.segments.append(item)
+                new_count += 1
+        self._refresh_segment_list()
+        self._refresh_segment_overlays()
+        messagebox.showinfo("智能诊断完成", f"共自动探测出 {len(detected)} 处异常/跳固定时段（新增标记 {new_count} 处）。\n\n提示：双击左侧列表中的任意时段即可快速缩放聚焦！")
+        self.segment_status.configure(text=f"已自动标记 {len(detected)} 处异常时段。双击左侧时段列表可自动缩放聚焦。")
+
+    def open_report_dialog(self):
+        if self.data is None:
+            messagebox.showwarning("Warning", "请先加载 .pos 解算数据后再生成诊断报告。")
+            return
+        DiagnosticReportDialog(self)
+
     def show_selected(self):
         if self.data is None:return
         selected=[MODES[i] for i in self.plot_list.curselection()]
@@ -596,8 +673,11 @@ class RTKPlotApp:
             self._draw_dashboard();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
         if mode=="Custom Analysis":
             self._draw_custom_grid();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
-        if mode in ("ENU Position","ENU Error"):
-            axes=self.fig.subplots(3,1,sharex=True);self.plot_axes=list(axes);self.ax=axes[0]
+        if mode in ("ENU Position","ENU Error","Error Histogram"):
+            sharex = (mode != "Error Histogram")
+            axes=self.fig.subplots(3,1,sharex=sharex);self.plot_axes=list(axes);self.ax=axes[0]
+        elif mode=="Constellation Summary":
+            axes=self.fig.subplots(1,2);self.plot_axes=list(axes);self.ax=axes[0]
         else:
             self.ax=self.fig.add_subplot(111,projection="polar" if mode=="Skyplot" else None);self.plot_axes=[self.ax]
         ax=self.ax
@@ -621,8 +701,11 @@ class RTKPlotApp:
         elif mode=="Covariance":self._draw_covariance(ax,p)
         elif mode=="False Fix Analysis":self._draw_false_fix(ax,p)
         elif mode=="Innovation / NIS":self._draw_nis(ax)
+        elif mode=="Error CDF":self._draw_error_cdf(ax,p)
+        elif mode=="Error Histogram":self._draw_error_histogram(self.plot_axes,p)
+        elif mode=="Constellation Summary":self._draw_constellation_summary(self.plot_axes,s)
         for plot_ax in self.plot_axes:plot_ax.grid(self.grid_on.get(),linestyle="--",alpha=.45)
-        if mode not in ("Gnd Trk","Skyplot","Innovation / NIS"):
+        if mode not in ("Gnd Trk","Skyplot","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary"):
             for plot_ax in self.plot_axes:self.time_cursors.append(plot_ax.axvline(0,color="#333",ls="--",lw=.8,alpha=.7,zorder=10))
         if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Satellites","DOP","C/N0","Elevation","Residuals","Multipath Proxy","Cycle Slips","Covariance","False Fix Analysis"):
             for plot_ax in self.plot_axes:self._set_datetime_axis(plot_ax)
@@ -763,6 +846,105 @@ class RTKPlotApp:
         if clipped:ax.text(.99,.98,f"{clipped} epochs above display cap",ha="right",va="top",transform=ax.transAxes,fontsize=8,color="#a22")
         ax.set_ylim(0,cap);ax.set(xlabel="Date/time",ylabel="3D position error (m)",title="3D Error by Solution Status (points; red × exceeds limit)");ax.legend(fontsize=8,ncol=2)
 
+    def _draw_error_cdf(self, ax, p):
+        if not self.data["has_truth"]:
+            ax.text(0.5, 0.5, "需要真值参考轨迹才能绘制误差累积概率分布 (CDF)", ha="center", va="center", transform=ax.transAxes, fontsize=10)
+            return
+        eh = np.sort(p.eh.dropna())
+        e3d = np.sort(p.e3d.dropna())
+        if len(eh) == 0:
+            ax.text(0.5, 0.5, "无有效误差数据", ha="center", va="center", transform=ax.transAxes)
+            return
+        cdf_y = np.linspace(0, 100, len(eh))
+        cep50 = float(np.quantile(eh, 0.5))
+        cep95 = float(np.quantile(eh, 0.95))
+        p50 = float(np.quantile(e3d, 0.5))
+        p95 = float(np.quantile(e3d, 0.95))
+        kw_eh = self._get_line_kwargs("Error CDF", default_ls="-", default_lw=1.8)
+        ax.plot(eh, cdf_y, color="#2878B5", label=f"水平误差 (CEP50={cep50:.3f}m, CEP95={cep95:.3f}m)", **kw_eh)
+        ax.plot(e3d, cdf_y, color="#E07A2D", lw=kw_eh.get("lw", 1.8), ls="--", label=f"3D误差 (P50={p50:.3f}m, P95={p95:.3f}m)")
+        ax.axhline(50, color="gray", ls="--", lw=0.8, alpha=0.7, label="50% (中位数 / CEP50)")
+        ax.axhline(68.3, color="green", ls=":", lw=0.8, alpha=0.7, label="68.3% (1-Sigma)")
+        ax.axhline(95, color="red", ls="--", lw=0.8, alpha=0.7, label="95.0% (2DRMS / 2-Sigma)")
+        ax.set_xlabel("误差 (m)")
+        ax.set_ylabel("累积概率分布 (%)")
+        ax.set_title("定位误差累积分布函数 (Empirical CDF)", fontsize=11, weight="bold")
+        ax.set_xlim(0, max(0.08, float(np.quantile(e3d, 0.99) * 1.15)))
+        ax.set_ylim(0, 101)
+        ax.grid(self.grid_on.get(), alpha=0.3)
+        ax.legend(loc="lower right", fontsize=8)
+
+    def _draw_error_histogram(self, axes, p):
+        if not self.data["has_truth"]:
+            target_ax = axes[0] if isinstance(axes, (list, tuple, np.ndarray)) else axes
+            target_ax.text(0.5, 0.5, "需要真值参考轨迹才能绘制误差直方图", ha="center", va="center", transform=target_ax.transAxes, fontsize=10)
+            return
+        if not isinstance(axes, (list, tuple, np.ndarray)) or len(axes) < 3:
+            ax = axes[0] if isinstance(axes, (list, tuple, np.ndarray)) else axes
+            for c, col, label in [("de", "#2878B5", "ΔE"), ("dn", "#E07A2D", "ΔN"), ("du", "#36965A", "ΔU")]:
+                vals = p[c].dropna()
+                if vals.empty: continue
+                ax.hist(vals, bins=35, density=True, alpha=0.45, color=col, edgecolor="white", label=f"{label} (RMS={np.sqrt(np.mean(vals**2)):.3f}m)")
+            ax.axvline(0, color="k", ls="--", lw=0.8)
+            ax.set(xlabel="误差 (m)", ylabel="概率密度", title="ENU 误差分布直方图")
+            ax.legend(fontsize=7); ax.grid(self.grid_on.get(), alpha=0.3)
+            return
+
+        specs = [("de", "东向误差 ΔE", "#2878B5"), ("dn", "北向误差 ΔN", "#E07A2D"), ("du", "高程误差 ΔU", "#36965A")]
+        for ax, (c, label, col) in zip(axes, specs):
+            vals = p[c].dropna()
+            if vals.empty: continue
+            mu, std = float(vals.mean()), float(vals.std())
+            n, bins, _ = ax.hist(vals, bins=35, density=True, alpha=0.6, color=col, edgecolor="white")
+            x = np.linspace(bins[0], bins[-1], 200)
+            if std > 1e-6:
+                y = (1.0 / (np.sqrt(2 * np.pi) * std)) * np.exp(-0.5 * ((x - mu) / std)**2)
+                ax.plot(x, y, color="#222", lw=1.3, label=f"高斯拟合 N({mu:+.3f}, {std:.3f}²)")
+            ax.axvline(0, color="k", ls="--", lw=0.8)
+            ax.set_xlabel(f"{label} (m)")
+            if c == "de": ax.set_ylabel("概率密度")
+            ax.set_title(f"{label} (偏置={mu:+.3f}m, RMS={np.sqrt(np.mean(vals**2)):.3f}m)", fontsize=9)
+            ax.legend(fontsize=7); ax.grid(self.grid_on.get(), alpha=0.3)
+
+    def _draw_constellation_summary(self, axes, s):
+        if s is None or s.empty:
+            target_ax = axes[0] if isinstance(axes, (list, tuple, np.ndarray)) else axes
+            target_ax.text(0.5, 0.5, "缺少 .stat 卫星观测数据", ha="center", va="center", transform=target_ax.transAxes, fontsize=10)
+            return
+        s1 = s[s.freq == 1]
+        counts = s1.groupby(["time", "constellation"]).prn.nunique().unstack(fill_value=0)
+        valid_snr = s1[s1.snr > 0]
+        con_cols = [c for c in counts.columns if c in diag.COLORS] or list(counts.columns)
+
+        if not isinstance(axes, (list, tuple, np.ndarray)) or len(axes) < 2:
+            ax = axes[0] if isinstance(axes, (list, tuple, np.ndarray)) else axes
+            data_by_const = [valid_snr[valid_snr.constellation == c].snr.to_numpy() for c in con_cols if not valid_snr[valid_snr.constellation == c].empty]
+            labels_by_const = [c for c in con_cols if not valid_snr[valid_snr.constellation == c].empty]
+            if data_by_const:
+                bp = ax.boxplot(data_by_const, tick_labels=labels_by_const, patch_artist=True)
+                for patch, c_name in zip(bp['boxes'], labels_by_const):
+                    patch.set_facecolor(diag.COLORS.get(c_name, "#488f31"))
+                    patch.set_alpha(0.7)
+            ax.set(xlabel="导航星座", ylabel="载噪比 C/N₀ (dB-Hz)", title="各星座 L1 载噪比分布 (Boxplot)")
+            ax.grid(self.grid_on.get(), alpha=0.3)
+            return
+
+        for col in counts.columns:
+            axes[0].plot(counts.index, counts[col], label=col, color=diag.COLORS.get(col, "#666"), lw=1.0)
+        axes[0].set(xlabel="相对时间 (s)", ylabel="可见卫星数 (颗)", title="各星座跟踪卫星数时序变化")
+        axes[0].legend(fontsize=7, ncol=2); axes[0].grid(self.grid_on.get(), alpha=0.3)
+        self._set_datetime_axis(axes[0])
+
+        data_by_const = [valid_snr[valid_snr.constellation == c].snr.to_numpy() for c in con_cols if not valid_snr[valid_snr.constellation == c].empty]
+        labels_by_const = [c for c in con_cols if not valid_snr[valid_snr.constellation == c].empty]
+        if data_by_const:
+            bp = axes[1].boxplot(data_by_const, tick_labels=labels_by_const, patch_artist=True)
+            for patch, c_name in zip(bp['boxes'], labels_by_const):
+                patch.set_facecolor(diag.COLORS.get(c_name, "#488f31"))
+                patch.set_alpha(0.7)
+        axes[1].set(xlabel="导航星座", ylabel="载噪比 C/N₀ (dB-Hz)", title="各星座 L1 载噪比分布 (Boxplot)")
+        axes[1].grid(self.grid_on.get(), alpha=0.3)
+
     def _draw_custom_grid(self):
         modes=self.custom_modes
         if not modes or not self.custom_panels:
@@ -820,8 +1002,11 @@ class RTKPlotApp:
             elif name=="Covariance":self._draw_covariance(ax,p)
             elif name=="False Fix Analysis":self._draw_false_fix(ax,p)
             elif name=="Innovation / NIS":self._draw_nis(ax)
+            elif name=="Error CDF":self._draw_error_cdf(ax,p)
+            elif name=="Error Histogram":self._draw_error_histogram([ax],p)
+            elif name=="Constellation Summary":self._draw_constellation_summary([ax],s)
             ax.grid(self.grid_on.get(),alpha=.28)
-            if name not in ("Gnd Trk","Skyplot","Innovation / NIS"):
+            if name not in ("Gnd Trk","Skyplot","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary"):
                 self._set_datetime_axis(ax);ax.xaxis.set_major_locator(MaxNLocator(3));ax.tick_params(axis="x",labelsize=7,labelrotation=0)
                 self.time_cursors.append(ax.axvline(0,color="#333",ls="--",lw=.7,alpha=.65))
             self._register_custom_dynamic(name,ax,p,full)
@@ -1025,6 +1210,20 @@ class RTKPlotApp:
             lines.append(f"自定义分析网格包含 {len(modes)} 种图："+"、".join(modes)+"。空白区域可通过左侧分区按钮拆分，并拖入图表。")
         elif mode=="Innovation / NIS":
             lines.append("当前 .pos/.stat 没有滤波创新向量 v 和创新协方差 S，不能可靠计算 NIS=vᵀS⁻¹v；后验残差不能替代 NIS。")
+        elif mode=="Error CDF":
+            if d["has_truth"]:
+                eh=p.eh.dropna(); e3d=p.e3d.dropna()
+                lines.append(f"误差累积分布 (CDF)：水平 CEP50={eh.quantile(0.5):.3f} m，CEP95={eh.quantile(0.95):.3f} m；3D 误差 P50={e3d.quantile(0.5):.3f} m，P95={e3d.quantile(0.95):.3f} m。")
+            else:lines.append("未加载真值参考轨迹，无法计算定位误差 CDF。")
+        elif mode=="Error Histogram":
+            if d["has_truth"]:
+                lines.append(f"ENU 误差正态分布：东向偏置 {p.de.mean():+.3f} m (RMS {self._rms(p.de):.3f} m)；北向偏置 {p.dn.mean():+.3f} m (RMS {self._rms(p.dn):.3f} m)；高程偏置 {p.du.mean():+.3f} m (RMS {self._rms(p.du):.3f} m)。")
+            else:lines.append("未加载真值参考轨迹，无法绘制误差直方图与高斯拟合。")
+        elif mode=="Constellation Summary":
+            if not s.empty:
+                s1=s[s.freq==1]; con_list=list(s1.constellation.unique())
+                lines.append(f"按星座统览：涵盖 {len(con_list)} 个系统 ({', '.join(con_list)})；左侧为各星座跟踪卫星数时序，右侧为 L1 载噪比 (C/N₀) 箱线分布。")
+            else:lines.append("未加载 .stat 卫星记录。")
         if not lines:lines=["该视图当前没有足够数据生成统计摘要。"]
         self.analysis_info.configure(text="\n".join(lines))
 
@@ -1364,6 +1563,10 @@ class RTKPlotApp:
         self.epoch_label.configure(text=f"{i+1:,} / {len(p):,}")
         dt=gpst_to_local_datetime(r.week,r.tow)
         self.time_label.configure(text=f"{dt:%Y-%m-%d %H:%M:%S} CST   Q={int(r.q)}:{Q_LABELS.get(int(r.q),'?')}")
+        err_probe = f" | 2D: {float(r.eh):.3f}m | 3D: {float(r.e3d):.3f}m" if (self.data["has_truth"] and "eh" in r and np.isfinite(r.eh)) else ""
+        ratio_probe = f" | Ratio: {float(r.ratio):.1f}" if ("ratio" in r and np.isfinite(r.ratio)) else ""
+        sat_probe = f" | Sats: {int(r.ns)}" if ("ns" in r and np.isfinite(r.ns)) else ""
+        self.status.configure(text=f"Epoch {i+1}/{len(p)} ({dt:%H:%M:%S} CST) | Q={int(r.q)} ({Q_LABELS.get(int(r.q),'?')}){err_probe}{ratio_probe}{sat_probe} | {self.pos_path.name if self.pos_path else ''}")
         for cursor in self.time_cursors:cursor.set_xdata([r.time,r.time])
         current_sat=self._sat_sorted.iloc[0:0]
         if self._sat_tows.size:
@@ -1452,6 +1655,19 @@ class RTKPlotApp:
 
     def on_mouse_down(self,event):
         if event.inaxes is None or getattr(self.toolbar,"mode",""):return
+        if getattr(event, "dblclick", False) and event.inaxes in self.plot_axes:
+            if self.mode.get() == "Dashboard":
+                clicked_idx = self.plot_axes.index(event.inaxes)
+                self.focused_dashboard_subplot = None if self.focused_dashboard_subplot == clicked_idx else clicked_idx
+                self.redraw(); return
+            elif self.mode.get() == "Multi-Compare":
+                clicked_idx = self.plot_axes.index(event.inaxes)
+                self.focused_compare_subplot = None if self.focused_compare_subplot == clicked_idx else clicked_idx
+                self.redraw(); return
+            elif self.mode.get() == "Custom Analysis":
+                panel_index = self.selected_custom_panel
+                self.focused_custom_panel = None if self.focused_custom_panel == panel_index else panel_index
+                self.redraw(); return
         if self.mode.get()=="Dashboard" and event.inaxes in self.plot_axes:
             self.selected_dashboard_index=self.plot_axes.index(event.inaxes)
             for i,ax in enumerate(self.plot_axes):
@@ -1818,6 +2034,26 @@ class RTKPlotApp:
         elif mode_name == "False Fix Analysis":
             self._draw_false_fix(ax, p)
             self._set_datetime_axis(ax)
+        elif mode_name == "Error CDF":
+            self._draw_error_cdf(ax, p)
+        elif mode_name == "Error Histogram":
+            fig.set_size_inches(13, 4.5)
+            fig.clear()
+            axs = fig.subplots(1, 3, sharey=True)
+            self._draw_error_histogram(axs, p)
+            if with_hud:
+                diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
+            fig.tight_layout()
+            return
+        elif mode_name == "Constellation Summary":
+            fig.set_size_inches(13, 4.5)
+            fig.clear()
+            axs = fig.subplots(1, 2)
+            self._draw_constellation_summary(axs, s)
+            if with_hud:
+                diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
+            fig.tight_layout()
+            return
 
         ax.grid(self.grid_on.get(), alpha=0.3)
         if with_hud:
@@ -2016,6 +2252,83 @@ class BatchExportDialog(tk.Toplevel):
                 os.startfile(out_dir)
             except Exception:
                 pass
+
+
+class DiagnosticReportDialog(tk.Toplevel):
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("RTKLIB 诊断质量评估报告 (Solution Quality Report)")
+        self.geometry("820x650")
+        self.transient(app.root)
+
+        rep = diag.compute_quality_report(app.data)
+        self.rep = rep
+        pos_name = app.pos_path.name if app.pos_path else "Solution"
+        self.md_text = diag.generate_markdown_report(rep, pos_name)
+
+        # Header card
+        header = ttk.Frame(self, padding=(12, 10))
+        header.pack(fill=tk.X)
+
+        score = rep.get("score", 0)
+        grade = rep.get("grade", "N/A")
+        grade_color = "#28a745" if grade.startswith("A") else ("#d49200" if grade.startswith("B") else "#dc3545")
+
+        lbl_score = tk.Label(header, text=f"综合评分：{score} / 100", font=("Microsoft YaHei", 14, "bold"), fg=grade_color)
+        lbl_score.pack(side=tk.LEFT)
+
+        lbl_grade = tk.Label(header, text=f"评级：{grade}", font=("Microsoft YaHei", 12, "bold"), fg="#333")
+        lbl_grade.pack(side=tk.LEFT, padx=16)
+
+        fix_r = rep.get("fix_rate", 0)
+        lbl_fix = tk.Label(header, text=f"固定率 (FIX)：{fix_r:.1f}%", font=("Microsoft YaHei", 10), fg="#444")
+        lbl_fix.pack(side=tk.LEFT, padx=8)
+
+        if rep.get("has_truth"):
+            m = rep.get("metrics", {})
+            rmse2d = np.hypot(m.get("rms_e", 0), m.get("rms_n", 0))
+            lbl_rmse = tk.Label(header, text=f"水平 RMSE：{rmse2d:.3f} m", font=("Microsoft YaHei", 10), fg="#444")
+            lbl_rmse.pack(side=tk.LEFT, padx=8)
+
+        # Scrolled Text for Markdown
+        content_frame = ttk.Frame(self, padding=(10, 5))
+        content_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.txt = scrolledtext.ScrolledText(content_frame, wrap=tk.WORD, font=("Consolas", 10), bg="#fdfdfd", fg="#222")
+        self.txt.pack(fill=tk.BOTH, expand=True)
+        self.txt.insert(tk.END, self.md_text)
+        self.txt.configure(state="disabled")
+
+        # Bottom buttons
+        btn_bar = ttk.Frame(self, padding=(10, 8))
+        btn_bar.pack(fill=tk.X)
+
+        ttk.Button(btn_bar, text="📋 复制报告至剪贴板 (Copy)", command=self._copy_clipboard).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_bar, text="💾 导出报告 (.md)", command=self._save_file).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_bar, text="关闭", command=self.destroy).pack(side=tk.RIGHT, padx=6)
+
+    def _copy_clipboard(self):
+        self.clipboard_clear()
+        self.clipboard_append(self.md_text)
+        messagebox.showinfo("复制成功", "质量诊断报告已成功复制到剪贴板！", parent=self)
+
+    def _save_file(self):
+        fn = filedialog.asksaveasfilename(
+            parent=self,
+            title="保存质量诊断报告",
+            defaultextension=".md",
+            initialfile=f"rtklib_quality_report_{self.app.pos_path.stem if self.app.pos_path else 'pos'}.md",
+            filetypes=[("Markdown files", "*.md"), ("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        if not fn:
+            return
+        try:
+            with open(fn, "w", encoding="utf-8") as f:
+                f.write(self.md_text)
+            messagebox.showinfo("保存成功", f"报告已成功保存至：\n{fn}", parent=self)
+        except Exception as e:
+            messagebox.showerror("保存失败", str(e), parent=self)
 
 
 def main():

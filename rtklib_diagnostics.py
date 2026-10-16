@@ -323,6 +323,211 @@ def crop_and_export_pos(pos_path: Path, output_path: Path, start_tow: float, end
     return count
 
 
+def compute_quality_report(data: dict) -> dict:
+    """Generate a comprehensive GNSS positioning health and quality report."""
+    pos = data["pos"]
+    sat = data.get("sat", None)
+    has_truth = data.get("has_truth", False)
+    n = len(pos)
+    if n == 0:
+        return {}
+
+    duration_sec = float(pos.tow.iloc[-1] - pos.tow.iloc[0]) if n > 1 else 0.0
+    fix_cnt = int((pos.q == 1).sum()) if "q" in pos else 0
+    float_cnt = int((pos.q == 2).sum()) if "q" in pos else 0
+    single_cnt = int((pos.q == 5).sum()) if "q" in pos else 0
+
+    fix_rate = (fix_cnt / n) * 100
+    float_rate = (float_cnt / n) * 100
+    single_rate = (single_cnt / n) * 100
+
+    metrics = compute_segment_metrics(pos, sat)
+
+    age_valid = pos.age.dropna() if "age" in pos else pd.Series(dtype=float)
+    age_mean = float(age_valid.mean()) if not age_valid.empty else 0.0
+    age_max = float(age_valid.max()) if not age_valid.empty else 0.0
+    age_delayed_pct = float((age_valid > 5.0).mean() * 100) if not age_valid.empty else 0.0
+
+    const_info = {}
+    if sat is not None and not sat.empty:
+        s1 = sat[sat.freq == 1]
+        for const, g in s1.groupby("constellation"):
+            valid_snr = g.snr[g.snr > 0]
+            const_info[const] = {
+                "prns": int(g.prn.nunique()),
+                "mean_snr": float(valid_snr.mean()) if not valid_snr.empty else 0.0,
+                "slip_count": int((g.slipc > 0).sum()) if "slipc" in g else 0
+            }
+
+    score = fix_rate * 0.50
+    if has_truth:
+        rms_3d = metrics["rms_3d"]
+        acc_score = max(0.0, min(30.0, 30.0 * (0.2 / max(rms_3d, 0.01))))
+    else:
+        sig_3d = metrics["rms_3d"]
+        acc_score = max(0.0, min(30.0, 30.0 * (0.5 / max(sig_3d, 0.05))))
+    score += acc_score
+    score += min(10.0, (metrics["mean_ns"] / 20.0) * 10.0)
+    score += min(10.0, (metrics["mean_ratio"] / 3.0) * 10.0)
+    score = round(max(0.0, min(100.0, score)), 1)
+
+    if score >= 90: grade = "卓越 (Grade A+)"
+    elif score >= 80: grade = "良好 (Grade A)"
+    elif score >= 65: grade = "中等 (Grade B)"
+    else: grade = "警惕需排查 (Grade C - Attention Required)"
+
+    return {
+        "epochs": n,
+        "duration_sec": duration_sec,
+        "fix_rate": fix_rate,
+        "float_rate": float_rate,
+        "single_rate": single_rate,
+        "score": score,
+        "grade": grade,
+        "metrics": metrics,
+        "age_mean": age_mean,
+        "age_max": age_max,
+        "age_delayed_pct": age_delayed_pct,
+        "constellations": const_info,
+        "has_truth": has_truth
+    }
+
+
+def generate_markdown_report(rep: dict, pos_name: str = "solution") -> str:
+    """Format the quality report dictionary into a publication-ready Markdown report."""
+    if not rep:
+        return "# RTKLIB 解算质量评估报告\n\n暂无有效数据。"
+
+    m = rep["metrics"]
+    lines = [
+        f"# RTKLIB GNSS 解算综合诊断与质量评估报告",
+        f"",
+        f"- **数据集文件**: `{pos_name}`",
+        f"- **总历元样本数**: `{rep['epochs']:,}` 历元 | **连续解算时长**: `{rep['duration_sec']:.1f}` 秒 ({rep['duration_sec']/60:.1f} 分钟)",
+        f"- **综合健康度评分**: **{rep['score']} / 100** ({rep['grade']})",
+        f"",
+        f"---",
+        f"## 1. 核心解算状态与可用性 (Solution Status & Availability)",
+        f"",
+        f"| 指标项 (Metric) | 统计数值 (Value) | 行业参考门限 (Benchmark) | 健康度评估 |",
+        f"| :--- | :--- | :--- | :--- |",
+        f"| **FIX 固定率** | **{rep['fix_rate']:.2f}%** | 建议 ≥ 90.0% | {'✅ 达标 (优质)' if rep['fix_rate']>=90 else ('⚠️ 偏低 (中等)' if rep['fix_rate']>=75 else '❌ 需优化')} |",
+        f"| **FLOAT 浮点率** | **{rep['float_rate']:.2f}%** | 建议 ≤ 10.0% | {'✅ 良好' if rep['float_rate']<=10 else '⚠️ 偏高 (存在遮挡或周跳)'} |",
+        f"| **SINGLE 单点率** | **{rep['single_rate']:.2f}%** | 建议 ≈ 0.0% | {'✅ 极佳' if rep['single_rate']<0.5 else '❌ 异常 (差分中断)'} |",
+        f"| **平均可用卫星数** | **{m['mean_ns']:.1f} 颗** | 建议 ≥ 18 颗 | {'✅ 几何构型丰富' if m['mean_ns']>=18 else '⚠️ 卫星数不足'} |",
+        f"| **平均 AR Ratio** | **{m['mean_ratio']:.2f}** | 检核门限 3.0 | {'✅ 模糊度解算稳固' if m['mean_ratio']>=3.0 else '⚠️ 接近临界门限'} |",
+        f"",
+        f"---",
+        f"## 2. 空间定位精度与误差统计 (Positioning Accuracy & Statistics)",
+        f"",
+    ]
+    if rep["has_truth"]:
+        lines.extend([
+            f"| 空间分量 (Component) | RMS 均方根误差 (m) | CEP 50% 误差 (m) | CEP 95% 置信误差 (m) |",
+            f"| :--- | :--- | :--- | :--- |",
+            f"| **水平平面 (Horizontal)** | **{np.hypot(m['rms_e'], m['rms_n']):.3f} m** | **{m['cep50']:.3f} m** | **{m['cep95']:.3f} m** |",
+            f"| **东向分量 (East, ΔE)** | {m['rms_e']:.3f} m | — | — |",
+            f"| **北向分量 (North, ΔN)** | {m['rms_n']:.3f} m | — | — |",
+            f"| **高程天向 (Up, ΔU)** | {m['rms_u']:.3f} m | — | — |",
+            f"| **空间三维 (3D RMS)** | **{m['rms_3d']:.3f} m** | — | — |",
+        ])
+    else:
+        lines.extend([
+            f"*(说明：当前未加载真值 CSV 轨迹，以下基于 RTKLIB 解算协方差阵估算)*  \n",
+            f"| 空间分量 (Component) | 内部先验 1σ 误差 (m) | 名义 95% 置信包络 (1.96σ, m) |",
+            f"| :--- | :--- | :--- |",
+            f"| **水平先验 (Estimated H)** | {m['cep50']:.3f} m | {m['cep95']:.3f} m |",
+            f"| **东向先验 (Est σE)** | {m['rms_e']:.3f} m | {m['rms_e']*1.96:.3f} m |",
+            f"| **北向先验 (Est σN)** | {m['rms_n']:.3f} m | {m['rms_n']*1.96:.3f} m |",
+            f"| **天向先验 (Est σU)** | {m['rms_u']:.3f} m | {m['rms_u']*1.96:.3f} m |",
+        ])
+
+    lines.extend([
+        f"",
+        f"---",
+        f"## 3. 多系统卫星星历与信号质量 (Multi-Constellation Breakdown)",
+        f"",
+        f"| 星座系统 (Constellation) | 可见卫星总数 (PRNs) | 平均载噪比 C/N₀ (dB-Hz) | 累计标记周跳 (Cycle Slips) |",
+        f"| :--- | :--- | :--- | :--- |",
+    ])
+    for const, info in rep["constellations"].items():
+        lines.append(f"| **{const}** | {info['prns']} 颗 | {info['mean_snr']:.1f} dB-Hz | {info['slip_count']} 次 |")
+
+    lines.extend([
+        f"",
+        f"---",
+        f"## 4. 基准站差分链路健康度 (Differential Link & Latency)",
+        f"",
+        f"- **平均差分龄期 (Mean Age)**: `{rep['age_mean']:.2f} s`",
+        f"- **最大差分延迟 (Max Latency)**: `{rep['age_max']:.2f} s`",
+        f"- **差分延迟超标率 (Age > 5.0s)**: `{rep['age_delayed_pct']:.2f}%`",
+        f"",
+        f"---",
+        f"*由 RTKLIB-Plot-Python 智能诊断与分析系统自动生成*"
+    ])
+    return "\n".join(lines)
+
+
+def detect_problematic_segments(pos_df: pd.DataFrame, error_limit: float = 1.0, min_duration: float = 2.0) -> list[dict]:
+    """Scan position epochs and automatically identify loss-of-fix or severe error intervals."""
+    if pos_df is None or len(pos_df) < 5:
+        return []
+
+    times = pos_df.time.to_numpy()
+    segments = []
+    palette = ["#b23a48", "#d17b0f", "#ae5a9d", "#e07a2d", "#c00000", "#7b61a8"]
+
+    if "q" in pos_df:
+        not_fix = (pos_df.q != 1).to_numpy()
+        diffs = np.diff(not_fix.astype(int))
+        starts = np.where(diffs == 1)[0] + 1
+        if not_fix[0]: starts = np.r_[0, starts]
+        ends = np.where(diffs == -1)[0]
+        if not_fix[-1]: ends = np.r_[ends, len(not_fix)-1]
+
+        for s_idx, e_idx in zip(starts, ends):
+            dur = float(times[e_idx] - times[s_idx])
+            if dur >= min_duration:
+                q_sub = pos_df.q.iloc[s_idx:e_idx+1]
+                q_type = "FLOAT" if (q_sub == 2).any() else ("SINGLE" if (q_sub == 5).any() else "NON-FIX")
+                c = palette[len(segments) % len(palette)]
+                segments.append({
+                    "start": int(s_idx),
+                    "end": int(e_idx),
+                    "name": f"掉固定: {q_type}持续{dur:.1f}s",
+                    "reason": f"{q_type} 持续 {dur:.1f} 秒 (历元 {s_idx+1}~{e_idx+1})",
+                    "color": c,
+                    "type": "loss_of_fix"
+                })
+
+    if "e3d" in pos_df and pos_df["e3d"].notna().any():
+        high_err = (pos_df.e3d > error_limit).to_numpy()
+        diffs = np.diff(high_err.astype(int))
+        starts = np.where(diffs == 1)[0] + 1
+        if high_err[0]: starts = np.r_[0, starts]
+        ends = np.where(diffs == -1)[0]
+        if high_err[-1]: ends = np.r_[ends, len(high_err)-1]
+
+        for s_idx, e_idx in zip(starts, ends):
+            dur = float(times[e_idx] - times[s_idx])
+            if dur >= min_duration:
+                already = any(abs(seg["start"] - s_idx) < 10 and abs(seg["end"] - e_idx) < 10 for seg in segments)
+                if not already:
+                    peak = float(pos_df.e3d.iloc[s_idx:e_idx+1].max())
+                    c = palette[len(segments) % len(palette)]
+                    segments.append({
+                        "start": int(s_idx),
+                        "end": int(e_idx),
+                        "name": f"超标: 3D误差峰值{peak:.2f}m",
+                        "reason": f"3D误差超标 (>{error_limit}m) 持续 {dur:.1f} 秒，峰值 {peak:.2f}m",
+                        "color": c,
+                        "type": "high_error"
+                    })
+
+    segments.sort(key=lambda x: x["start"])
+    return segments
+
+
 def _save(fig, out, name):
     fig.tight_layout()
     for fmt in EXPORT_FORMATS:
@@ -495,7 +700,67 @@ def plot_15(d,out):
     # RTKLIB .stat here exposes residuals but not innovations or their covariance.
     _unavailable(out,"plot_15_innovation_nis","输入文件没有滤波创新向量 v 或创新协方差 S；NIS=vᵀS⁻¹v 无法从 .pos/.stat 可靠恢复。")
 
-PLOTTERS=[plot_01,plot_02,plot_03,plot_04,plot_05,plot_06,plot_07,plot_08,plot_09,plot_10,plot_11,plot_12,plot_13,plot_14,plot_15]
+def plot_16_cdf(d, out):
+    p = d["pos"]
+    if not d["has_truth"]:
+        return _unavailable(out, "plot_16_error_cdf", "需要真值参考轨迹才能绘制误差累积概率分布 (CDF)")
+    fig, ax = plt.subplots(figsize=(10, 5.5)); _title(fig, "16 · 定位误差累积分布函数 (CDF)")
+    eh = np.sort(p.eh.dropna())
+    e3d = np.sort(p.e3d.dropna())
+    if len(eh) == 0:
+        return _unavailable(out, "plot_16_error_cdf", "无有效误差数据")
+    cdf_y = np.linspace(0, 100, len(eh))
+    ax.plot(eh, cdf_y, lw=1.8, color="#2878B5", label=f"水平误差 (CEP50={np.quantile(eh, 0.5):.3f}m, CEP95={np.quantile(eh, 0.95):.3f}m)")
+    ax.plot(e3d, cdf_y, lw=1.8, color="#E07A2D", label=f"3D误差 (P50={np.quantile(e3d, 0.5):.3f}m, P95={np.quantile(e3d, 0.95):.3f}m)")
+    ax.axhline(50, color="gray", ls="--", lw=0.9, alpha=0.7)
+    ax.axhline(68.3, color="green", ls=":", lw=0.9, alpha=0.7)
+    ax.axhline(95, color="red", ls="--", lw=0.9, alpha=0.7)
+    ax.set(xlabel="误差 (m)", ylabel="累积概率 (%)", title="定位误差累积概率分布曲线 (CDF)")
+    ax.set_xlim(0, max(0.1, float(np.quantile(e3d, 0.99) * 1.15)))
+    ax.set_ylim(0, 101)
+    ax.grid(alpha=0.25)
+    ax.legend(loc="lower right", fontsize=9)
+    _save(fig, out, "plot_16_error_cdf")
+
+def plot_17_hist(d, out):
+    p = d["pos"]
+    if not d["has_truth"]:
+        return _unavailable(out, "plot_17_error_histogram", "需要真值参考轨迹才能绘制误差分布直方图")
+    fig, axs = plt.subplots(1, 3, figsize=(13, 4.5), sharey=True); _title(fig, "17 · ENU 误差正态分布直方图")
+    for ax, c, col, label in zip(axs, ["de", "dn", "du"], [COLORS["E"], COLORS["N"], COLORS["U"]], ["东向误差 ΔE", "北向误差 ΔN", "高程误差 ΔU"]):
+        vals = p[c].dropna()
+        if vals.empty: continue
+        mu, std = float(vals.mean()), float(vals.std())
+        n, bins, _ = ax.hist(vals, bins=40, density=True, alpha=0.6, color=col, edgecolor="white")
+        x = np.linspace(bins[0], bins[-1], 200)
+        if std > 1e-6:
+            y = (1.0 / (np.sqrt(2 * np.pi) * std)) * np.exp(-0.5 * ((x - mu) / std)**2)
+            ax.plot(x, y, color="#222", lw=1.4, label=f"拟合 N({mu:+.3f}, {std:.3f}²)")
+        ax.axvline(0, color="k", ls="--", lw=0.8)
+        ax.set(xlabel=f"{label} (m)", ylabel="概率密度" if c=="de" else "")
+        ax.set_title(f"{label} (均值={mu:+.3f}m, RMS={np.sqrt(np.mean(vals**2)):.3f}m)", fontsize=9)
+        ax.legend(fontsize=8); ax.grid(alpha=0.2)
+    _save(fig, out, "plot_17_error_histogram")
+
+def plot_18_constellation(d, out):
+    s = d["sat"]
+    if s.empty:
+        return _unavailable(out, "plot_18_constellation", "缺少 .stat 卫星观测数据")
+    fig, axs = plt.subplots(1, 2, figsize=(13, 4.5)); _title(fig, "18 · 各星座系统卫星数与载噪比分布")
+    s1 = s[s.freq == 1]
+    counts = s1.groupby(["time", "constellation"]).prn.nunique().unstack(fill_value=0)
+    for col in counts.columns:
+        axs[0].plot(counts.index, counts[col], label=col, color=COLORS.get(col, "#666"), lw=1.0)
+    axs[0].set(xlabel="时间 (s)", ylabel="可见卫星数 (颗)", title="各系统跟踪卫星数时序"); axs[0].legend(fontsize=8); axs[0].grid(alpha=0.25)
+    valid_snr = s1[s1.snr > 0]
+    data_by_const = [valid_snr[valid_snr.constellation == c].snr for c in counts.columns if not valid_snr[valid_snr.constellation == c].empty]
+    labels_by_const = [c for c in counts.columns if not valid_snr[valid_snr.constellation == c].empty]
+    if data_by_const:
+        axs[1].boxplot(data_by_const, tick_labels=labels_by_const, patch_artist=True)
+    axs[1].set(xlabel="星座系统", ylabel="载噪比 C/N₀ (dB-Hz)", title="各系统 L1 载噪比分布盒须图"); axs[1].grid(alpha=0.25)
+    _save(fig, out, "plot_18_constellation")
+
+PLOTTERS=[plot_01,plot_02,plot_03,plot_04,plot_05,plot_06,plot_07,plot_08,plot_09,plot_10,plot_11,plot_12,plot_13,plot_14,plot_15,plot_16_cdf,plot_17_hist,plot_18_constellation]
 
 def make_dashboard(d,out):
     p=d["pos"]; fig,ax=plt.subplots(2,3,figsize=(15,8)); _title(fig,"RTKLIB 解算质量总览 Dashboard")

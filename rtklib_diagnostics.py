@@ -188,6 +188,141 @@ def load_data(pos_path: Path, reference_path: Path | None = None,
             "pos_path": pos_path, "stat_path": stat_path}
 
 
+def compute_segment_metrics(pos_df: pd.DataFrame, sat_df: pd.DataFrame | None = None) -> dict:
+    """Compute key quantitative GNSS precision and availability metrics for a given epoch segment."""
+    metrics = {
+        "epochs": len(pos_df),
+        "fix_rate": 0.0,
+        "float_rate": 0.0,
+        "has_truth": False,
+        "rms_e": 0.0,
+        "rms_n": 0.0,
+        "rms_u": 0.0,
+        "rms_3d": 0.0,
+        "cep50": 0.0,
+        "cep95": 0.0,
+        "mean_ns": 0.0,
+        "mean_ratio": 0.0,
+    }
+    if pos_df is None or pos_df.empty:
+        return metrics
+
+    if "q" in pos_df:
+        metrics["fix_rate"] = float((pos_df["q"] == 1).mean() * 100)
+        metrics["float_rate"] = float((pos_df["q"] == 2).mean() * 100)
+
+    if "ns" in pos_df:
+        metrics["mean_ns"] = float(pos_df["ns"].mean())
+
+    if "ratio" in pos_df:
+        metrics["mean_ratio"] = float(pos_df["ratio"].mean())
+
+    has_truth = all(c in pos_df.columns for c in ("de", "dn", "du")) and pos_df["de"].notna().any()
+    metrics["has_truth"] = has_truth
+    if has_truth:
+        de = pos_df["de"].dropna().to_numpy()
+        dn = pos_df["dn"].dropna().to_numpy()
+        du = pos_df["du"].dropna().to_numpy()
+        if len(de) > 0:
+            metrics["rms_e"] = float(np.sqrt(np.mean(de**2)))
+            metrics["rms_n"] = float(np.sqrt(np.mean(dn**2)))
+            metrics["rms_u"] = float(np.sqrt(np.mean(du**2)))
+            metrics["rms_3d"] = float(np.sqrt(np.mean(de**2 + dn**2 + du**2)))
+            eh = np.hypot(de, dn)
+            metrics["cep50"] = float(np.quantile(eh, 0.50))
+            metrics["cep95"] = float(np.quantile(eh, 0.95))
+    else:
+        if "sigE" in pos_df and pos_df["sigE"].notna().any():
+            metrics["rms_e"] = float(np.sqrt(np.mean(pos_df["sigE"].dropna()**2)))
+            metrics["rms_n"] = float(np.sqrt(np.mean(pos_df["sigN"].dropna()**2)))
+            metrics["rms_u"] = float(np.sqrt(np.mean(pos_df["sigU"].dropna()**2)))
+            metrics["rms_3d"] = float(np.sqrt(metrics["rms_e"]**2 + metrics["rms_n"]**2 + metrics["rms_u"]**2))
+            metrics["cep50"] = float(metrics["rms_e"] * 0.5887 + metrics["rms_n"] * 0.5887)
+            metrics["cep95"] = float(metrics["cep50"] * 2.08)
+
+    return metrics
+
+
+def render_hud_card(ax, metrics: dict, loc: str = "upper right", font_size: float = 8.5):
+    """Render a clean, semi-transparent academic stats HUD card in the given subplot axes."""
+    lines = [
+        f"FIX Rate: {metrics['fix_rate']:.1f}%",
+    ]
+    if metrics.get("has_truth"):
+        lines.append(f"RMS (E/N/U): {metrics['rms_e']:.3f} / {metrics['rms_n']:.3f} / {metrics['rms_u']:.3f} m")
+        lines.append(f"RMS 3D: {metrics['rms_3d']:.3f} m")
+        lines.append(f"CEP50 / 95: {metrics['cep50']:.3f} / {metrics['cep95']:.3f} m")
+    elif metrics.get("rms_3d", 0) > 0:
+        lines.append(f"Est 1σ (E/N/U): {metrics['rms_e']:.3f} / {metrics['rms_n']:.3f} / {metrics['rms_u']:.3f} m")
+    lines.append(f"Mean Sats: {metrics['mean_ns']:.1f} | Mean AR: {metrics['mean_ratio']:.1f}")
+
+    text = "\n".join(lines)
+    x = 0.98 if "right" in loc else 0.02
+    y = 0.97 if "upper" in loc else 0.05
+    ha = "right" if "right" in loc else "left"
+    va = "top" if "upper" in loc else "bottom"
+
+    return ax.text(
+        x, y, text,
+        transform=ax.transAxes,
+        ha=ha, va=va,
+        fontsize=font_size,
+        fontfamily="monospace",
+        fontweight="bold",
+        color="#0B2B52",
+        bbox=dict(
+            boxstyle="round,pad=0.45",
+            facecolor="#F8FAFC",
+            edgecolor="#0070C0",
+            alpha=0.88,
+            linewidth=1.2,
+        ),
+        zorder=100
+    )
+
+
+def crop_and_export_pos(pos_path: Path, output_path: Path, start_tow: float, end_tow: float) -> int:
+    """Crop the original .pos file within [start_tow, end_tow] while preserving original headers & formats."""
+    from datetime import datetime
+    pos_path = Path(pos_path)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    lo, hi = sorted((start_tow, end_tow))
+
+    with pos_path.open("r", encoding="utf-8", errors="replace") as f_in, \
+         output_path.open("w", encoding="utf-8", newline="\n") as f_out:
+        for line in f_in:
+            if line.startswith("%") or line.strip() == "":
+                f_out.write(line)
+                continue
+            parts = line.strip().split()
+            if len(parts) < 2:
+                continue
+            tow = None
+            if "/" in parts[0] or "-" in parts[0]:
+                t_str = parts[0] + " " + parts[1]
+                try:
+                    dt = datetime.strptime(t_str, "%Y/%m/%d %H:%M:%S.%f")
+                except ValueError:
+                    try:
+                        dt = datetime.strptime(t_str, "%Y/%m/%d %H:%M:%S")
+                    except ValueError:
+                        continue
+                diff = (dt - datetime(1980, 1, 6)).total_seconds()
+                tow = float(diff % 604800)
+            else:
+                try:
+                    tow = float(parts[1])
+                except ValueError:
+                    continue
+
+            if lo - 1e-4 <= tow <= hi + 1e-4:
+                f_out.write(line)
+                count += 1
+    return count
+
+
 def _save(fig, out, name):
     fig.tight_layout()
     for fmt in EXPORT_FORMATS:

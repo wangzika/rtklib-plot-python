@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -78,11 +79,19 @@ class RTKPlotApp:
         self.false_fix_limit=tk.DoubleVar(value=0.20)
         self.segments=[];self.segment_start_idx=None;self.segment_palette=["#7b61a8","#168aad","#d17b0f","#b23a48","#4f772d","#ae5a9d"]
         self._drag_epoch=False;self.track_axes=[];self.datetime_axes=[];self.segment_track_lines=[];self.segment_sky_artists=[];self.segment_artists=[]
+        self._shift_drag_start=None;self._shift_drag_patch=None;self._shift_drag_ax=None
+        self.line_scope=tk.StringVar(value="All Subplots")
+        self.line_style=tk.StringVar(value="Solid (―)")
+        self.line_width=tk.DoubleVar(value=1.2)
+        self.marker_style=tk.StringVar(value="None")
+        self.marker_size=tk.DoubleVar(value=3.0)
+        self.curve_styles={}
         # Reserve the bottom status/epoch area before packing the expanding
         # canvas.  Packing the expanding plot first can push these controls
         # below the visible window on high-DPI displays.
         self._build_menu(); self._build_controls(); self._build_status(); self._build_plot()
         self.root.bind("<Control-o>", lambda _e: self.open_file()); self.root.bind("<Control-s>", lambda _e: self.export_plot())
+        self.root.bind("<Control-e>", lambda _e: self.open_batch_export_dialog())
         self.root.bind("<Delete>", lambda _e: self.delete_selected_subplot())
         if pos and Path(pos).exists(): self.load_solution(Path(pos), reference)
         elif diag.DEFAULT_POS.exists(): self.load_solution(diag.DEFAULT_POS, diag.DEFAULT_REF if diag.DEFAULT_REF.exists() else None)
@@ -94,7 +103,8 @@ class RTKPlotApp:
         filem.add_command(label="Open Solution (.pos)…",command=self.open_file,accelerator="Ctrl+O")
         filem.add_command(label="Open Satellite Status (.stat)…",command=self.open_stat_file)
         filem.add_command(label="Open Ground Truth (.csv)…",command=self.open_reference_file)
-        filem.add_command(label="Export Plot…",command=self.export_plot,accelerator="Ctrl+S")
+        filem.add_command(label="Export Current Plot…",command=self.export_plot,accelerator="Ctrl+S")
+        filem.add_command(label="Batch Export Subplots…",command=self.open_batch_export_dialog,accelerator="Ctrl+E")
         filem.add_separator(); filem.add_command(label="Exit",command=self.root.destroy); bar.add_cascade(label="File",menu=filem)
         edit=tk.Menu(bar,tearoff=False); edit.add_command(label="Save Plot As…",command=self.export_plot); edit.add_command(label="Reset View",command=self.redraw); bar.add_cascade(label="Edit",menu=edit)
         view=tk.Menu(bar,tearoff=False)
@@ -139,13 +149,15 @@ class RTKPlotApp:
         ttk.Button(nav,text="◀ Page",command=lambda:self._change_custom_page(-1)).pack(side=tk.LEFT,padx=(10,1))
         self.custom_page_label=ttk.Label(nav,text="Page 1 / 1",anchor="center",width=9);self.custom_page_label.pack(side=tk.LEFT,padx=1)
         ttk.Button(nav,text="Page ▶",command=lambda:self._change_custom_page(1)).pack(side=tk.LEFT,padx=1)
+        ttk.Button(nav,text="📸 Batch Export…",command=self.open_batch_export_dialog).pack(side=tk.RIGHT,padx=4)
         ttk.Button(nav,text="Export Image…",command=self.export_plot).pack(side=tk.RIGHT,padx=4)
         self.play_btn=ttk.Button(nav,text="▶ Play",command=self.toggle_play); self.play_btn.pack(side=tk.RIGHT,padx=4)
         marks=ttk.Frame(self.root,padding=(8,2));marks.pack(side=tk.TOP,fill=tk.X)
         ttk.Button(marks,text="Set segment start at current epoch",command=self.mark_segment_start).pack(side=tk.LEFT,padx=(0,4))
         ttk.Button(marks,text="Set end & add segment",command=self.add_segment).pack(side=tk.LEFT,padx=4)
         ttk.Button(marks,text="Clear segments",command=self.clear_segments).pack(side=tk.LEFT,padx=4)
-        self.segment_status=ttk.Label(marks,text="Drag the vehicle marker on Ground Track to move the epoch.",anchor="w");self.segment_status.pack(side=tk.LEFT,padx=10,fill=tk.X,expand=True)
+        ttk.Button(marks,text="📸 Export Subplots…",command=self.open_batch_export_dialog).pack(side=tk.LEFT,padx=6)
+        self.segment_status=ttk.Label(marks,text="Shift+Drag on timeline to select time range · or drag vehicle marker.",anchor="w");self.segment_status.pack(side=tk.LEFT,padx=10,fill=tk.X,expand=True)
 
     def _build_plot(self):
         self.fig=plt.Figure(figsize=(10,6),dpi=100,facecolor="white"); self.ax=self.fig.add_subplot(111)
@@ -157,7 +169,7 @@ class RTKPlotApp:
         self.standard_sidebar=ttk.Frame(self.sidebar); self.standard_sidebar.pack(fill=tk.BOTH,expand=True)
         ttk.Label(self.standard_sidebar,text="Available plots",font=("Segoe UI",10,"bold")).pack(anchor="w",pady=(0,4))
         list_frame=ttk.Frame(self.standard_sidebar);list_frame.pack(fill=tk.BOTH,expand=True)
-        self.plot_list=tk.Listbox(list_frame,selectmode=tk.EXTENDED,exportselection=False,width=23,height=18)
+        self.plot_list=tk.Listbox(list_frame,selectmode=tk.EXTENDED,exportselection=False,width=23,height=8)
         list_scroll=ttk.Scrollbar(list_frame,orient=tk.VERTICAL,command=self.plot_list.yview);self.plot_list.configure(yscrollcommand=list_scroll.set)
         self.plot_list.pack(side=tk.LEFT,fill=tk.BOTH,expand=True);list_scroll.pack(side=tk.RIGHT,fill=tk.Y)
         self.plot_list.bind("<ButtonPress-1>",self._begin_plot_drag,add="+")
@@ -168,26 +180,49 @@ class RTKPlotApp:
         self.plot_list.bind("<ButtonRelease-1>",self._drop_plot_on_panel,add="+")
         self.root.bind_all("<ButtonRelease-1>",self._drop_plot_on_panel,add="+")
         for name in MODES:self.plot_list.insert(tk.END,name)
-        ttk.Button(self.standard_sidebar,text="Show selected plots",command=self.show_selected).pack(fill=tk.X,pady=(5,2))
-        ttk.Button(self.standard_sidebar,text="Select all",command=lambda:self.plot_list.select_set(0,tk.END)).pack(fill=tk.X,pady=2)
-        ttk.Button(self.standard_sidebar,text="Clear",command=lambda:self.plot_list.selection_clear(0,tk.END)).pack(fill=tk.X,pady=2)
-        ttk.Label(self.standard_sidebar,text="Select any combination\nfor a custom analysis grid.",wraplength=160,justify=tk.LEFT).pack(anchor="w",pady=(8,0))
-        ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=6)
-        ttk.Label(self.standard_sidebar,text="Custom layout · click a panel first",font=("Segoe UI",9,"bold")).pack(anchor="w")
-        ttk.Button(self.standard_sidebar,text="Split left / right",command=lambda:self._split_custom_panel("vertical")).pack(fill=tk.X,pady=(3,2))
-        ttk.Button(self.standard_sidebar,text="Split top / bottom",command=lambda:self._split_custom_panel("horizontal")).pack(fill=tk.X,pady=2)
-        ttk.Button(self.standard_sidebar,text="Put selected plot in panel",command=self._assign_selected_plot).pack(fill=tk.X,pady=2)
-        ttk.Button(self.standard_sidebar,text="Show selected panel only",command=self._focus_custom_panel).pack(fill=tk.X,pady=2)
-        ttk.Button(self.standard_sidebar,text="Clear selected panel",command=self._clear_custom_panel).pack(fill=tk.X,pady=2)
-        ttk.Button(self.standard_sidebar,text="Repack panels",command=self._reset_custom_grid).pack(fill=tk.X,pady=2)
-        ttk.Label(self.standard_sidebar,text="Click a panel to show it alone; right-click to restore the grid. Select a plot and use the button, or drag it into a panel.",wraplength=170,justify=tk.LEFT).pack(anchor="w",pady=(4,0))
-        ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=7)
+        ttk.Button(self.standard_sidebar,text="Show selected plots",command=self.show_selected).pack(fill=tk.X,pady=(4,1))
+        ttk.Button(self.standard_sidebar,text="Select all",command=lambda:self.plot_list.select_set(0,tk.END)).pack(fill=tk.X,pady=1)
+        ttk.Button(self.standard_sidebar,text="Clear",command=lambda:self.plot_list.selection_clear(0,tk.END)).pack(fill=tk.X,pady=1)
+
+        # Line & Curve Style Controls
+        ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=5)
+        style_frame=ttk.LabelFrame(self.standard_sidebar,text="Line & Curve Styles",padding=4)
+        style_frame.pack(fill=tk.X,pady=(1,4))
+        r_s1=ttk.Frame(style_frame);r_s1.pack(fill=tk.X,pady=1)
+        ttk.Label(r_s1,text="Target:").pack(side=tk.LEFT)
+        ttk.Combobox(r_s1,textvariable=self.line_scope,values=["All Subplots","Current Subplot"],state="readonly",width=13).pack(side=tk.RIGHT,fill=tk.X,expand=True)
+        r_s2=ttk.Frame(style_frame);r_s2.pack(fill=tk.X,pady=1)
+        ttk.Label(r_s2,text="Line:").pack(side=tk.LEFT)
+        c_ls=ttk.Combobox(r_s2,textvariable=self.line_style,values=["Solid (―)","Dashed (---)","Dotted (···)","Dash-Dot (-·-)","Scatter Only","Line + Marker"],state="readonly",width=13)
+        c_ls.pack(side=tk.RIGHT,fill=tk.X,expand=True);c_ls.bind("<<ComboboxSelected>>",lambda _e:self._on_style_changed())
+        r_s3=ttk.Frame(style_frame);r_s3.pack(fill=tk.X,pady=1)
+        ttk.Label(r_s3,text="Width:").pack(side=tk.LEFT)
+        sp_w=ttk.Spinbox(r_s3,from_=0.5,to=5.0,increment=0.25,textvariable=self.line_width,width=4,command=self._on_style_changed)
+        sp_w.pack(side=tk.LEFT,padx=2);sp_w.bind("<Return>",lambda _e:self._on_style_changed())
+        ttk.Label(r_s3,text="Marker:").pack(side=tk.LEFT,padx=(2,0))
+        c_m=ttk.Combobox(r_s3,textvariable=self.marker_style,values=["None","Circle (o)","Square (s)","Point (.)","Cross (+)"],state="readonly",width=8)
+        c_m.pack(side=tk.RIGHT,fill=tk.X,expand=True);c_m.bind("<<ComboboxSelected>>",lambda _e:self._on_style_changed())
+        r_s4=ttk.Frame(style_frame);r_s4.pack(fill=tk.X,pady=(2,1))
+        ttk.Button(r_s4,text="Reset",command=self._reset_curve_styles).pack(side=tk.LEFT,fill=tk.X,expand=True,padx=1)
+        ttk.Button(r_s4,text="Apply",command=self._on_style_changed).pack(side=tk.RIGHT,fill=tk.X,expand=True,padx=1)
+
+        ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=5)
         ttk.Label(self.standard_sidebar,text="Marked time segments",font=("Segoe UI",9,"bold")).pack(anchor="w")
-        seg_frame=ttk.Frame(self.standard_sidebar);seg_frame.pack(fill=tk.X,pady=(3,0))
-        self.segment_box=tk.Listbox(seg_frame,height=4,width=23,exportselection=False)
+        seg_frame=ttk.Frame(self.standard_sidebar);seg_frame.pack(fill=tk.X,pady=(2,0))
+        self.segment_box=tk.Listbox(seg_frame,height=3,width=23,exportselection=False)
         seg_scroll=ttk.Scrollbar(seg_frame,orient=tk.VERTICAL,command=self.segment_box.yview);self.segment_box.configure(yscrollcommand=seg_scroll.set)
         self.segment_box.pack(side=tk.LEFT,fill=tk.X,expand=True);seg_scroll.pack(side=tk.RIGHT,fill=tk.Y)
-        ttk.Button(self.standard_sidebar,text="Delete selected segment",command=self.delete_segment).pack(fill=tk.X,pady=(3,0))
+        ttk.Button(self.standard_sidebar,text="Delete selected segment",command=self.delete_segment).pack(fill=tk.X,pady=(2,0))
+        ttk.Button(self.standard_sidebar,text="📸 Export Segment Subplots…",command=self.open_batch_export_dialog).pack(fill=tk.X,pady=(2,0))
+
+        ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=5)
+        ttk.Label(self.standard_sidebar,text="Custom layout · click a panel first",font=("Segoe UI",9,"bold")).pack(anchor="w")
+        ttk.Button(self.standard_sidebar,text="Split left / right",command=lambda:self._split_custom_panel("vertical")).pack(fill=tk.X,pady=1)
+        ttk.Button(self.standard_sidebar,text="Split top / bottom",command=lambda:self._split_custom_panel("horizontal")).pack(fill=tk.X,pady=1)
+        ttk.Button(self.standard_sidebar,text="Put selected plot in panel",command=self._assign_selected_plot).pack(fill=tk.X,pady=1)
+        ttk.Button(self.standard_sidebar,text="Show selected panel only",command=self._focus_custom_panel).pack(fill=tk.X,pady=1)
+        ttk.Button(self.standard_sidebar,text="Clear selected panel",command=self._clear_custom_panel).pack(fill=tk.X,pady=1)
+        ttk.Button(self.standard_sidebar,text="Repack panels",command=self._reset_custom_grid).pack(fill=tk.X,pady=1)
 
         # Multi-compare sidebar (Solution overlay manager)
         self.compare_sidebar=ttk.Frame(self.sidebar)
@@ -995,8 +1030,9 @@ class RTKPlotApp:
 
     def _draw_enu_positions(self,axes,p):
         specs=[("E","East (m)","#2878B5"),("N","North (m)","#E07A2D"),("U","Up (m)","#36965A")]
+        kw=self._get_line_kwargs("ENU Position",default_ls="-",default_lw=.8)
         for ax,(col,label,color) in zip(axes,specs):
-            ax.plot(p.time,p[col],color=color,lw=.8,marker=".",ms=3,markevery=max(1,len(p)//120))
+            ax.plot(p.time,p[col],color=color,**kw)
             ax.set_ylabel(label);ax.set_title(f"{label.split()[0]} component",loc="left",fontsize=9);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
         axes[0].set_title("ENU Position Components",loc="center",fontsize=12,weight="bold")
         axes[-1].set_xlabel("Time from start (s)")
@@ -1035,20 +1071,23 @@ class RTKPlotApp:
             for ax in axes[1:]:ax.set_visible(False)
             return
         specs=[("de","ΔE (m)","#2878B5"),("dn","ΔN (m)","#E07A2D"),("du","ΔU (m)","#36965A")]
+        kw=self._get_line_kwargs("ENU Error",default_ls="-",default_lw=.75)
         for ax,(col,label,color) in zip(axes,specs):
-            ax.plot(p.time,p[col],lw=.75,color=color,marker=".",ms=3,markevery=max(1,len(p)//120));ax.axhline(0,color="#222",lw=.6);ax.set_ylabel(label);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
+            ax.plot(p.time,p[col],color=color,**kw);ax.axhline(0,color="#222",lw=.6);ax.set_ylabel(label);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
         axes[0].set_title("ENU Position Error Components",fontsize=12,weight="bold");axes[-1].set_xlabel("Time from start (s)")
 
     def _draw_sats(self,ax):
         e=diag._sat_epoch(self.data)
         if e.empty:return
-        ax.plot(e.time,e.tracked,label="Tracked satellites",color="#2878B5",marker=".",ms=3,markevery=max(1,len(e)//100));ax.plot(e.time,e.used,label="Used satellites",color="#e07a2d",marker=".",ms=3,markevery=max(1,len(e)//100));ax.set(xlabel="Time from start (s)",ylabel="Satellites",title="Tracked and Used Satellites");ax.legend()
+        kw=self._get_line_kwargs("Satellites",default_ls="-",default_lw=1.0)
+        ax.plot(e.time,e.tracked,label="Tracked satellites",color="#2878B5",**kw);ax.plot(e.time,e.used,label="Used satellites",color="#e07a2d",**kw);ax.set(xlabel="Time from start (s)",ylabel="Satellites",title="Tracked and Used Satellites");ax.legend()
 
     def _draw_dop(self,ax):
         d=diag._compute_dop(self.data["sat"])
         self.dop_frames[ax]=d
         if d.empty:ax.text(.5,.5,"Not enough satellite geometry for DOP",ha="center",va="center",transform=ax.transAxes);return
-        for c in ["PDOP","HDOP","VDOP"]:ax.plot(d.time,d[c],label=c,lw=.8,marker=".",ms=3,markevery=max(1,len(d)//100))
+        kw=self._get_line_kwargs("DOP",default_ls="-",default_lw=.8)
+        for c in ["PDOP","HDOP","VDOP"]:ax.plot(d.time,d[c],label=c,**kw)
         ax.set(xlabel="Time from start (s)",ylabel="DOP",title="DOP from satellite geometry");ax.legend()
 
     def _draw_sky(self,ax):
@@ -1437,6 +1476,10 @@ class RTKPlotApp:
                     spine.set_edgecolor("#168aad" if panel_index==self.selected_custom_panel else "#b9c0c8")
                     spine.set_linewidth(1.8 if panel_index==self.selected_custom_panel else .75)
             self.canvas.draw_idle()
+        if event.key=="shift" and event.button==1 and event.inaxes in self.plot_axes and event.xdata is not None:
+            self._shift_drag_ax=event.inaxes;self._shift_drag_start=float(event.xdata)
+            self._shift_drag_patch=event.inaxes.axvspan(self._shift_drag_start,self._shift_drag_start,color="#e07a2d",alpha=.35,zorder=20)
+            self.canvas.draw_idle();return
         if event.button==1:
             if event.inaxes in self.track_axes:
                 idx,distance=self._nearest_track_epoch(event)
@@ -1449,6 +1492,10 @@ class RTKPlotApp:
                 "ylim":event.inaxes.get_ylim(),"moved":False}
 
     def on_mouse_move(self,event):
+        if self._shift_drag_patch is not None and self._shift_drag_ax is not None and event.inaxes is self._shift_drag_ax and event.xdata is not None:
+            x0=self._shift_drag_start;x1=float(event.xdata);lo,hi=sorted((x0,x1))
+            self._shift_drag_patch.set_xy([[lo,0],[lo,1],[hi,1],[hi,0],[lo,0]])
+            self.canvas.draw_idle();return
         if self._drag_epoch:
             if event.inaxes in self.track_axes:
                 idx,_=self._nearest_track_epoch(event);self.slider.set(idx)
@@ -1480,6 +1527,21 @@ class RTKPlotApp:
                 self.slider.set(idx)
 
     def on_mouse_up(self,event):
+        if self._shift_drag_patch is not None:
+            x0=self._shift_drag_start;x1=float(event.xdata) if event.xdata is not None else x0
+            try:self._shift_drag_patch.remove()
+            except Exception:pass
+            self._shift_drag_patch=None;self._shift_drag_ax=None;self._shift_drag_start=None
+            lo,hi=sorted((x0,x1));times=self._pos_times
+            if len(times)>0 and (hi-lo)>1e-4:
+                idx_lo=int(np.clip(np.searchsorted(times,lo),0,len(times)-1))
+                idx_hi=int(np.clip(np.searchsorted(times,hi),0,len(times)-1))
+                if idx_hi>idx_lo:
+                    number=len(self.segments)+1;color=self.segment_palette[(number-1)%len(self.segment_palette)]
+                    self.segments.append({"start":idx_lo,"end":idx_hi,"name":f"Segment {number}","color":color})
+                    self._refresh_segment_list();self._refresh_segment_overlays()
+                    self.segment_status.configure(text=f"Shift-drag added Segment {number}: {self._epoch_datetime_label(idx_lo)} — {self._epoch_datetime_label(idx_hi)} CST")
+            self.canvas.draw_idle();return
         if self._drag_epoch:
             self._drag_epoch=False;self.canvas.get_tk_widget().configure(cursor="");return
         press=self._press_state;self._press_state=None
@@ -1562,12 +1624,399 @@ class RTKPlotApp:
         index=int(np.argmin(distance))
         return index,float(distance[index])
 
+    def _on_style_changed(self):
+        scope = self.line_scope.get()
+        style_dict = {
+            "line_style": self.line_style.get(),
+            "line_width": float(self.line_width.get()),
+            "marker_style": self.marker_style.get(),
+            "marker_size": float(self.marker_size.get()),
+        }
+        if scope == "Current Subplot":
+            current_mode = self.mode.get()
+            if current_mode == "Dashboard":
+                current_mode = self.dashboard_modes[self.selected_dashboard_index] if self.dashboard_modes else "Dashboard"
+            elif current_mode == "Custom Analysis":
+                current_mode = self.custom_modes[self.selected_custom_panel] if self.custom_modes else "Custom Analysis"
+            self.curve_styles[current_mode] = style_dict
+        else:
+            self.curve_styles["global"] = style_dict
+        self.redraw()
+
+    def _reset_curve_styles(self):
+        self.curve_styles.clear()
+        self.line_style.set("Solid (―)")
+        self.line_width.set(1.2)
+        self.marker_style.set("None")
+        self.marker_size.set(3.0)
+        self.redraw()
+
+    def _get_line_kwargs(self, mode_name=None, default_ls="-", default_lw=1.0):
+        style = self.curve_styles.get(mode_name) if mode_name else None
+        if not style:
+            style = self.curve_styles.get("global")
+
+        ls_map = {
+            "Solid (―)": "-",
+            "Dashed (---)": "--",
+            "Dotted (···)": ":",
+            "Dash-Dot (-·-)": "-.",
+            "Scatter Only": "None",
+            "Line + Marker": "-"
+        }
+        marker_map = {
+            "None": None,
+            "Circle (o)": "o",
+            "Square (s)": "s",
+            "Point (.)": ".",
+            "Cross (+)": "+"
+        }
+
+        ls_str = style["line_style"] if style and "line_style" in style else self.line_style.get()
+        lw = float(style["line_width"]) if style and "line_width" in style else float(self.line_width.get())
+        m_str = style["marker_style"] if style and "marker_style" in style else self.marker_style.get()
+        ms = float(style["marker_size"]) if style and "marker_size" in style else float(self.marker_size.get())
+
+        ls = ls_map.get(ls_str, default_ls)
+        marker = marker_map.get(m_str, None)
+        if ls_str == "Scatter Only" and marker is None:
+            marker = "o"
+
+        kw = {"ls": ls, "lw": lw}
+        if marker:
+            kw["marker"] = marker
+            kw["ms"] = ms
+        return kw
+
+    def _draw_track_export(self, ax, p, full):
+        ax.set_title("Ground Track / ENU Position — colored by solution status", fontsize=11, weight="bold")
+        if self.data["has_truth"]:
+            ax.plot(full.gt_E, full.gt_N, color="#252525", lw=1.1, ls="--", alpha=0.75, label="Ground Truth", zorder=3)
+        for q, g in p.groupby("q"):
+            label = f"Q={q}: {Q_LABELS.get(int(q), 'Other')}"
+            ax.scatter(g.E, g.N, s=7, color=Q_COLORS.get(int(q), "#666"), label=label, alpha=0.85, zorder=4)
+        ax.scatter([p.E.iloc[0]], [p.N.iloc[0]], s=65, marker="o", facecolors="#28a745", edgecolors="white", linewidths=1.2, label="Start", zorder=6)
+        ax.scatter([p.E.iloc[-1]], [p.N.iloc[-1]], s=65, marker="s", facecolors="#dc3545", edgecolors="white", linewidths=1.2, label="End", zorder=6)
+        ax.set_xlabel("East (m)")
+        ax.set_ylabel("North (m)")
+        ax.set_aspect("equal" if self.equal_scale.get() else "auto")
+        ax.legend(loc="upper left", fontsize=8)
+
+    def _draw_sky_export(self, ax, s):
+        if s is None or s.empty:
+            ax.text(0.5, 0.5, "No Satellite Data", ha="center", va="center", transform=ax.transAxes)
+            return
+        ax.set_theta_zero_location("N")
+        ax.set_theta_direction(-1)
+        ax.set_ylim(90, 0)
+        ax.set_yticks([0, 30, 60, 90])
+        ax.set_yticklabels(["90°", "60°", "30°", "0°"])
+        for (prn, con), g in s[s.freq == 1].groupby(["prn", "constellation"]):
+            g = self._display_sample(g.sort_values("time"), 400)
+            th = np.deg2rad(g.az)
+            r = 90 - g.el
+            ax.plot(th, r, lw=0.75, alpha=0.6, color=diag.COLORS.get(con, "#666"))
+            k = int(np.nanargmax(g.el.to_numpy()))
+            ax.text(th.iloc[k], r.iloc[k], prn, fontsize=7, weight="bold")
+        ax.set_title("Satellite Skyplot", pad=18, fontsize=12, weight="bold")
+
+    def export_render_mode(self, fig, mode_name, pos_sub, sat_sub, metrics, with_hud=True):
+        fig.clear()
+        full = pos_sub
+        p = pos_sub
+        s = sat_sub if sat_sub is not None else self.data["sat"]
+
+        if mode_name == "Dashboard":
+            fig.set_size_inches(16, 9)
+            axs = fig.subplots(2, 3)
+            axs_flat = axs.ravel()
+            for i, name in enumerate(["Gnd Trk", "Position Error", "Solution Status", "AR Ratio", "Satellites", "Elevation vs C/N0"]):
+                ax = axs_flat[i]
+                self._render_dashboard_item(ax, name, p, full, s, is_single=False)
+                ax.grid(self.grid_on.get(), alpha=0.3)
+            if with_hud:
+                diag.render_hud_card(axs_flat[1], metrics, loc="upper right", font_size=8.0)
+            fig.suptitle("RTKLIB Solution Dashboard", fontsize=15, weight="bold")
+            fig.tight_layout()
+            return
+
+        if mode_name == "Skyplot":
+            fig.set_size_inches(8, 8)
+            ax = fig.add_subplot(111, projection="polar")
+            self._draw_sky_export(ax, s)
+            if with_hud:
+                diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
+            fig.tight_layout()
+            return
+
+        fig.set_size_inches(10, 6)
+        if mode_name == "ENU Position":
+            axs = fig.subplots(3, 1, sharex=True)
+            self._draw_enu_positions(axs, p)
+            self._set_datetime_axis(axs[-1])
+            if with_hud:
+                diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
+            fig.tight_layout()
+            return
+        elif mode_name == "ENU Error":
+            if not self.data["has_truth"]:
+                ax = fig.add_subplot(111)
+                ax.text(0.5, 0.5, "No Ground Truth Loaded — Position Errors Unavailable", ha="center", va="center", transform=ax.transAxes, fontsize=11)
+                return
+            axs = fig.subplots(3, 1, sharex=True)
+            self._draw_errors(axs, p)
+            self._set_datetime_axis(axs[-1])
+            if with_hud:
+                diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
+            fig.tight_layout()
+            return
+
+        ax = fig.add_subplot(111)
+        if mode_name == "Gnd Trk":
+            self._draw_track_export(ax, p, full)
+        elif mode_name == "Height":
+            kw = self._get_line_kwargs("Height")
+            ax.plot(p.time, p.U, label="RTK U", **kw)
+            if self.data["has_truth"]:
+                ax.plot(p.time, p.gt_U, ls="--", color="#cf4b43", lw=kw.get("lw", 1.2), label="Truth U")
+            ax.set(title="Height (Up component)", xlabel="Date/time", ylabel="Up (m)")
+            ax.legend(loc="best")
+            self._set_datetime_axis(ax)
+        elif mode_name == "Solution Status":
+            ax.step(p.time, p.q, where="post", lw=1.2, color="#0B2B52")
+            ax.set(title="Solution Status (Q: 1=FIX, 2=FLOAT, 5=SINGLE)", xlabel="Date/time", ylabel="Q")
+            self._set_datetime_axis(ax)
+        elif mode_name == "AR Ratio":
+            kw = self._get_line_kwargs("AR Ratio")
+            ax.plot(p.time, p.ratio, color="#0B2B52", **kw)
+            ax.axhline(3, color="red", ls="--", lw=1.2, label="Threshold = 3.0")
+            ax.set(title="Ambiguity Resolution (AR) Ratio", xlabel="Date/time", ylabel="Ratio")
+            ax.legend(loc="best")
+            self._set_datetime_axis(ax)
+        elif mode_name == "Satellites":
+            self._draw_sats(ax)
+            self._set_datetime_axis(ax)
+        elif mode_name == "DOP":
+            self._draw_dop(ax)
+            self._set_datetime_axis(ax)
+        elif mode_name in ("C/N0", "C/N₀"):
+            self._draw_cn0(ax)
+        elif mode_name == "Elevation":
+            self._draw_elevation(ax)
+            self._set_datetime_axis(ax)
+        elif mode_name == "Residuals":
+            self._draw_residuals(ax)
+            self._set_datetime_axis(ax)
+        elif mode_name == "Multipath Proxy":
+            self._draw_multipath(ax)
+        elif mode_name == "Cycle Slips":
+            self._draw_slips(ax)
+            self._set_datetime_axis(ax)
+        elif mode_name == "Covariance":
+            self._draw_covariance(ax, p)
+            self._set_datetime_axis(ax)
+        elif mode_name == "False Fix Analysis":
+            self._draw_false_fix(ax, p)
+            self._set_datetime_axis(ax)
+
+        ax.grid(self.grid_on.get(), alpha=0.3)
+        if with_hud:
+            diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.5)
+        fig.tight_layout()
+
+    def open_batch_export_dialog(self):
+        if self.data is None:
+            messagebox.showwarning("Warning", "请先打开 .pos 解算文件后再执行批量导出。")
+            return
+        BatchExportDialog(self)
+
     def export_plot(self):
         if self.data is None:return
         path=filedialog.asksaveasfilename(title="Export current plot",defaultextension=".png",initialfile=f"{self.mode.get().lower().replace(' ','_')}.png",filetypes=[("PNG image","*.png"),("PDF document","*.pdf"),("SVG vector image","*.svg")])
         if not path:return
         try:self.fig.savefig(path,dpi=300 if path.lower().endswith(".png") else None,bbox_inches="tight");self.status.configure(text=f"Exported: {path}")
         except Exception as exc:messagebox.showerror("Export failed",str(exc))
+
+
+class BatchExportDialog(tk.Toplevel):
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("📸 批量导出所选子图与数据切片")
+        self.geometry("640x720")
+        self.minsize(560, 620)
+        self.transient(app.root)
+        self.grab_set()
+
+        # 1. Segment Selection
+        top_frame = ttk.LabelFrame(self, text="1. 选择时间段 (Time Segment Range)", padding=(10, 8))
+        top_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+
+        self.seg_options = ["全程全部历元 (Full Dataset)"]
+        for seg in self.app.segments:
+            self.seg_options.append(f"{seg['name']}: {self.app._epoch_datetime_label(seg['start'])} — {self.app._epoch_datetime_label(seg['end'])} CST")
+
+        self.seg_var = tk.StringVar(value=self.seg_options[-1] if len(self.seg_options) > 1 else self.seg_options[0])
+        ttk.Label(top_frame, text="时间区间:").pack(side=tk.LEFT, padx=(0, 6))
+        seg_combo = ttk.Combobox(top_frame, textvariable=self.seg_var, values=self.seg_options, state="readonly", width=48)
+        seg_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # 2. Subplots to Export (Multi-select Checkboxes)
+        mid_frame = ttk.LabelFrame(self, text="2. 选择要导出的子图 (Select Subplots to Export)", padding=(10, 8))
+        mid_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        btn_row = ttk.Frame(mid_frame)
+        btn_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Button(btn_row, text="全选 (Select All)", command=self._select_all).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(btn_row, text="清空 (Clear)", command=self._clear_all).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="常用推荐 (Recommended 6)", command=self._select_recommended).pack(side=tk.LEFT, padx=4)
+
+        chk_canvas = tk.Canvas(mid_frame, borderwidth=0, highlightthickness=0)
+        chk_scroll = ttk.Scrollbar(mid_frame, orient=tk.VERTICAL, command=chk_canvas.yview)
+        chk_inner = ttk.Frame(chk_canvas)
+        chk_inner.bind("<Configure>", lambda e: chk_canvas.configure(scrollregion=chk_canvas.bbox("all")))
+        chk_window = chk_canvas.create_window((0, 0), window=chk_inner, anchor="nw")
+        chk_canvas.bind("<Configure>", lambda e: chk_canvas.itemconfig(chk_window, width=e.width))
+        chk_canvas.configure(yscrollcommand=chk_scroll.set)
+        chk_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        chk_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.all_export_modes = ["Dashboard"] + list(MODES)
+        self.chk_vars = {}
+        for i, mode in enumerate(self.all_export_modes):
+            v = tk.BooleanVar(value=(mode in ("Dashboard", "Gnd Trk", "ENU Position", "ENU Error", "AR Ratio", "Satellites")))
+            self.chk_vars[mode] = v
+            cb = ttk.Checkbutton(chk_inner, text=mode, variable=v)
+            row = i // 2
+            col = i % 2
+            cb.grid(row=row, column=col, sticky="w", padx=12, pady=3)
+
+        # 3. Export Options
+        opt_frame = ttk.LabelFrame(self, text="3. 学术增强与导出选项 (Export & Academic Options)", padding=(10, 8))
+        opt_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.var_hud = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt_frame, text="在图角绘制学术量化指标 HUD 卡片 (FIX率、RMS 3D、CEP50/95、平均卫星数)", variable=self.var_hud).pack(anchor="w", pady=2)
+
+        self.var_dpi300 = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt_frame, text="学术汇报/论文级高清输出 (300 DPI, 自动优化线条与字号清晰度)", variable=self.var_dpi300).pack(anchor="w", pady=2)
+
+        self.var_crop_pos = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt_frame, text="同时导出该时间段裁剪版 .pos 解算文件 (保留完整RTKLIB头信息与高精度坐标)", variable=self.var_crop_pos).pack(anchor="w", pady=2)
+
+        # 4. Output Path
+        path_frame = ttk.LabelFrame(self, text="4. 导出存储目录 (Output Directory)", padding=(10, 8))
+        path_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        default_dir = (self.app.pos_path.parent / "exports") if self.app.pos_path else Path.cwd() / "exports"
+        self.out_dir_var = tk.StringVar(value=str(default_dir))
+        entry = ttk.Entry(path_frame, textvariable=self.out_dir_var)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        ttk.Button(path_frame, text="浏览… (Browse)", command=self._browse_dir).pack(side=tk.RIGHT)
+
+        # 5. Bottom action bar
+        act_frame = ttk.Frame(self, padding=(10, 10))
+        act_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        self.progress = ttk.Progressbar(act_frame, mode="determinate")
+        self.progress.pack(fill=tk.X, pady=(0, 6))
+        self.status_label = ttk.Label(act_frame, text="就绪。点击下方按钮开始导出。", anchor="w")
+        self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        ttk.Button(act_frame, text="关闭 (Close)", command=self.destroy).pack(side=tk.RIGHT, padx=4)
+        self.btn_export = ttk.Button(act_frame, text="🚀 开始批量导出 (Start Export)", command=self._do_export)
+        self.btn_export.pack(side=tk.RIGHT, padx=4)
+
+    def _select_all(self):
+        for v in self.chk_vars.values(): v.set(True)
+
+    def _clear_all(self):
+        for v in self.chk_vars.values(): v.set(False)
+
+    def _select_recommended(self):
+        rec = {"Dashboard", "Gnd Trk", "ENU Position", "ENU Error", "AR Ratio", "Satellites"}
+        for k, v in self.chk_vars.items(): v.set(k in rec)
+
+    def _browse_dir(self):
+        d = filedialog.askdirectory(title="选择导出目录", initialdir=self.out_dir_var.get())
+        if d: self.out_dir_var.set(d)
+
+    def _do_export(self):
+        selected_modes = [m for m, v in self.chk_vars.items() if v.get()]
+        if not selected_modes and not self.var_crop_pos.get():
+            messagebox.showwarning("Warning", "请至少勾选一个要导出的子图或勾选导出裁剪版 .pos 文件。")
+            return
+
+        out_dir = Path(self.out_dir_var.get())
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        full_pos = self.app.data["pos"]
+        seg_idx = self.seg_options.index(self.seg_var.get())
+        if seg_idx == 0:
+            seg_slug = "full"
+            pos_sub = full_pos.copy()
+            sat_sub = self.app.data["sat"]
+            t_lo = float(full_pos.tow.iloc[0])
+            t_hi = float(full_pos.tow.iloc[-1])
+        else:
+            seg = self.app.segments[seg_idx - 1]
+            seg_slug = f"seg{seg_idx}"
+            pos_sub = full_pos.iloc[seg["start"]:seg["end"]+1].copy()
+            t0 = float(pos_sub.time.iloc[0])
+            t1 = float(pos_sub.time.iloc[-1])
+            sat_sub = self.app._segment_sat_records(t0, t1)
+            t_lo = float(pos_sub.tow.iloc[0])
+            t_hi = float(pos_sub.tow.iloc[-1])
+
+        metrics = diag.compute_segment_metrics(pos_sub, sat_sub)
+        base_name = self.app.pos_path.stem if self.app.pos_path else "rtklib_solution"
+
+        self.btn_export.configure(state="disabled")
+        total_tasks = len(selected_modes) + (1 if self.var_crop_pos.get() else 0)
+        self.progress["maximum"] = total_tasks
+        current_step = 0
+        exported_files = []
+
+        if self.var_crop_pos.get() and self.app.pos_path and self.app.pos_path.exists():
+            self.status_label.configure(text="正在导出裁剪版 .pos 解算文件...")
+            self.update_idletasks()
+            out_pos_file = out_dir / f"{base_name}_{seg_slug}.pos"
+            try:
+                cnt = diag.crop_and_export_pos(self.app.pos_path, out_pos_file, t_lo, t_hi)
+                exported_files.append(out_pos_file.name)
+            except Exception as e:
+                print(f"Error exporting .pos: {e}")
+            current_step += 1
+            self.progress["value"] = current_step
+            self.update_idletasks()
+
+        dpi = 300 if self.var_dpi300.get() else 180
+        for mode in selected_modes:
+            self.status_label.configure(text=f"正在导出子图 [{mode}]...")
+            self.update_idletasks()
+            slug = mode.lower().replace(" ", "_").replace("/", "_")
+            out_img = out_dir / f"{base_name}_{seg_slug}_{slug}.png"
+            try:
+                fig = plt.Figure(facecolor="white")
+                self.app.export_render_mode(fig, mode, pos_sub, sat_sub, metrics, with_hud=self.var_hud.get())
+                fig.savefig(out_img, dpi=dpi, bbox_inches="tight")
+                exported_files.append(out_img.name)
+            except Exception as e:
+                print(f"Error exporting {mode}: {e}")
+            current_step += 1
+            self.progress["value"] = current_step
+            self.update_idletasks()
+
+        self.status_label.configure(text=f"导出完成！成功生成 {len(exported_files)} 个文件。")
+        self.btn_export.configure(state="normal")
+
+        msg = f"批量导出成功完成！\n共生成 {len(exported_files)} 个文件保存在：\n{out_dir}\n\n是否立即在文件管理器中打开该目录？"
+        if messagebox.askyesno("导出成功", msg):
+            try:
+                os.startfile(out_dir)
+            except Exception:
+                pass
+
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument("--pos",type=Path,default=None);parser.add_argument("--reference",type=Path,default=None);parser.add_argument("--plot",choices=MODES+['Dashboard'],default="Gnd Trk",help="Initial view to show");args=parser.parse_args()

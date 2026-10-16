@@ -60,12 +60,15 @@ def ecef_to_geodetic(x, y, z):
 class RTKPlotApp:
     def __init__(self, root, pos=None, reference=None, initial_plot="Gnd Trk"):
         self.root = root; self.root.title("RTKLIB Plot - Python"); self.root.geometry("1500x920"); self.root.minsize(1100, 700)
-        self.data = None; self.pos_path = None; self.ref_path = reference; self.playing = False; self.play_job = None
+        self.data = None; self.pos_path = None; self.ref_path = reference; self.stat_path = None; self.playing = False; self.play_job = None
         self.mode = tk.StringVar(value=initial_plot); self.qfilter = tk.StringVar(value="All Q"); self.grid_on = tk.BooleanVar(value=True)
         self.zoom_axis = tk.StringVar(value="Both axes"); self.equal_scale = tk.BooleanVar(value=False); self.speed = tk.StringVar(value="10x")
-        self.follow_mouse = tk.BooleanVar(value=True)
+        self.follow_mouse = tk.BooleanVar(value=True); self.click_to_maximize = tk.BooleanVar(value=False)
         self.vehicle_marker = None; self.vehicle_trail = None; self.vehicle_label = None
         self.truth_marker = None; self.error_link = None
+        self.dashboard_modes_default = ["Gnd Trk", "Position Error", "Solution Status", "AR Ratio", "Satellites", "Elevation vs C/N0"]
+        self.dashboard_modes = list(self.dashboard_modes_default)
+        self.selected_dashboard_index = 0; self.focused_dashboard_subplot = None
         self.time_cursors=[];self.sky_current=None;self.sky_labels=[];self.sky_plots=[];self.custom_modes=[];self.custom_panels=[];self.selected_custom_panel=0;self.focused_custom_panel=None;self.visible_panel_indices=[];self._drag_plot_name=None
         self.custom_page=0;self.custom_page_size=6
         self.custom_updaters=[];self.custom_dynamic_artists=[];self.dop_frames={};self.cov_twin_axes={}
@@ -78,15 +81,28 @@ class RTKPlotApp:
         # below the visible window on high-DPI displays.
         self._build_menu(); self._build_controls(); self._build_status(); self._build_plot()
         self.root.bind("<Control-o>", lambda _e: self.open_file()); self.root.bind("<Control-s>", lambda _e: self.export_plot())
+        self.root.bind("<Delete>", lambda _e: self.delete_selected_subplot())
         if pos and Path(pos).exists(): self.load_solution(Path(pos), reference)
         elif diag.DEFAULT_POS.exists(): self.load_solution(diag.DEFAULT_POS, diag.DEFAULT_REF if diag.DEFAULT_REF.exists() else None)
         else: self.draw_empty("打开 RTKLIB .pos 文件开始绘图")
 
     def _build_menu(self):
         bar=tk.Menu(self.root)
-        filem=tk.Menu(bar,tearoff=False); filem.add_command(label="Open Solution…",command=self.open_file,accelerator="Ctrl+O"); filem.add_command(label="Export Plot…",command=self.export_plot,accelerator="Ctrl+S"); filem.add_separator(); filem.add_command(label="Exit",command=self.root.destroy); bar.add_cascade(label="File",menu=filem)
+        filem=tk.Menu(bar,tearoff=False)
+        filem.add_command(label="Open Solution (.pos)…",command=self.open_file,accelerator="Ctrl+O")
+        filem.add_command(label="Open Satellite Status (.stat)…",command=self.open_stat_file)
+        filem.add_command(label="Open Ground Truth (.csv)…",command=self.open_reference_file)
+        filem.add_command(label="Export Plot…",command=self.export_plot,accelerator="Ctrl+S")
+        filem.add_separator(); filem.add_command(label="Exit",command=self.root.destroy); bar.add_cascade(label="File",menu=filem)
         edit=tk.Menu(bar,tearoff=False); edit.add_command(label="Save Plot As…",command=self.export_plot); edit.add_command(label="Reset View",command=self.redraw); bar.add_cascade(label="Edit",menu=edit)
-        view=tk.Menu(bar,tearoff=False); view.add_checkbutton(label="Grid",variable=self.grid_on,command=self.redraw); view.add_command(label="Fit to Data",command=self.redraw); bar.add_cascade(label="View",menu=view)
+        view=tk.Menu(bar,tearoff=False)
+        view.add_checkbutton(label="Grid",variable=self.grid_on,command=self.redraw)
+        view.add_checkbutton(label="Hover scrubs timeline",variable=self.follow_mouse)
+        view.add_checkbutton(label="Click to maximize / restore",variable=self.click_to_maximize)
+        view.add_separator()
+        view.add_command(label="Delete selected subplot",command=self.delete_selected_subplot,accelerator="Del")
+        view.add_command(label="Reset subplots layout",command=self.reset_subplots_layout)
+        view.add_command(label="Fit to Data",command=self.redraw); bar.add_cascade(label="View",menu=view)
         windows=tk.Menu(bar,tearoff=False); windows.add_command(label="Dashboard",command=lambda:self.set_mode("Dashboard")); bar.add_cascade(label="Windows",menu=windows)
         helpm=tk.Menu(bar,tearoff=False); helpm.add_command(label="About",command=lambda:messagebox.showinfo("About RTKLIB Plot - Python","Interactive RTKLIB result viewer\nReads .pos, optional .pos.stat and reference CSV.")); bar.add_cascade(label="Help",menu=helpm)
         self.root.config(menu=bar)
@@ -110,7 +126,10 @@ class RTKPlotApp:
         self.false_fix_box.bind("<Return>",lambda _e:self.redraw());self.false_fix_box.bind("<FocusOut>",lambda _e:self.redraw())
         ttk.Label(nav,text="Speed:").pack(side=tk.LEFT,padx=(7,0))
         self.speed_box=ttk.Combobox(nav,textvariable=self.speed,values=["1x","10x","50x"],state="readonly",width=5);self.speed_box.pack(side=tk.LEFT,padx=3)
-        ttk.Checkbutton(nav,text="Hover updates epoch",variable=self.follow_mouse).pack(side=tk.LEFT,padx=(5,0))
+        ttk.Checkbutton(nav,text="Hover scrubs timeline",variable=self.follow_mouse).pack(side=tk.LEFT,padx=(5,0))
+        ttk.Checkbutton(nav,text="Click to Maximize",variable=self.click_to_maximize).pack(side=tk.LEFT,padx=(5,0))
+        ttk.Button(nav,text="🗑️ Del Subplot",command=self.delete_selected_subplot).pack(side=tk.LEFT,padx=(4,0))
+        ttk.Button(nav,text="↺ Reset",command=self.reset_subplots_layout).pack(side=tk.LEFT,padx=(2,0))
         self.epoch_toggle_btn=ttk.Button(nav,text="Hide Epoch slider",command=self._toggle_epoch_slider);self.epoch_toggle_btn.pack(side=tk.LEFT,padx=(5,0))
         ttk.Button(nav,text="◀ Page",command=lambda:self._change_custom_page(-1)).pack(side=tk.LEFT,padx=(10,1))
         self.custom_page_label=ttk.Label(nav,text="Page 1 / 1",anchor="center",width=9);self.custom_page_label.pack(side=tk.LEFT,padx=1)
@@ -199,10 +218,32 @@ class RTKPlotApp:
         name=filedialog.askopenfilename(title="Open RTKLIB solution",filetypes=[("RTKLIB position files","*.pos *.txt *.csv"),("All files","*.*")])
         if not name:return
         pos=Path(name); stat=Path(str(pos)+".stat")
+        if not stat.exists():
+            if messagebox.askyesno("Satellite status file (.stat)", f"No matching status file found at:\n{stat.name}\n\nDo you want to select a .stat file manually?"):
+                stat_chosen=filedialog.askopenfilename(title="Select satellite status (.stat) file",filetypes=[("RTKLIB status files","*.stat *.txt"),("All files","*.*")])
+                stat=Path(stat_chosen) if stat_chosen else None
+            else:
+                stat=None
         ref=self._find_reference(pos)
         if ref is None and messagebox.askyesno("Reference data","Select a ground-truth CSV for position-error plots?"):
             chosen=filedialog.askopenfilename(title="Select reference CSV",filetypes=[("CSV files","*.csv"),("All files","*.*")]); ref=Path(chosen) if chosen else None
-        self.load_solution(pos,ref,stat if stat.exists() else None)
+        self.load_solution(pos,ref,stat if (stat and Path(stat).exists()) else None)
+
+    def open_stat_file(self):
+        if self.data is None or self.pos_path is None:
+            messagebox.showwarning("Open .stat", "Please open a .pos solution file first.")
+            return
+        name=filedialog.askopenfilename(title="Open Satellite Status (.stat) file",filetypes=[("RTKLIB status files","*.stat *.txt"),("All files","*.*")])
+        if not name:return
+        self.load_solution(self.pos_path,self.ref_path,Path(name))
+
+    def open_reference_file(self):
+        if self.data is None or self.pos_path is None:
+            messagebox.showwarning("Open reference", "Please open a .pos solution file first.")
+            return
+        name=filedialog.askopenfilename(title="Open Ground Truth reference (.csv) file",filetypes=[("CSV files","*.csv"),("All files","*.*")])
+        if not name:return
+        self.load_solution(self.pos_path,Path(name),self.stat_path)
 
     def _find_reference(self,pos):
         for p in [pos.parent/"reference.csv",pos.parent.parent/"reference.csv",diag.DEFAULT_REF]:
@@ -211,7 +252,7 @@ class RTKPlotApp:
 
     def load_solution(self,pos,reference=None,stat=None):
         try:
-            self.data=diag.load_data(pos,reference,stat); self.pos_path=Path(pos); self.ref_path=reference
+            self.data=diag.load_data(pos,reference,stat); self.pos_path=Path(pos); self.ref_path=reference; self.stat_path=Path(stat) if stat else None
         except Exception as exc:
             messagebox.showerror("Could not read solution",str(exc)); return
         self.segments.clear();self.segment_start_idx=None;self._refresh_segment_list()
@@ -355,6 +396,48 @@ class RTKPlotApp:
         if not modes:modes=[MODES[i] for i in self.plot_list.curselection()]
         if not modes:return
         self.custom_modes=modes;self.custom_panels=self._initial_custom_panels(modes);self.custom_page=0;self.selected_custom_panel=0;self.focused_custom_panel=None;self.redraw()
+
+    def delete_selected_subplot(self):
+        if self.data is None:return
+        mode=self.mode.get()
+        if mode=="Dashboard":
+            if not self.dashboard_modes:return
+            idx=min(max(0,self.selected_dashboard_index),len(self.dashboard_modes)-1)
+            removed=self.dashboard_modes.pop(idx)
+            self.selected_dashboard_index=max(0,min(self.selected_dashboard_index,len(self.dashboard_modes)-1))
+            self.focused_dashboard_subplot=None
+            self.segment_status.configure(text=f"Removed dashboard subplot: {removed}. {len(self.dashboard_modes)} remaining.")
+            self.redraw()
+        elif mode=="Custom Analysis":
+            if not self.custom_panels:return
+            idx=min(max(0,self.selected_custom_panel),len(self.custom_panels)-1)
+            self.custom_panels.pop(idx)
+            self.custom_modes=[p["mode"] for p in self.custom_panels]
+            self.focused_custom_panel=None
+            if self.custom_panels:
+                modes=[p["mode"] for p in self.custom_panels if p["mode"] is not None]
+                if not modes:modes=[None]*len(self.custom_panels)
+                self.custom_panels=self._initial_custom_panels(modes)
+                self.selected_custom_panel=max(0,min(idx,len(self.custom_panels)-1))
+            else:
+                self.selected_custom_panel=0
+            self.segment_status.configure(text=f"Removed custom panel {idx+1}. {len(self.custom_panels)} remaining.")
+            self.redraw()
+        else:
+            messagebox.showinfo("Delete subplot","Delete subplot is available in Dashboard and Custom Analysis modes.")
+
+    def reset_subplots_layout(self):
+        mode=self.mode.get()
+        if mode=="Dashboard":
+            self.dashboard_modes=list(self.dashboard_modes_default)
+            self.focused_dashboard_subplot=None
+            self.selected_dashboard_index=0
+            self.segment_status.configure(text="Restored default Dashboard subplots.")
+            self.redraw()
+        elif mode=="Custom Analysis":
+            self._reset_custom_grid()
+        else:
+            self.fit_view()
 
     def _filtered(self):
         p=self.data["pos"]; val=self.qfilter.get()
@@ -932,18 +1015,120 @@ class RTKPlotApp:
                 ha="center",va="center",transform=ax.transAxes,fontsize=8.5,wrap=True,color="#555")
 
     def _draw_dashboard(self):
-        self.fig.clear();p=self.data["pos"];axs=self.fig.subplots(2,3);axs=axs.ravel()
-        self.plot_axes=list(axs);self.time_cursors=[]
-        self.ax=axs[0];self._draw_track(axs[0],self._filtered(),p)
-        if self.data["has_truth"]:axs[1].plot(p.time,p.eh,lw=.6,label="Horizontal");axs[1].plot(p.time,p.e3d,lw=.6,label="3D");axs[1].legend();axs[1].set(title="Position Error",xlabel="Time (s)",ylabel="m")
-        else:axs[1].text(.5,.5,"No truth loaded",ha="center",transform=axs[1].transAxes)
-        axs[2].step(p.time,p.q,where="post");axs[2].set(title="Solution Status",xlabel="Time (s)",ylabel="Q")
-        axs[3].plot(p.time,p.ratio,lw=.5);axs[3].axhline(3,color="red",ls="--");axs[3].set(title="AR Ratio",xlabel="Time (s)")
-        self._draw_sats(axs[4]);s=self.data["sat"].query("freq == 1 and snr > 0");axs[5].scatter(s.el,s.snr,s=2,alpha=.15);axs[5].set(title="Elevation vs C/N₀",xlabel="Elevation (°)",ylabel="dB-Hz")
-        for a in axs:a.grid(self.grid_on.get(),alpha=.3)
-        for a in [axs[1],axs[2],axs[3],axs[4]]:
-            self._set_datetime_axis(a);self.time_cursors.append(a.axvline(0,color="#333",ls="--",lw=.7,alpha=.65))
-        self.fig.suptitle("RTKLIB Solution Overview",fontsize=14,weight="bold");self.fig.tight_layout()
+        self.fig.clear(); p = self.data["pos"]; full = self.data["pos"]; s = self.data["sat"]
+        self.plot_axes = []; self.time_cursors = []
+        if not self.dashboard_modes:
+            ax = self.fig.add_subplot(111)
+            ax.text(0.5, 0.5, "Dashboard has no subplots.\nClick '↺ Reset' in the toolbar to restore default layout.",
+                    ha="center", va="center", transform=ax.transAxes, fontsize=12, color="#666")
+            ax.set_axis_off(); self.plot_axes = [ax]; self.ax = ax
+            self.fig.suptitle("RTKLIB Solution Overview", fontsize=14, weight="bold")
+            self.fig.tight_layout(); return
+
+        if self.focused_dashboard_subplot is not None and 0 <= self.focused_dashboard_subplot < len(self.dashboard_modes):
+            idx = self.focused_dashboard_subplot
+            name = self.dashboard_modes[idx]
+            ax = self.fig.add_subplot(111, projection="polar" if name == "Skyplot" else None)
+            self.plot_axes = [ax]; self.ax = ax
+            self._render_dashboard_item(ax, name, p, full, s, is_single=True)
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#168aad"); spine.set_linewidth(1.8)
+            ax.grid(self.grid_on.get(), alpha=.3)
+            self.fig.suptitle(f"RTKLIB Solution Overview — [{name}] (Maximized)", fontsize=13, weight="bold")
+            self.fig.tight_layout(); return
+
+        n = len(self.dashboard_modes)
+        if n == 1: rows, cols = 1, 1
+        elif n == 2: rows, cols = 1, 2
+        elif n == 3: rows, cols = 1, 3
+        elif n == 4: rows, cols = 2, 2
+        elif n <= 6: rows, cols = 2, 3
+        elif n <= 8: rows, cols = 2, 4
+        else: cols = 3; rows = int(np.ceil(n / 3))
+
+        axs = self.fig.subplots(rows, cols)
+        axs_flat = np.array(axs).ravel()
+        for i in range(len(axs_flat)):
+            ax = axs_flat[i]
+            if i < n:
+                name = self.dashboard_modes[i]
+                self.plot_axes.append(ax)
+                if i == 0: self.ax = ax
+                self._render_dashboard_item(ax, name, p, full, s, is_single=False)
+                is_selected = (i == self.selected_dashboard_index)
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("#168aad" if is_selected else "#b9c0c8")
+                    spine.set_linewidth(1.8 if is_selected else 0.75)
+                ax.grid(self.grid_on.get(), alpha=.3)
+            else:
+                ax.set_axis_off()
+
+        self.fig.suptitle("RTKLIB Solution Overview", fontsize=14, weight="bold")
+        self.fig.tight_layout()
+
+    def _render_dashboard_item(self, ax, name, p, full, s, is_single=False):
+        if name == "Gnd Trk":
+            self.track_axes.append(ax)
+            self._draw_track(ax, self._filtered(), full)
+        elif name == "Position Error":
+            if self.data["has_truth"]:
+                ax.plot(p.time, p.eh, lw=.6, label="Horizontal")
+                ax.plot(p.time, p.e3d, lw=.6, label="3D")
+                ax.legend(fontsize=7 if not is_single else 9)
+                ax.set(title="Position Error", xlabel="Time (s)", ylabel="m")
+            else:
+                ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
+                ax.set(title="Position Error")
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Solution Status":
+            ax.step(p.time, p.q, where="post", lw=.65)
+            ax.set(title="Solution Status", xlabel="Time (s)", ylabel="Q")
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "AR Ratio":
+            ax.plot(p.time, p.ratio, lw=.5)
+            ax.axhline(3, color="red", ls="--")
+            ax.set(title="AR Ratio", xlabel="Time (s)")
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Satellites":
+            self._draw_sats(ax)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name in ("Elevation vs C/N0", "Elevation vs C/N₀"):
+            ss = s.query("freq == 1 and snr > 0") if not s.empty else s
+            if not ss.empty:
+                ax.scatter(ss.el, ss.snr, s=2, alpha=.15)
+            ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
+        elif name == "Height":
+            ax.plot(p.time, p.U, lw=.7, label="RTK U")
+            if self.data["has_truth"]: ax.plot(p.time, p.gt_U, lw=.7, ls="--", label="Truth U")
+            ax.set(title=name, ylabel="Up (m)"); ax.legend(fontsize=7)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "DOP":
+            self._draw_dop(ax)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Residuals":
+            self._draw_residuals(ax)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Cycle Slips":
+            self._draw_slips(ax)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Covariance":
+            self._draw_covariance(ax, p)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "False Fix Analysis":
+            self._draw_false_fix(ax, p)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        else:
+            ax.text(.5, .5, f"{name}", ha="center", transform=ax.transAxes)
 
     def on_scrub(self,value):
         if self.data is None:return
@@ -1045,13 +1230,23 @@ class RTKPlotApp:
 
     def on_mouse_down(self,event):
         if event.inaxes is None or getattr(self.toolbar,"mode",""):return
-        if self.mode.get()=="Custom Analysis" and event.inaxes in self.plot_axes:
+        if self.mode.get()=="Dashboard" and event.inaxes in self.plot_axes:
+            self.selected_dashboard_index=self.plot_axes.index(event.inaxes)
+            for i,ax in enumerate(self.plot_axes):
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("#168aad" if i==self.selected_dashboard_index else "#b9c0c8")
+                    spine.set_linewidth(1.8 if i==self.selected_dashboard_index else .75)
+            self.canvas.draw_idle()
+        elif self.mode.get()=="Custom Analysis" and event.inaxes in self.plot_axes:
             visible_index=self.plot_axes.index(event.inaxes)
             self.selected_custom_panel=(self.visible_panel_indices[visible_index]
                                          if visible_index<len(self.visible_panel_indices) else visible_index)
             for i,ax in enumerate(self.plot_axes):
                 panel_index=self.visible_panel_indices[i] if i<len(self.visible_panel_indices) else i
-                for spine in ax.spines.values():spine.set_edgecolor("#168aad" if panel_index==self.selected_custom_panel else "#b9c0c8");spine.set_linewidth(1.6 if panel_index==self.selected_custom_panel else .75)
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("#168aad" if panel_index==self.selected_custom_panel else "#b9c0c8")
+                    spine.set_linewidth(1.8 if panel_index==self.selected_custom_panel else .75)
+            self.canvas.draw_idle()
         if event.button==1:
             if event.inaxes in self.track_axes:
                 idx,distance=self._nearest_track_epoch(event)
@@ -1079,14 +1274,14 @@ class RTKPlotApp:
                 if mode in ("Both axes","Y axis"):ax.set_ylim(ylim0[0]+dy,ylim0[1]+dy)
                 self.canvas.draw_idle()
             return
-        # Hovering a time plot scrubs the selected epoch and synchronizes the
-        # vertical cursor across every visible time-series panel.
+        # If hover syncing is disabled, do not scrub time series
+        if not self.follow_mouse.get():return
         hover_mode=self.mode.get()
         if self.mode.get()=="Custom Analysis" and event.inaxes in self.plot_axes:
             visible_index=self.plot_axes.index(event.inaxes)
             panel_index=self.visible_panel_indices[visible_index] if visible_index<len(self.visible_panel_indices) else visible_index
             hover_mode=self.custom_modes[panel_index]
-        if (self.follow_mouse.get() and event.inaxes in self.plot_axes and event.xdata is not None and not getattr(self.toolbar,"mode","")
+        if (event.inaxes in self.plot_axes and event.xdata is not None and not getattr(self.toolbar,"mode","")
                 and hover_mode not in (None,"Gnd Trk", "Skyplot", "Innovation / NIS")):
             times=self._pos_times
             idx=int(np.clip(np.searchsorted(times,event.xdata),0,len(times)-1))
@@ -1102,21 +1297,39 @@ class RTKPlotApp:
         if not press:return
         ax=press["ax"]
         if not press["moved"]:
-            if self.mode.get()=="Custom Analysis":
-                if event.button==1 and event.inaxes is ax:
-                    panel_index=self.selected_custom_panel
-                    if self.focused_custom_panel!=panel_index:
-                        self.focused_custom_panel=panel_index
+            if self.click_to_maximize.get():
+                if self.mode.get()=="Dashboard":
+                    if event.button==1 and event.inaxes in self.plot_axes:
+                        clicked_idx=self.plot_axes.index(event.inaxes)
+                        if self.focused_dashboard_subplot!=clicked_idx:
+                            self.focused_dashboard_subplot=clicked_idx
+                            self.redraw()
+                        return
+                    elif event.button==3 and self.focused_dashboard_subplot is not None:
+                        self.focused_dashboard_subplot=None
                         self.redraw()
-                elif event.button==3 and self.focused_custom_panel is not None:
-                    self.focused_custom_panel=None
-                    self.redraw()
-                elif event.button==3:
-                    self._restore_axis(ax)
-                return
+                        return
+                    elif event.button==3:
+                        self._restore_axis(ax);return
+                elif self.mode.get()=="Custom Analysis":
+                    if event.button==1 and event.inaxes in self.plot_axes:
+                        panel_index=self.selected_custom_panel
+                        if self.focused_custom_panel!=panel_index:
+                            self.focused_custom_panel=panel_index
+                            self.redraw()
+                        return
+                    elif event.button==3 and self.focused_custom_panel is not None:
+                        self.focused_custom_panel=None
+                        self.redraw()
+                        return
+                    elif event.button==3:
+                        self._restore_axis(ax);return
+
             if event.button==1 and event.inaxes is ax and event.xdata is not None and event.ydata is not None:
-                self._zoom_at_click(ax,event.xdata,event.ydata,.72)
-            elif event.button==3:self._restore_axis(ax)
+                if self.mode.get() not in ("Dashboard","Custom Analysis"):
+                    self._zoom_at_click(ax,event.xdata,event.ydata,.72)
+            elif event.button==3:
+                self._restore_axis(ax)
             return
         if event.button==3 and event.inaxes is ax and event.xdata is not None and event.ydata is not None:
             mode=self.zoom_axis.get()

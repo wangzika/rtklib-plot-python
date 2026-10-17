@@ -26,8 +26,8 @@ import rtklib_map_tiles as mt
 Q_LABELS = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}
 Q_COLORS = {1: "#07851d", 2: "#dc8a12", 3: "#5b83c4", 4: "#9b59b6", 5: "#777777", 6: "#17a2a4"}
 MODES = ["Gnd Trk", "ENU Position", "Height", "ENU Error", "Solution Status",
-         "AR Ratio", "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals",
-         "Multipath Proxy", "Cycle Slips", "Covariance", "False Fix Analysis", "Innovation / NIS",
+         "AR Ratio", "Differential Age", "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals",
+         "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Covariance", "False Fix Analysis", "Innovation / NIS",
          "Error CDF", "Error Histogram", "Constellation Summary"]
 
 PLOT_CATEGORIES = {
@@ -38,10 +38,10 @@ PLOT_CATEGORIES = {
         "ENU Error", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance"
     ],
     "解算状态与可靠性 (Status & Reliability)": [
-        "Solution Status", "AR Ratio", "Innovation / NIS"
+        "Solution Status", "AR Ratio", "Differential Age", "Innovation / NIS"
     ],
     "卫星星历与信号质量 (Satellites & Signal Quality)": [
-        "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals", "Multipath Proxy", "Cycle Slips", "Constellation Summary"
+        "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals", "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Constellation Summary"
     ]
 }
 
@@ -52,6 +52,7 @@ MODE_BILINGUAL = {
     "ENU Error": "ENU误差 (ENU Err)",
     "Solution Status": "解状态 (Sol Status)",
     "AR Ratio": "Ratio比值 (AR Ratio)",
+    "Differential Age": "差分时延与解状态 (Age & Q)",
     "Satellites": "卫星数量 (Satellites)",
     "DOP": "DOP精度因子 (DOP)",
     "Skyplot": "星空图 (Skyplot)",
@@ -60,6 +61,7 @@ MODE_BILINGUAL = {
     "Residuals": "伪距残差 (Residuals)",
     "Multipath Proxy": "多路径效应 (Multipath)",
     "Cycle Slips": "周跳探测 (Cycle Slips)",
+    "Satellite Visibility Gantt": "卫星可见与周跳甘特图 (Gantt)",
     "Covariance": "方差协方差 (Covariance)",
     "False Fix Analysis": "假固定分析 (False Fix)",
     "Innovation / NIS": "新息/NIS (Innovation)",
@@ -364,15 +366,15 @@ class RTKPlotApp:
         if not hasattr(self, "plot_list"):
             return
         cat = getattr(self, "_current_category", "全部")
-        if cat in ("全部", "全部 (20)"):
+        if cat in ("全部", "全部 (22)", "全部 (20)"):
             listed = list(MODES)
         elif cat in ("轨迹", "轨迹 (3)"):
             listed = [m for m in MODES if m in PLOT_CATEGORIES["轨迹与高程 (Trajectory & Position)"]]
         elif cat in ("精度", "精度 (5)"):
             listed = [m for m in MODES if m in PLOT_CATEGORIES["定位精度与误差 (Accuracy & Errors)"]]
-        elif cat in ("状态", "状态 (3)"):
+        elif cat in ("状态", "状态 (4)", "状态 (3)"):
             listed = [m for m in MODES if m in PLOT_CATEGORIES["解算状态与可靠性 (Status & Reliability)"]]
-        elif cat in ("卫星", "卫星 (9)"):
+        elif cat in ("卫星", "卫星 (10)", "卫星 (9)"):
             listed = [m for m in MODES if m in PLOT_CATEGORIES["卫星星历与信号质量 (Satellites & Signal Quality)"]]
         else:
             listed = list(MODES)
@@ -457,11 +459,11 @@ class RTKPlotApp:
         cat_frame.pack(fill=tk.X, pady=(0, 4))
         self._cat_var = tk.StringVar(value="全部")
         categories = [
-            ("全部", "全部 (20)"),
+            ("全部", "全部 (22)"),
             ("轨迹", "轨迹 (3)"),
             ("精度", "精度 (5)"),
-            ("状态", "状态 (3)"),
-            ("卫星", "卫星 (9)"),
+            ("状态", "状态 (4)"),
+            ("卫星", "卫星 (10)"),
         ]
         for key, disp in categories:
             rb = ttk.Radiobutton(
@@ -1393,6 +1395,7 @@ class RTKPlotApp:
         elif mode=="ENU Error":self._draw_errors(self.plot_axes,p)
         elif mode=="Solution Status":ax.step(p.time,p.q,where="post",lw=.8,marker=".",ms=2,markevery=max(1,len(p)//120));ax.set(xlabel="Time from start (s)",ylabel="Q",yticks=sorted(full.q.unique()),title="Solution Status")
         elif mode=="AR Ratio":ax.plot(p.time,p.ratio,lw=.75,marker=".",ms=3,markevery=max(1,len(p)//120));ax.axhline(3,color="red",ls="--",label="Reference threshold 3");ax.set(xlabel="Time from start (s)",ylabel="Ratio",title="Ambiguity Resolution Ratio");ax.legend()
+        elif mode=="Differential Age":self._draw_differential_age(ax,p)
         elif mode=="Satellites":self._draw_sats(ax)
         elif mode=="DOP":self._draw_dop(ax)
         elif mode=="Skyplot":self._draw_sky(ax)
@@ -1401,6 +1404,7 @@ class RTKPlotApp:
         elif mode=="Residuals":self._draw_residuals(ax)
         elif mode=="Multipath Proxy":self._draw_multipath(ax)
         elif mode=="Cycle Slips":self._draw_slips(ax)
+        elif mode=="Satellite Visibility Gantt":self._draw_satellite_visibility_gantt(ax,s)
         elif mode=="Covariance":self._draw_covariance(ax,p)
         elif mode=="False Fix Analysis":self._draw_false_fix(ax,p)
         elif mode=="Innovation / NIS":self._draw_nis(ax)
@@ -1410,7 +1414,7 @@ class RTKPlotApp:
         for plot_ax in self.plot_axes:plot_ax.grid(self.grid_on.get(),linestyle="--",alpha=.45)
         if mode not in ("Gnd Trk","Skyplot","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary"):
             for plot_ax in self.plot_axes:self.time_cursors.append(plot_ax.axvline(0,color="#333",ls="--",lw=.8,alpha=.7,zorder=10))
-        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Satellites","DOP","C/N0","Elevation","Residuals","Multipath Proxy","Cycle Slips","Covariance","False Fix Analysis"):
+        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","C/N0","Elevation","Residuals","Multipath Proxy","Cycle Slips","Satellite Visibility Gantt","Covariance","False Fix Analysis"):
             for plot_ax in self.plot_axes:self._set_datetime_axis(plot_ax)
         self._apply_segment_overlays();self._register_dynamic_artists()
         self.fig.tight_layout();self.canvas.draw_idle();self._update_cursor();self.update_analysis()
@@ -1703,6 +1707,7 @@ class RTKPlotApp:
                 ax.set(title=name,ylabel="Error (m)")
             elif name=="Solution Status":ax.step(p.time,p.q,where="post",lw=.65,marker=".",ms=2,markevery=max(1,len(p)//50));ax.set(title=name,ylabel="Q")
             elif name=="AR Ratio":ax.plot(p.time,p.ratio,lw=.65,marker=".",ms=2,markevery=max(1,len(p)//50));ax.axhline(3,color="r",ls="--");ax.set(title=name,ylabel="Ratio")
+            elif name=="Differential Age":self._draw_differential_age(ax,p)
             elif name=="Satellites":self._draw_sats(ax)
             elif name=="DOP":self._draw_dop(ax)
             elif name=="Skyplot":self._draw_sky(ax)
@@ -1711,6 +1716,7 @@ class RTKPlotApp:
             elif name=="Residuals":self._draw_residuals(ax)
             elif name=="Multipath Proxy":self._draw_multipath(ax)
             elif name=="Cycle Slips":self._draw_slips(ax)
+            elif name=="Satellite Visibility Gantt":self._draw_satellite_visibility_gantt(ax,s)
             elif name=="Covariance":self._draw_covariance(ax,p)
             elif name=="False Fix Analysis":self._draw_false_fix(ax,p)
             elif name=="Innovation / NIS":self._draw_nis(ax)
@@ -1746,6 +1752,7 @@ class RTKPlotApp:
         elif name=="ENU Error" and self.data["has_truth"]:artists=[point(c) for c in ["#2878B5","#E07A2D","#36965A"]]
         elif name=="Solution Status":artists=[point("#333","o",8)]
         elif name=="AR Ratio":artists=[point("#333","o",8)]
+        elif name=="Differential Age":artists=[point("#dc2626","o",8)]
         elif name=="Satellites":artists=[point("#2878B5"),point("#E07A2D")]
         elif name=="DOP":artists=[point(c) for c in ["#2878B5","#E07A2D","#36965A"]]
         elif name=="C/N0":artists=[ax.scatter([],[],s=24,edgecolors="#222",linewidths=.5,zorder=11) for _ in range(2)]
@@ -1753,6 +1760,7 @@ class RTKPlotApp:
         elif name=="Residuals":artists=[ax.scatter([],[],s=24,marker="o",facecolors="none",edgecolors=c,zorder=11) for c in ["#2878B5","#E07A2D"]]
         elif name=="Multipath Proxy":artists=[ax.scatter([],[],s=24,marker="o",facecolors="none",edgecolors="#222",zorder=11)]
         elif name=="Cycle Slips":artists=[ax.scatter([],[],s=32,marker="x",color="#d00000",zorder=11)]
+        elif name=="Satellite Visibility Gantt":artists=[ax.axvline(np.nan,color="#dc2626",ls="--",lw=1.0,alpha=.8,zorder=10)]
         elif name=="Covariance":
             artists=[point(c) for c in ["#2878B5","#E07A2D","#36965A"]]
             if ax in self.cov_twin_axes:artists.append(point("#aa3377",target=self.cov_twin_axes[ax]))
@@ -1791,6 +1799,9 @@ class RTKPlotApp:
                 for art,col in zip(artists,["de","dn","du"]):set_point(art,x,r[col],visible and np.isfinite(r[col]))
             elif name=="Solution Status":set_point(artists[0],x,r.q,visible)
             elif name=="AR Ratio":set_point(artists[0],x,r.ratio,visible and np.isfinite(r.ratio))
+            elif name=="Differential Age":
+                age_val=float(getattr(r,"age",np.nan))
+                set_point(artists[0],x,age_val,visible and np.isfinite(age_val))
             elif name=="Satellites" and sat_epoch is not None and not sat_epoch.empty:
                 j=int(np.clip(np.searchsorted(sat_epoch.time.to_numpy(),x),0,len(sat_epoch)-1));row=sat_epoch.iloc[j]
                 set_point(artists[0],x,row.tracked,visible);set_point(artists[1],x,row.used,visible)
@@ -1814,6 +1825,8 @@ class RTKPlotApp:
                     g=cs[cs.slipc>0];prns=sorted(sat_frame.prn.unique());yi={prn:k for k,prn in enumerate(prns)}
                     offsets=np.c_[g.time, [yi[z] for z in g.prn]] if visible and not g.empty else np.empty((0,2))
                     artists[0].set_offsets(offsets)
+            elif name=="Satellite Visibility Gantt":
+                artists[0].set_xdata([x,x]) if visible else artists[0].set_xdata([np.nan,np.nan])
             elif name=="Covariance":
                 for art,col in zip(artists[:3],["sigE","sigN","sigU"]):set_point(art,x,r[col],visible and r[col]>0)
                 if self.data["has_truth"] and len(artists)>3:
@@ -1869,6 +1882,18 @@ class RTKPlotApp:
             transitions=int((p.q.to_numpy()[1:]!=p.q.to_numpy()[:-1]).sum());lines.append("状态比例："+"、".join(parts)+f"；状态切换 {transitions} 次；最长连续 FIX {self._max_run(p.q==1)} 历元。")
         elif mode=="AR Ratio":
             med=float(p.ratio.median());pct=float((p.ratio>=3).mean()*100);lines.append(f"Ratio 中位数 {med:.2f}，P95={p.ratio.quantile(.95):.2f}，达到图示参考线 3 的历元占 {pct:.1f}%。Ratio 是模糊度检验统计量，单独超过门限不代表真值误差必然较小。")
+        elif mode=="Differential Age":
+            if "age" in p.columns and not p.empty:
+                valid_age = p.age.dropna()
+                med_age = float(valid_age.median())
+                p95_age = float(valid_age.quantile(0.95))
+                max_age = float(valid_age.max())
+                over2 = float((valid_age > 2.0).mean() * 100)
+                over5 = float((valid_age > 5.0).mean() * 100)
+                lines.append(f"差分改正数时延 (Differential Age)：中位数={med_age:.2f} s，P95={p95_age:.2f} s，最大={max_age:.2f} s。")
+                lines.append(f"时延预警统计：Age > 2.0s 历元占比 {over2:.1f}%；Age > 5.0s (易导致丢定/降级) 占比 {over5:.1f}%。底色带联动对应解状态 Q (绿=FIX, 黄=FLOAT, 红=SINGLE)。")
+            else:
+                lines.append("当前 .pos 解算数据未包含有效差分时延 (age) 记录。")
         elif mode=="Satellites":
             if not s.empty:
                 e=diag._sat_epoch(d);lines.append(f"跟踪卫星数：中位数 {e.tracked.median():.1f}，范围 {e.tracked.min()}–{e.tracked.max()}；有效参与数：中位数 {e.used.median():.1f}，最低 {e.used.min()}。")
@@ -1905,6 +1930,15 @@ class RTKPlotApp:
         elif mode=="Cycle Slips":
             if not s.empty:
                 slip=s[s.slipc>0];lines.append(f".stat 中 slipc>0 的卫星频率记录 {len(slip):,} 条，涉及 {slip.prn.nunique()} 颗 PRN、{slip.tow.nunique()} 个历元。多个频率标记可能对应同一颗卫星同一历元。")
+        elif mode=="Satellite Visibility Gantt":
+            if not s.empty:
+                s1 = s[s.freq == 1]
+                prns = s1.prn.unique()
+                slips = s[s.slipc > 0]
+                lines.append(f"卫星可见度与周跳甘特图：共跟踪 {len(prns)} 颗卫星，涵盖 GPS/BDS/GLONASS/Galileo/QZSS 星座。")
+                lines.append(f"粗条带表示有效参与解算历元 (vsat=1)，细浅灰带为未参与解算历元 (vsat=0)；红色竖线标记周跳历元 (共 {len(slips):,} 处周跳记录)。")
+            else:
+                lines.append("未加载 .stat 卫星记录，无法生成可见度与周跳甘特图。")
         elif mode=="Covariance":
             lines.append(f"ENU 估计标准差中位数：E {p.sigE.median():.4f} m、N {p.sigN.median():.4f} m、U {p.sigU.median():.4f} m。")
             if d["has_truth"]:
@@ -2059,6 +2093,125 @@ class RTKPlotApp:
         ax.set(xlabel="Time from start (s)",ylabel="Satellite PRN",title=f"RTKLIB slipc flags ({len(g)} marked records)")
         ticks=np.linspace(0,max(0,len(prns)-1),min(12,len(prns)),dtype=int);ax.set_yticks(ticks,[prns[i] for i in ticks])
 
+    def _draw_differential_age(self, ax, p):
+        if p is None or "age" not in p.columns or p.empty:
+            ax.text(0.5, 0.5, "No Differential Age (age) in .pos file", ha="center", va="center", transform=ax.transAxes)
+            return
+
+        if "_cached_q_spans" not in self.data:
+            p_tmp = p[["time", "q"]].copy()
+            q_diff = p_tmp["q"].diff().ne(0)
+            p_tmp["q_seg"] = q_diff.cumsum()
+            q_spans = p_tmp.groupby("q_seg").agg(t_start=("time", "first"), t_end=("time", "last"), q=("q", "first")).reset_index()
+            self.data["_cached_q_spans"] = q_spans
+        else:
+            q_spans = self.data["_cached_q_spans"]
+
+        max_val = float(p.age.max()) if not p.empty else 10.0
+        ymax = max(10.0, max_val * 1.15) if np.isfinite(max_val) else 10.0
+
+        q_bg_colors = {
+            1: ("#dcfce7", "Q=1: FIX (固定)"),
+            2: ("#fef3c7", "Q=2: FLOAT (浮点)"),
+            5: ("#fee2e2", "Q=5: SINGLE (单点)")
+        }
+        added_labels = set()
+        for q_val, (col, lbl) in q_bg_colors.items():
+            sub = q_spans[q_spans.q == q_val]
+            if not sub.empty:
+                xranges = [(float(row.t_start), max(0.1, float(row.t_end - row.t_start))) for row in sub.itertuples()]
+                label = lbl if lbl not in added_labels else None
+                ax.broken_barh(xranges, (0, ymax), facecolors=col, alpha=0.35, zorder=0, label=label)
+                if label:
+                    added_labels.add(lbl)
+
+        kw = self._get_line_kwargs("Differential Age", default_ls="-", default_lw=1.0)
+        ax.plot(p.time, p.age, color="#0B2B52", label="Age (s)", zorder=3, **kw)
+        ax.axhline(2.0, color="#d97706", ls="--", lw=1.1, zorder=4, label="Warning (2.0s 预警)")
+        ax.axhline(5.0, color="#dc2626", ls=":", lw=1.3, zorder=4, label="Critical (5.0s 超时)")
+
+        ax.set_ylim(0, ymax)
+        ax.set(xlabel="Date/time", ylabel="Differential Age (s)", title="Differential Age & Solution Status (差分时延与解状态)")
+        ax.legend(loc="upper right", fontsize=8, ncol=2, framealpha=0.85)
+
+    def _draw_satellite_visibility_gantt(self, ax, s):
+        if s is None or s.empty:
+            ax.text(0.5, 0.5, "No .stat satellite records", ha="center", va="center", transform=ax.transAxes)
+            return
+
+        if "_cached_gantt" not in self.data:
+            s_l1 = s[s.freq == 1].sort_values(["prn", "time"]).copy()
+            if s_l1.empty:
+                s_l1 = s.sort_values(["prn", "time"]).copy()
+            prefix_order = {'G': 1, 'C': 2, 'R': 3, 'E': 4, 'J': 5, 'S': 6}
+            sorted_prns = sorted(
+                s_l1["prn"].unique(),
+                key=lambda p: (prefix_order.get(p[0] if p else "", 99), int(p[1:]) if p[1:].isdigit() else 0, p)
+            )
+            prn_to_y = {prn: i for i, prn in enumerate(sorted_prns)}
+
+            s_l1["dt"] = s_l1.groupby("prn")["time"].diff()
+            dt_med = s_l1["dt"].median()
+            time_gap = s_l1["dt"] > (dt_med * 2.5 if (dt_med and dt_med > 0) else 2.0)
+            vsat_diff = s_l1.groupby("prn")["vsat"].diff().ne(0)
+            s_l1["seg_id"] = (vsat_diff | time_gap).cumsum()
+            grouped = s_l1.groupby(["prn", "seg_id"]).agg(
+                t_start=("time", "first"),
+                t_end=("time", "last"),
+                vsat=("vsat", "first")
+            ).reset_index()
+
+            slips = s[s.slipc > 0][["time", "prn", "slipc"]]
+            self.data["_cached_gantt"] = (grouped, sorted_prns, prn_to_y, slips)
+        else:
+            grouped, sorted_prns, prn_to_y, slips = self.data["_cached_gantt"]
+
+        constellation_colors = {
+            'G': '#2563eb', # GPS (Blue)
+            'C': '#d97706', # BDS (Amber/Orange)
+            'R': '#059669', # GLONASS (Green)
+            'E': '#7c3aed', # Galileo (Purple)
+            'J': '#db2777', # QZSS (Pink)
+        }
+
+        v1 = grouped[grouped.vsat == 1]
+        if not v1.empty:
+            y1 = [prn_to_y[p] for p in v1.prn]
+            c1 = [constellation_colors.get(p[0] if p else '', '#334155') for p in v1.prn]
+            x0 = v1.t_start.to_numpy(dtype=float)
+            x1 = np.maximum(v1.t_end.to_numpy(dtype=float), x0 + 0.1)
+            ax.hlines(y1, x0, x1, colors=c1, lw=3.8, alpha=0.88, zorder=2)
+
+        v0 = grouped[grouped.vsat == 0]
+        if not v0.empty:
+            y0 = [prn_to_y[p] for p in v0.prn]
+            x0 = v0.t_start.to_numpy(dtype=float)
+            x1 = np.maximum(v0.t_end.to_numpy(dtype=float), x0 + 0.1)
+            ax.hlines(y0, x0, x1, colors='#cbd5e1', lw=1.8, alpha=0.65, zorder=1)
+
+        if not slips.empty:
+            valid_slips = slips[slips.prn.isin(prn_to_y)]
+            if not valid_slips.empty:
+                slip_y = [prn_to_y[p] for p in valid_slips.prn]
+                ax.scatter(valid_slips.time, slip_y, marker="|", color="#dc2626", s=50, lw=1.4, zorder=5)
+
+        for i in range(1, len(sorted_prns)):
+            if sorted_prns[i][0] != sorted_prns[i-1][0]:
+                ax.axhline(i - 0.5, color="#cbd5e1", ls="--", lw=0.75, alpha=0.8)
+
+        ax.set_yticks(range(len(sorted_prns)))
+        ax.set_yticklabels(sorted_prns, fontsize=7 if len(sorted_prns) > 25 else 8)
+        ax.set_ylim(-0.8, len(sorted_prns) - 0.2)
+        ax.set(xlabel="Date/time", ylabel="Satellite PRN", title=f"Satellite Visibility & Cycle Slip Gantt ({len(sorted_prns)} Sats, {len(slips)} Slips)")
+
+        from matplotlib.lines import Line2D
+        legend_elements = [
+            Line2D([0], [0], color="#2563eb", lw=3.5, label="Tracked & Used (vsat=1)"),
+            Line2D([0], [0], color="#cbd5e1", lw=2, label="Tracked Only (vsat=0)"),
+            Line2D([0], [0], marker="|", color="#dc2626", ls="None", markersize=10, markeredgewidth=1.6, label="Cycle Slip (周跳)")
+        ]
+        ax.legend(handles=legend_elements, loc="upper right", fontsize=8, framealpha=0.88)
+
     def _draw_covariance(self,ax,p):
         for c,col in [("sigE","#2878B5"),("sigN","#E07A2D"),("sigU","#36965A")]:ax.plot(p.time,p[c],label=f"σ{c[-1]}",lw=.75,color=col)
         # Keep labels short enough for a half-width custom panel.  The full
@@ -2150,6 +2303,10 @@ class RTKPlotApp:
             ax.set(title="AR Ratio", xlabel="Time (s)")
             self._set_datetime_axis(ax)
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Differential Age":
+            self._draw_differential_age(ax, p)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Satellites":
             self._draw_sats(ax)
             self._set_datetime_axis(ax)
@@ -2175,6 +2332,10 @@ class RTKPlotApp:
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Cycle Slips":
             self._draw_slips(ax)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Satellite Visibility Gantt":
+            self._draw_satellite_visibility_gantt(ax, s)
             self._set_datetime_axis(ax)
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Covariance":
@@ -3092,6 +3253,9 @@ class RTKPlotApp:
             ax.set(title="Ambiguity Resolution (AR) Ratio", xlabel="Date/time", ylabel="Ratio")
             ax.legend(loc="best")
             self._set_datetime_axis(ax)
+        elif mode_name == "Differential Age":
+            self._draw_differential_age(ax, p)
+            self._set_datetime_axis(ax)
         elif mode_name == "Satellites":
             self._draw_sats(ax)
             self._set_datetime_axis(ax)
@@ -3110,6 +3274,9 @@ class RTKPlotApp:
             self._draw_multipath(ax)
         elif mode_name == "Cycle Slips":
             self._draw_slips(ax)
+            self._set_datetime_axis(ax)
+        elif mode_name == "Satellite Visibility Gantt":
+            self._draw_satellite_visibility_gantt(ax, s)
             self._set_datetime_axis(ax)
         elif mode_name == "Covariance":
             self._draw_covariance(ax, p)
@@ -3156,7 +3323,7 @@ class RTKPlotApp:
             return
 
         ax.grid(self.grid_on.get(), alpha=0.3)
-        if with_hud:
+        if with_hud and metrics and "fix_rate" in metrics:
             diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.5)
         fig.tight_layout()
 

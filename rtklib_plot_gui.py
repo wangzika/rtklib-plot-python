@@ -205,6 +205,7 @@ class RTKPlotApp:
         layout_m.add_command(label="Promote to Primary (设为主图)",command=self._promote_custom_panel_to_primary)
         layout_m.add_command(label="Move Selected Up (上移)",command=lambda:self._move_custom_panel(-1))
         layout_m.add_command(label="Move Selected Down (下移)",command=lambda:self._move_custom_panel(1))
+        layout_m.add_command(label="➕ Add Subplot (添加新子图…)",command=self.add_selected_plot)
         layout_m.add_command(label="Repack Custom Grid (重排自定义网格)",command=self._reset_custom_grid)
         layout_m.add_command(label="Delete Selected Subplot (删除选中子图)",command=self.delete_selected_subplot,accelerator="Del")
         view.add_cascade(label="Subplots Layout (多图排版管理)",menu=layout_m)
@@ -235,6 +236,7 @@ class RTKPlotApp:
         self.basemap_combo.bind("<<ComboboxSelected>>",self._on_basemap_changed)
         ttk.Separator(row1,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=6,pady=2)
         ttk.Button(row1,text="Fit",command=self.fit_view).pack(side=tk.LEFT,padx=2)
+        ttk.Button(row1,text="➕ Add",command=self.add_selected_plot).pack(side=tk.LEFT,padx=2)
         ttk.Button(row1,text="🗑️ Del",command=self.delete_selected_subplot).pack(side=tk.LEFT,padx=2)
         ttk.Button(row1,text="↺ Reset",command=self.reset_subplots_layout).pack(side=tk.LEFT,padx=2)
         ttk.Label(row1,text="Speed:").pack(side=tk.LEFT,padx=(6,0))
@@ -277,9 +279,16 @@ class RTKPlotApp:
         self.plot_list.bind("<ButtonRelease-1>",self._drop_plot_on_panel,add="+")
         self.root.bind_all("<ButtonRelease-1>",self._drop_plot_on_panel,add="+")
         for name in MODES:self.plot_list.insert(tk.END,name)
-        ttk.Button(self.standard_sidebar,text="Show selected plots",command=self.show_selected).pack(fill=tk.X,pady=(4,1))
-        ttk.Button(self.standard_sidebar,text="Select all",command=lambda:self.plot_list.select_set(0,tk.END)).pack(fill=tk.X,pady=1)
-        ttk.Button(self.standard_sidebar,text="Clear",command=lambda:self.plot_list.selection_clear(0,tk.END)).pack(fill=tk.X,pady=1)
+        btn_box = ttk.Frame(self.standard_sidebar)
+        btn_box.pack(fill=tk.X, pady=(4, 1))
+        ttk.Button(btn_box, text="➕ 追加 (Add)", command=self.add_selected_plot).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        ttk.Button(btn_box, text="🔄 替换 (Show)", command=self.show_selected).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
+        
+        btn_sel_box = ttk.Frame(self.standard_sidebar)
+        btn_sel_box.pack(fill=tk.X, pady=1)
+        ttk.Button(btn_sel_box, text="全选 (All)", command=lambda: self.plot_list.select_set(0, tk.END)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        ttk.Button(btn_sel_box, text="清空 (Clear)", command=lambda: self.plot_list.selection_clear(0, tk.END)).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
+        self.plot_list.bind("<Double-Button-1>", lambda _e: self.add_selected_plot())
 
         # Line & Curve Style Controls
         ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=5)
@@ -332,6 +341,7 @@ class RTKPlotApp:
 
         # 3. Order adjustment & Slot actions
         order_f = ttk.Frame(self.standard_sidebar); order_f.pack(fill=tk.X, pady=(1, 2))
+        ttk.Button(order_f, text="➕ 添加", command=self.add_selected_plot).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(order_f, text="▲ 上移", command=lambda: self._move_custom_panel(-1)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(order_f, text="▼ 下移", command=lambda: self._move_custom_panel(1)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(order_f, text="★ 主图", command=self._promote_custom_panel_to_primary).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=1)
@@ -984,6 +994,91 @@ class RTKPlotApp:
         self.segment_status.configure(text=f"已成功载入多图方案: [{profile_name}]")
         self.redraw()
 
+    def add_selected_plot(self, mode_name=None):
+        """Append currently selected item(s) from 'Available plots' list into active layout."""
+        if self.data is None:
+            messagebox.showwarning("提示", "请先打开解算数据文件。")
+            return
+        if mode_name is not None:
+            modes_to_add = [mode_name]
+        else:
+            selected_indices = self.plot_list.curselection()
+            if selected_indices:
+                modes_to_add = [MODES[i] for i in selected_indices]
+            else:
+                self._popup_add_subplot_picker()
+                return
+
+        mode = self.mode.get()
+        if mode == "Dashboard":
+            for m in modes_to_add:
+                self.dashboard_modes.append(m)
+            self.selected_dashboard_index = len(self.dashboard_modes) - 1
+            self.focused_dashboard_subplot = None
+            self.segment_status.configure(text=f"已向 Dashboard 追加 {len(modes_to_add)} 个子图，当前共 {len(self.dashboard_modes)} 个。")
+            self.redraw()
+        else:
+            if mode != "Custom Analysis":
+                self.mode.set("Custom Analysis")
+            current_modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+            for m in modes_to_add:
+                current_modes.append(m)
+            self.custom_modes = current_modes
+            self.custom_panels = self._initial_custom_panels(current_modes, self.custom_preset.get())
+            self.selected_custom_panel = len(self.custom_panels) - 1
+            self.focused_custom_panel = None
+            self.segment_status.configure(text=f"已追加 {len(modes_to_add)} 个子图，当前共 {len(self.custom_panels)} 个。")
+            self.redraw()
+
+    def _popup_add_subplot_picker(self, insert_idx=None):
+        """Show categorized popup menu to pick and add a new subplot."""
+        picker_menu = tk.Menu(self.root, tearoff=False)
+        picker_menu.add_command(label="➕ 选择要添加的子图类型:", state="disabled")
+        picker_menu.add_separator()
+        for cat_name, modes in PLOT_CATEGORIES.items():
+            cat_menu = tk.Menu(picker_menu, tearoff=False)
+            for m in modes:
+                cat_menu.add_command(
+                    label=m,
+                    command=lambda name=m: self._insert_or_append_subplot(name, insert_idx)
+                )
+            picker_menu.add_cascade(label=cat_name, menu=cat_menu)
+        try:
+            picker_menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+        finally:
+            picker_menu.grab_release()
+
+    def _insert_or_append_subplot(self, mode_name, insert_idx=None):
+        if self.data is None:
+            return
+        mode = self.mode.get()
+        if mode == "Dashboard":
+            if insert_idx is not None and 0 <= insert_idx < len(self.dashboard_modes):
+                self.dashboard_modes.insert(insert_idx + 1, mode_name)
+                self.selected_dashboard_index = insert_idx + 1
+            else:
+                self.dashboard_modes.append(mode_name)
+                self.selected_dashboard_index = len(self.dashboard_modes) - 1
+            self.focused_dashboard_subplot = None
+            self.segment_status.configure(text=f"已添加子图 [{mode_name}] 到 Dashboard，当前共 {len(self.dashboard_modes)} 个。")
+            self.redraw()
+        else:
+            if mode != "Custom Analysis":
+                self.mode.set("Custom Analysis")
+            current_modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+            if insert_idx is not None and 0 <= insert_idx < len(current_modes):
+                current_modes.insert(insert_idx + 1, mode_name)
+                new_sel = insert_idx + 1
+            else:
+                current_modes.append(mode_name)
+                new_sel = len(current_modes) - 1
+            self.custom_modes = current_modes
+            self.custom_panels = self._initial_custom_panels(current_modes, self.custom_preset.get())
+            self.selected_custom_panel = new_sel
+            self.focused_custom_panel = None
+            self.segment_status.configure(text=f"已添加子图 [{mode_name}]，当前共 {len(self.custom_panels)} 个。")
+            self.redraw()
+
     def delete_selected_subplot(self):
         if self.data is None:return
         mode=self.mode.get()
@@ -1004,7 +1099,7 @@ class RTKPlotApp:
             if self.custom_panels:
                 modes=[p["mode"] for p in self.custom_panels if p["mode"] is not None]
                 if not modes:modes=[None]*len(self.custom_panels)
-                self.custom_panels=self._initial_custom_panels(modes)
+                self.custom_panels=self._initial_custom_panels(modes, self.custom_preset.get())
                 self.selected_custom_panel=max(0,min(idx,len(self.custom_panels)-1))
             else:
                 self.selected_custom_panel=0
@@ -2299,6 +2394,34 @@ class RTKPlotApp:
             menu.add_cascade(label="📐 切换布局预设 (Layout Presets)", menu=preset_m)
 
         if mode in ("Dashboard", "Custom Analysis"):
+            menu.add_separator()
+            cur_idx = self.selected_dashboard_index if mode == "Dashboard" else (
+                self.focused_custom_panel if self.focused_custom_panel is not None else (
+                    self.visible_panel_indices[self.plot_axes.index(ax)] if ax in self.plot_axes and self.plot_axes.index(ax) < len(self.visible_panel_indices) else self.selected_custom_panel
+                )
+            )
+            add_after_m = tk.Menu(menu, tearoff=False)
+            for cat_name, m_list in PLOT_CATEGORIES.items():
+                cat_menu = tk.Menu(add_after_m, tearoff=False)
+                for m in m_list:
+                    cat_menu.add_command(
+                        label=m,
+                        command=lambda name=m: self._insert_or_append_subplot(name, cur_idx)
+                    )
+                add_after_m.add_cascade(label=cat_name, menu=cat_menu)
+            menu.add_cascade(label="➕ 在此后插入新子图 (Insert Subplot After…)", menu=add_after_m)
+
+            add_append_m = tk.Menu(menu, tearoff=False)
+            for cat_name, m_list in PLOT_CATEGORIES.items():
+                cat_menu = tk.Menu(add_append_m, tearoff=False)
+                for m in m_list:
+                    cat_menu.add_command(
+                        label=m,
+                        command=lambda name=m: self._insert_or_append_subplot(name, None)
+                    )
+                add_append_m.add_cascade(label=cat_name, menu=cat_menu)
+            menu.add_cascade(label="➕ 追加新子图到末尾 (Append Subplot…)", menu=add_append_m)
+
             menu.add_separator()
             menu.add_command(label="🗑️ 删除此子图 (Delete Subplot)", command=lambda: self._delete_subplot(ax))
 

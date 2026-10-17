@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, scrolledtext
 
 import numpy as np
+import pandas as pd
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -27,7 +28,7 @@ Q_LABELS = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}
 Q_COLORS = {1: "#07851d", 2: "#dc8a12", 3: "#5b83c4", 4: "#9b59b6", 5: "#777777", 6: "#17a2a4"}
 MODES = ["Gnd Trk", "ENU Position", "Height", "ENU Error", "Solution Status",
          "AR Ratio", "Differential Age", "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals",
-         "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Covariance", "False Fix Analysis", "Innovation / NIS",
+         "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Multipath Skyplot", "Per-PRN Residuals", "Covariance", "False Fix Analysis", "Innovation / NIS",
          "Error CDF", "Error Histogram", "Constellation Summary"]
 
 PLOT_CATEGORIES = {
@@ -41,7 +42,7 @@ PLOT_CATEGORIES = {
         "Solution Status", "AR Ratio", "Differential Age", "Innovation / NIS"
     ],
     "卫星星历与信号质量 (Satellites & Signal Quality)": [
-        "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals", "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Constellation Summary"
+        "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals", "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Multipath Skyplot", "Per-PRN Residuals", "Constellation Summary"
     ]
 }
 
@@ -62,6 +63,8 @@ MODE_BILINGUAL = {
     "Multipath Proxy": "多路径效应 (Multipath)",
     "Cycle Slips": "周跳探测 (Cycle Slips)",
     "Satellite Visibility Gantt": "卫星可见与周跳甘特图 (Gantt)",
+    "Multipath Skyplot": "多路径星空热力图 (MP Skyplot)",
+    "Per-PRN Residuals": "单星残差画像 (Per-PRN Res)",
     "Covariance": "方差协方差 (Covariance)",
     "False Fix Analysis": "假固定分析 (False Fix)",
     "Innovation / NIS": "新息/NIS (Innovation)",
@@ -366,7 +369,7 @@ class RTKPlotApp:
         if not hasattr(self, "plot_list"):
             return
         cat = getattr(self, "_current_category", "全部")
-        if cat in ("全部", "全部 (22)", "全部 (20)"):
+        if cat in ("全部", "全部 (24)", "全部 (22)", "全部 (20)"):
             listed = list(MODES)
         elif cat in ("轨迹", "轨迹 (3)"):
             listed = [m for m in MODES if m in PLOT_CATEGORIES["轨迹与高程 (Trajectory & Position)"]]
@@ -374,7 +377,7 @@ class RTKPlotApp:
             listed = [m for m in MODES if m in PLOT_CATEGORIES["定位精度与误差 (Accuracy & Errors)"]]
         elif cat in ("状态", "状态 (4)", "状态 (3)"):
             listed = [m for m in MODES if m in PLOT_CATEGORIES["解算状态与可靠性 (Status & Reliability)"]]
-        elif cat in ("卫星", "卫星 (10)", "卫星 (9)"):
+        elif cat in ("卫星", "卫星 (12)", "卫星 (10)", "卫星 (9)"):
             listed = [m for m in MODES if m in PLOT_CATEGORIES["卫星星历与信号质量 (Satellites & Signal Quality)"]]
         else:
             listed = list(MODES)
@@ -459,11 +462,11 @@ class RTKPlotApp:
         cat_frame.pack(fill=tk.X, pady=(0, 4))
         self._cat_var = tk.StringVar(value="全部")
         categories = [
-            ("全部", "全部 (22)"),
+            ("全部", "全部 (24)"),
             ("轨迹", "轨迹 (3)"),
             ("精度", "精度 (5)"),
             ("状态", "状态 (4)"),
-            ("卫星", "卫星 (10)"),
+            ("卫星", "卫星 (12)"),
         ]
         for key, disp in categories:
             rb = ttk.Radiobutton(
@@ -1384,7 +1387,7 @@ class RTKPlotApp:
         elif mode=="Constellation Summary":
             axes=self.fig.subplots(1,2);self.plot_axes=list(axes);self.ax=axes[0]
         else:
-            self.ax=self.fig.add_subplot(111,projection="polar" if mode=="Skyplot" else None);self.plot_axes=[self.ax]
+            self.ax=self.fig.add_subplot(111,projection="polar" if mode in ("Skyplot", "Multipath Skyplot") else None);self.plot_axes=[self.ax]
         ax=self.ax
         if mode=="Gnd Trk":self._draw_track(ax,p,full)
         elif mode=="ENU Position":self._draw_enu_positions(self.plot_axes,p)
@@ -1405,6 +1408,8 @@ class RTKPlotApp:
         elif mode=="Multipath Proxy":self._draw_multipath(ax)
         elif mode=="Cycle Slips":self._draw_slips(ax)
         elif mode=="Satellite Visibility Gantt":self._draw_satellite_visibility_gantt(ax,s)
+        elif mode=="Multipath Skyplot":self._draw_multipath_skyplot(ax)
+        elif mode=="Per-PRN Residuals":self._draw_per_prn_residuals(ax)
         elif mode=="Covariance":self._draw_covariance(ax,p)
         elif mode=="False Fix Analysis":self._draw_false_fix(ax,p)
         elif mode=="Innovation / NIS":self._draw_nis(ax)
@@ -1412,7 +1417,7 @@ class RTKPlotApp:
         elif mode=="Error Histogram":self._draw_error_histogram(self.plot_axes,p)
         elif mode=="Constellation Summary":self._draw_constellation_summary(self.plot_axes,s)
         for plot_ax in self.plot_axes:plot_ax.grid(self.grid_on.get(),linestyle="--",alpha=.45)
-        if mode not in ("Gnd Trk","Skyplot","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary"):
+        if mode not in ("Gnd Trk","Skyplot","Multipath Skyplot","Per-PRN Residuals","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary"):
             for plot_ax in self.plot_axes:self.time_cursors.append(plot_ax.axvline(0,color="#333",ls="--",lw=.8,alpha=.7,zorder=10))
         if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","C/N0","Elevation","Residuals","Multipath Proxy","Cycle Slips","Satellite Visibility Gantt","Covariance","False Fix Analysis"):
             for plot_ax in self.plot_axes:self._set_datetime_axis(plot_ax)
@@ -1673,9 +1678,9 @@ class RTKPlotApp:
             panel=self.custom_panels[i]
             name=panel["mode"]
             rect=(.065,.09,.92,.82) if self.focused_custom_panel is not None else panel["rect"]
-            is_time_series = name not in ("Gnd Trk","Skyplot","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary")
+            is_time_series = name not in ("Gnd Trk","Skyplot","Multipath Skyplot","Per-PRN Residuals","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary")
             share = base_time_ax if (self.sync_time_axes.get() and is_time_series and self.focused_custom_panel is None) else None
-            ax=self.fig.add_axes(rect,projection="polar" if name=="Skyplot" else None, sharex=share)
+            ax=self.fig.add_axes(rect,projection="polar" if name in ("Skyplot", "Multipath Skyplot") else None, sharex=share)
             if self.sync_time_axes.get() and is_time_series and base_time_ax is None and self.focused_custom_panel is None:
                 base_time_ax = ax
             self.plot_axes.append(ax)
@@ -1717,6 +1722,8 @@ class RTKPlotApp:
             elif name=="Multipath Proxy":self._draw_multipath(ax)
             elif name=="Cycle Slips":self._draw_slips(ax)
             elif name=="Satellite Visibility Gantt":self._draw_satellite_visibility_gantt(ax,s)
+            elif name=="Multipath Skyplot":self._draw_multipath_skyplot(ax)
+            elif name=="Per-PRN Residuals":self._draw_per_prn_residuals(ax)
             elif name=="Covariance":self._draw_covariance(ax,p)
             elif name=="False Fix Analysis":self._draw_false_fix(ax,p)
             elif name=="Innovation / NIS":self._draw_nis(ax)
@@ -1724,7 +1731,7 @@ class RTKPlotApp:
             elif name=="Error Histogram":self._draw_error_histogram([ax],p)
             elif name=="Constellation Summary":self._draw_constellation_summary([ax],s)
             ax.grid(self.grid_on.get(),alpha=.28)
-            if name not in ("Gnd Trk","Skyplot","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary"):
+            if name not in ("Gnd Trk","Skyplot","Multipath Skyplot","Per-PRN Residuals","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary"):
                 self._set_datetime_axis(ax);ax.xaxis.set_major_locator(MaxNLocator(3));ax.tick_params(axis="x",labelsize=7,labelrotation=0)
                 self.time_cursors.append(ax.axvline(0,color="#333",ls="--",lw=.7,alpha=.65))
             self._register_custom_dynamic(name,ax,p,full)
@@ -1761,6 +1768,10 @@ class RTKPlotApp:
         elif name=="Multipath Proxy":artists=[ax.scatter([],[],s=24,marker="o",facecolors="none",edgecolors="#222",zorder=11)]
         elif name=="Cycle Slips":artists=[ax.scatter([],[],s=32,marker="x",color="#d00000",zorder=11)]
         elif name=="Satellite Visibility Gantt":artists=[ax.axvline(np.nan,color="#dc2626",ls="--",lw=1.0,alpha=.8,zorder=10)]
+        elif name=="Multipath Skyplot":
+            artists=[ax.scatter([],[],s=60,marker="*",edgecolors="#fff",linewidths=0.8,color="#dc2626",zorder=12)]
+        elif name=="Per-PRN Residuals":
+            artists=[point("#dc2626","o",7)]
         elif name=="Covariance":
             artists=[point(c) for c in ["#2878B5","#E07A2D","#36965A"]]
             if ax in self.cov_twin_axes:artists.append(point("#aa3377",target=self.cov_twin_axes[ax]))
@@ -1827,6 +1838,15 @@ class RTKPlotApp:
                     artists[0].set_offsets(offsets)
             elif name=="Satellite Visibility Gantt":
                 artists[0].set_xdata([x,x]) if visible else artists[0].set_xdata([np.nan,np.nan])
+            elif name=="Multipath Skyplot":
+                cs=current_sat
+                g=cs[(cs.freq==1)&(cs.resp!=0)]
+                if visible and not g.empty:
+                    th=np.deg2rad(g.az.to_numpy())
+                    r_val=90.0-g.el.to_numpy()
+                    artists[0].set_offsets(np.c_[th, r_val])
+                else:
+                    artists[0].set_offsets(np.empty((0,2)))
             elif name=="Covariance":
                 for art,col in zip(artists[:3],["sigE","sigN","sigU"]):set_point(art,x,r[col],visible and r[col]>0)
                 if self.data["has_truth"] and len(artists)>3:
@@ -1939,6 +1959,47 @@ class RTKPlotApp:
                 lines.append(f"粗条带表示有效参与解算历元 (vsat=1)，细浅灰带为未参与解算历元 (vsat=0)；红色竖线标记周跳历元 (共 {len(slips):,} 处周跳记录)。")
             else:
                 lines.append("未加载 .stat 卫星记录，无法生成可见度与周跳甘特图。")
+        elif mode=="Multipath Skyplot":
+            if not s.empty:
+                g = s[(s.freq == 1) & (s.resp != 0)]
+                if not g.empty:
+                    sectors = {
+                        "北 (N)": g[(g.az >= 337.5) | (g.az < 22.5)],
+                        "东北 (NE)": g[(g.az >= 22.5) & (g.az < 67.5)],
+                        "东 (E)": g[(g.az >= 67.5) & (g.az < 112.5)],
+                        "东南 (SE)": g[(g.az >= 112.5) & (g.az < 157.5)],
+                        "南 (S)": g[(g.az >= 157.5) & (g.az < 202.5)],
+                        "西南 (SW)": g[(g.az >= 202.5) & (g.az < 247.5)],
+                        "西 (W)": g[(g.az >= 247.5) & (g.az < 292.5)],
+                        "西北 (NW)": g[(g.az >= 292.5) & (g.az < 337.5)]
+                    }
+                    sector_means = {k: float(v.resp.abs().mean()) for k, v in sectors.items() if len(v) > 20}
+                    worst_sec = max(sector_means, key=sector_means.get) if sector_means else "未知"
+                    worst_val = sector_means[worst_sec] if sector_means else 0.0
+
+                    low_el = float(g[g.el < 20].resp.abs().mean()) if not g[g.el < 20].empty else 0.0
+                    high_el = float(g[g.el > 50].resp.abs().mean()) if not g[g.el > 50].empty else 0.0
+
+                    lines.append(f"多路径星空热力图：共统计 {len(g):,} 条有效 L1 伪距残差记录。")
+                    lines.append(f"反射方位角诊断：最大多路径残差聚集在 【{worst_sec}】 方位扇区 (平均残差 {worst_val:.2f} m)，提示该方向存在强反射结构物（建筑幕墙/立面）。")
+                    lines.append(f"仰角衰减特征：高度角 <20° 平均残差 {low_el:.2f} m；>50° 平均残差 {high_el:.2f} m。")
+            else:
+                lines.append("未加载 .stat 卫星记录。")
+        elif mode=="Per-PRN Residuals":
+            if "_cached_prn_stats" in self.data:
+                df_stat = self.data["_cached_prn_stats"]
+                worst_rms = df_stat.loc[df_stat['rms'].idxmax()]
+                worst_p95 = df_stat.loc[df_stat['p95'].idxmax()]
+                severe_sats = df_stat[df_stat['rms'] > 3.0]
+                lines.append(f"单星残差画像与污染诊断：共统计 {len(df_stat)} 颗卫星观测质量。")
+                if not severe_sats.empty:
+                    bad_list = ", ".join(f"{row.prn} (RMS {row.rms:.2f}m)" for row in severe_sats.itertuples())
+                    lines.append(f"[警告] 严重污染卫星预警 (RMS > 3.0m)：{bad_list}。建议在配置中临时排除该星测试是否恢复固定解。")
+                else:
+                    lines.append("全场卫星无孤立严重污染卫星 (所有星 RMS 均在 3.0m 门限内)。")
+                lines.append(f"残差最高卫星：{worst_rms['prn']} (RMS {worst_rms['rms']:.2f}m, 中位数 {worst_rms['median']:.2f}m)；P95 最高卫星：{worst_p95['prn']} (P95 {worst_p95['p95']:.2f}m)。")
+            else:
+                lines.append("尚未生成单星残差统计数据。")
         elif mode=="Covariance":
             lines.append(f"ENU 估计标准差中位数：E {p.sigE.median():.4f} m、N {p.sigN.median():.4f} m、U {p.sigU.median():.4f} m。")
             if d["has_truth"]:
@@ -2212,6 +2273,108 @@ class RTKPlotApp:
         ]
         ax.legend(handles=legend_elements, loc="upper right", fontsize=8, framealpha=0.88)
 
+    def _draw_multipath_skyplot(self, ax):
+        s = self.data["sat"]
+        if s is None or s.empty:
+            ax.text(0.5, 0.5, "No Satellite Data", ha="center", va="center", transform=ax.transAxes)
+            return
+        g = s[(s.freq == 1) & (s.resp != 0)].copy()
+        if g.empty:
+            ax.text(0.5, 0.5, "No Pseudorange Residuals", ha="center", va="center", transform=ax.transAxes)
+            return
+
+        ax.set_theta_zero_location("N")
+        ax.set_theta_direction(-1)
+        ax.set_ylim(90, 0)
+        ax.set_yticks([0, 30, 60, 90])
+        ax.set_yticklabels(["90°", "60°", "30°", "0°"])
+
+        g_draw = self._display_sample(g, 35000)
+        th = np.deg2rad(g_draw.az.to_numpy())
+        r = 90.0 - g_draw.el.to_numpy()
+        abs_resp = g_draw.resp.abs().to_numpy()
+        vmax = min(3.0, max(1.5, float(np.percentile(abs_resp, 98))))
+
+        sc = ax.scatter(th, r, c=abs_resp, cmap="plasma", vmin=0, vmax=vmax, s=8, alpha=0.6, edgecolors="none", zorder=3)
+        try:
+            cb = ax.figure.colorbar(sc, ax=ax, pad=0.08, shrink=0.72)
+            cb.set_label("|Pseudorange Residual| (m)", fontsize=8)
+            cb.ax.tick_params(labelsize=7)
+        except Exception:
+            pass
+
+        for prn, sub in g.groupby("prn"):
+            k = int(np.nanargmax(sub.el.to_numpy()))
+            ax.text(np.deg2rad(sub.az.iloc[k]), 90.0 - sub.el.iloc[k], prn, fontsize=6.5, weight="bold", color="#1e293b", ha="center", zorder=6)
+
+        ax.set_title("Multipath Skyplot Heatmap (|resp| in meters)", pad=16, fontsize=10.5, weight="bold")
+
+    def _draw_per_prn_residuals(self, ax):
+        s = self.data["sat"]
+        if s is None or s.empty:
+            ax.text(0.5, 0.5, "No Satellite Data", ha="center", va="center", transform=ax.transAxes)
+            return
+
+        if "_cached_prn_stats" not in self.data:
+            s1 = s[(s.freq == 1) & (s.resp != 0)]
+            if s1.empty:
+                ax.text(0.5, 0.5, "No Pseudorange Residuals", ha="center", va="center", transform=ax.transAxes)
+                return
+            prefix_order = {'G': 1, 'C': 2, 'R': 3, 'E': 4, 'J': 5, 'S': 6}
+            sorted_prns = sorted(s1['prn'].unique(), key=lambda p: (prefix_order.get(p[0] if p else '', 99), int(p[1:]) if p[1:].isdigit() else 0, p))
+
+            stats = []
+            for prn in sorted_prns:
+                sub = s1[s1.prn == prn]
+                resp = sub.resp.to_numpy()
+                abs_resp = np.abs(resp)
+                slips = int((sub.slipc > 0).sum())
+                stats.append({
+                    'prn': prn,
+                    'con': sub.constellation.iloc[0],
+                    'count': len(resp),
+                    'rms': float(np.sqrt(np.mean(resp**2))),
+                    'median': float(np.median(abs_resp)),
+                    'p95': float(np.percentile(abs_resp, 95)),
+                    'slips': slips
+                })
+            df = pd.DataFrame(stats)
+            self.data["_cached_prn_stats"] = df
+        else:
+            df = self.data["_cached_prn_stats"]
+
+        con_colors = {'GPS': '#2563eb', 'BeiDou': '#d97706', 'GLONASS': '#059669', 'Galileo': '#7c3aed', 'QZSS': '#db2777'}
+        colors = [con_colors.get(c, '#64748b') for c in df.con]
+        x = np.arange(len(df))
+
+        edge_colors = ['#dc2626' if r > 3.0 else 'none' for r in df['rms']]
+        ax.bar(x, df['rms'], width=0.6, color=colors, alpha=0.82, label='RMS Residual (m)', edgecolor=edge_colors, linewidth=1.5, zorder=2)
+        ax.scatter(x, df['p95'], marker='v', color='#b91c1c', s=24, zorder=4, label='P95 |Residual| (m)')
+        ax.scatter(x, df['median'], marker='_', color='#1e293b', s=38, zorder=5, label='Median |Residual|')
+
+        ax.axhline(1.0, color='#f59e0b', ls='--', lw=1.0, alpha=0.75, label='Warning (1.0m)')
+        ax.axhline(3.0, color='#dc2626', ls=':', lw=1.2, alpha=0.85, label='Severe (3.0m)')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(df['prn'], rotation=90, fontsize=7 if len(df) > 25 else 8)
+        ax.set_ylabel('Pseudorange Residual (m)', fontsize=8.5)
+        ax.set_title('Per-PRN Residual Profile & Satellite Contamination', fontsize=10.5, weight='bold')
+
+        for i in range(1, len(df)):
+            if df['con'].iloc[i] != df['con'].iloc[i-1]:
+                ax.axvline(i - 0.5, color='#cbd5e1', ls='--', lw=0.75)
+
+        twin = ax.twinx()
+        self.cov_twin_axes[ax] = twin
+        twin.plot(x, df['slips'], color='#e11d48', ls='--', marker='x', ms=4, lw=0.9, label='Cycle Slips')
+        twin.set_ylabel('Cycle Slips Count', color='#e11d48', fontsize=8)
+        twin.tick_params(axis='y', labelcolor='#e11d48', labelsize=7.5)
+        twin.set_ylim(0, max(10, df['slips'].max() * 1.3))
+
+        lines1, labels1 = ax.get_legend_handles_labels()
+        lines2, labels2 = twin.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=7.5, ncol=3, framealpha=0.85)
+
     def _draw_covariance(self,ax,p):
         for c,col in [("sigE","#2878B5"),("sigN","#E07A2D"),("sigU","#36965A")]:ax.plot(p.time,p[c],label=f"σ{c[-1]}",lw=.75,color=col)
         # Keep labels short enough for a half-width custom panel.  The full
@@ -2338,6 +2501,10 @@ class RTKPlotApp:
             self._draw_satellite_visibility_gantt(ax, s)
             self._set_datetime_axis(ax)
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Multipath Skyplot":
+            self._draw_multipath_skyplot(ax)
+        elif name == "Per-PRN Residuals":
+            self._draw_per_prn_residuals(ax)
         elif name == "Covariance":
             self._draw_covariance(ax, p)
             self._set_datetime_axis(ax)
@@ -3278,6 +3445,24 @@ class RTKPlotApp:
         elif mode_name == "Satellite Visibility Gantt":
             self._draw_satellite_visibility_gantt(ax, s)
             self._set_datetime_axis(ax)
+        elif mode_name == "Multipath Skyplot":
+            fig.set_size_inches(8, 8)
+            fig.clear()
+            ax = fig.add_subplot(111, projection="polar")
+            self._draw_multipath_skyplot(ax)
+            if with_hud and metrics and "fix_rate" in metrics:
+                diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
+            fig.tight_layout()
+            return
+        elif mode_name == "Per-PRN Residuals":
+            fig.set_size_inches(13, 5)
+            fig.clear()
+            ax = fig.add_subplot(111)
+            self._draw_per_prn_residuals(ax)
+            if with_hud and metrics and "fix_rate" in metrics:
+                diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
+            fig.tight_layout()
+            return
         elif mode_name == "Covariance":
             self._draw_covariance(ax, p)
             self._set_datetime_axis(ax)

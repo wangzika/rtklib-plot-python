@@ -44,6 +44,29 @@ PLOT_CATEGORIES = {
     ]
 }
 
+MODE_BILINGUAL = {
+    "Gnd Trk": "地面轨迹 (Gnd Trk)",
+    "ENU Position": "ENU位置 (ENU Pos)",
+    "Height": "大地高程 (Height)",
+    "ENU Error": "ENU误差 (ENU Err)",
+    "Solution Status": "解状态 (Sol Status)",
+    "AR Ratio": "Ratio比值 (AR Ratio)",
+    "Satellites": "卫星数量 (Satellites)",
+    "DOP": "DOP精度因子 (DOP)",
+    "Skyplot": "星空图 (Skyplot)",
+    "C/N0": "载噪比 (C/N0)",
+    "Elevation": "卫星高度角 (Elevation)",
+    "Residuals": "伪距残差 (Residuals)",
+    "Multipath Proxy": "多路径效应 (Multipath)",
+    "Cycle Slips": "周跳探测 (Cycle Slips)",
+    "Covariance": "方差协方差 (Covariance)",
+    "False Fix Analysis": "假固定分析 (False Fix)",
+    "Innovation / NIS": "新息/NIS (Innovation)",
+    "Error CDF": "误差累计分布 (CDF)",
+    "Error Histogram": "误差直方图 (Histogram)",
+    "Constellation Summary": "各星座汇总 (Constellation)",
+}
+
 
 def gpst_to_local_datetime(week, tow):
     """Convert GPST week/TOW to CST, applying the applicable GPS-UTC offset."""
@@ -111,6 +134,9 @@ class RTKPlotApp:
         self.layout_profiles={}
         self.selected_profile_name=tk.StringVar(value="")
         self._load_layout_profiles()
+        self._current_category = "全部"
+        self._current_listed_modes = list(MODES)
+        self._expand_segments_card = None
         # Reserve the bottom status/epoch area before packing the expanding
         # canvas.  Packing the expanding plot first can push these controls
         # below the visible window on high-DPI displays.
@@ -158,7 +184,7 @@ class RTKPlotApp:
         for cat_name, m_list in PLOT_CATEGORIES.items():
             cat_menu=tk.Menu(plots_m,tearoff=False)
             for m in m_list:
-                cat_menu.add_radiobutton(label=m,variable=self.mode,value=m,command=self.redraw)
+                cat_menu.add_radiobutton(label=MODE_BILINGUAL.get(m, m),variable=self.mode,value=m,command=self.redraw)
             plots_m.add_cascade(label=cat_name,menu=cat_menu)
         plots_m.add_separator()
         plots_m.add_radiobutton(label="Dashboard (综合六宫格仪表盘)",variable=self.mode,value="Dashboard",command=self.redraw)
@@ -230,103 +256,251 @@ class RTKPlotApp:
         self.qbox=ttk.Combobox(row1,textvariable=self.qfilter,values=["All Q"]+[f"Q={q}: {name}" for q,name in Q_LABELS.items()],state="readonly",width=10)
         self.qbox.pack(side=tk.LEFT,padx=3); self.qbox.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
         ttk.Checkbutton(row1,text="Grid",variable=self.grid_on,command=self.redraw).pack(side=tk.LEFT,padx=6)
-        ttk.Label(row1,text="🗺️ Map:").pack(side=tk.LEFT,padx=(6,2))
+        ttk.Label(row1,text="Map:").pack(side=tk.LEFT,padx=(6,2))
         self.basemap_combo=ttk.Combobox(row1,textvariable=self.basemap_provider,values=["None","Esri Satellite","OpenStreetMap","CartoDB Dark"],state="readonly",width=12)
         self.basemap_combo.pack(side=tk.LEFT,padx=3)
         self.basemap_combo.bind("<<ComboboxSelected>>",self._on_basemap_changed)
         ttk.Separator(row1,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=6,pady=2)
         ttk.Button(row1,text="Fit",command=self.fit_view).pack(side=tk.LEFT,padx=2)
         ttk.Button(row1,text="➕ Add",command=self.add_selected_plot).pack(side=tk.LEFT,padx=2)
-        ttk.Button(row1,text="🗑️ Del",command=self.delete_selected_subplot).pack(side=tk.LEFT,padx=2)
+        ttk.Button(row1,text="✕ Del",command=self.delete_selected_subplot).pack(side=tk.LEFT,padx=2)
         ttk.Button(row1,text="↺ Reset",command=self.reset_subplots_layout).pack(side=tk.LEFT,padx=2)
         ttk.Label(row1,text="Speed:").pack(side=tk.LEFT,padx=(6,0))
         self.speed_box=ttk.Combobox(row1,textvariable=self.speed,values=["1x","10x","50x"],state="readonly",width=5)
         self.speed_box.pack(side=tk.LEFT,padx=2)
         self.play_btn=ttk.Button(row1,text="▶ Play",command=self.toggle_play); self.play_btn.pack(side=tk.LEFT,padx=4)
         ttk.Button(row1,text="Export Image…",command=self.export_plot).pack(side=tk.RIGHT,padx=4)
-        ttk.Button(row1,text="📸 Batch Export…",command=self.open_batch_export_dialog).pack(side=tk.RIGHT,padx=4)
+        ttk.Button(row1,text="Batch Export…",command=self.open_batch_export_dialog).pack(side=tk.RIGHT,padx=4)
 
         # 2. Mark & Diagnostics Bar
         row2=ttk.Frame(self.root,padding=(8,2)); row2.pack(side=tk.TOP,fill=tk.X)
         ttk.Button(row2,text="Set start",command=self.mark_segment_start).pack(side=tk.LEFT,padx=(0,3))
         ttk.Button(row2,text="Set end & add",command=self.add_segment).pack(side=tk.LEFT,padx=3)
         ttk.Button(row2,text="Clear",command=self.clear_segments).pack(side=tk.LEFT,padx=3)
-        ttk.Button(row2,text="🔍 Auto Detect Issues",command=self.auto_detect_issues).pack(side=tk.LEFT,padx=4)
-        ttk.Button(row2,text="📋 Diagnostic Report",command=self.open_report_dialog).pack(side=tk.LEFT,padx=4)
-        ttk.Button(row2,text="🌐 Google Earth 3D…",command=self.export_kml).pack(side=tk.LEFT,padx=3)
-        ttk.Button(row2,text="🗺️ GeoJSON…",command=self.export_geojson).pack(side=tk.LEFT,padx=3)
+        ttk.Button(row2,text="Auto Detect Issues",command=self.auto_detect_issues).pack(side=tk.LEFT,padx=4)
+        ttk.Button(row2,text="Diagnostic Report",command=self.open_report_dialog).pack(side=tk.LEFT,padx=4)
+        ttk.Button(row2,text="Google Earth 3D…",command=self.export_kml).pack(side=tk.LEFT,padx=3)
+        ttk.Button(row2,text="GeoJSON…",command=self.export_geojson).pack(side=tk.LEFT,padx=3)
         self.segment_status=ttk.Label(row2,text="右键子图快捷菜单 · 双击满屏放大/还原 · 列表双击聚焦区段 · Shift+拖拽标记区段",anchor="w")
         self.segment_status.pack(side=tk.LEFT,padx=8,fill=tk.X,expand=True)
+
+    def _create_accordion_card(self, parent, title, is_expanded=True, on_toggle=None):
+        card = ttk.Frame(parent)
+        card.pack(fill=tk.X, pady=(0, 6))
+
+        # Modern header
+        header = tk.Frame(card, bg="#f1f5f9", cursor="hand2", padx=6, pady=4, relief=tk.FLAT)
+        header.pack(fill=tk.X)
+
+        arrow_var = tk.StringVar(value="▼ " if is_expanded else "▶ ")
+        arrow_lbl = tk.Label(header, textvariable=arrow_var, bg="#f1f5f9", fg="#475569", font=("Segoe UI", 9, "bold"))
+        arrow_lbl.pack(side=tk.LEFT)
+        title_lbl = tk.Label(header, text=title, bg="#f1f5f9", fg="#0f172a", font=("Segoe UI", 9, "bold"))
+        title_lbl.pack(side=tk.LEFT)
+
+        content = ttk.Frame(card, padding=(2, 4))
+        state = {"expanded": is_expanded}
+
+        def do_toggle(event=None):
+            if state["expanded"]:
+                content.pack_forget()
+                arrow_var.set("▶ ")
+                state["expanded"] = False
+            else:
+                content.pack(fill=tk.X, expand=True)
+                arrow_var.set("▼ ")
+                state["expanded"] = True
+            self._update_sidebar_scroll()
+            if on_toggle:
+                on_toggle(state["expanded"])
+
+        def do_expand():
+            if not state["expanded"]:
+                do_toggle()
+
+        def do_collapse():
+            if state["expanded"]:
+                do_toggle()
+
+        header.bind("<Button-1>", do_toggle)
+        arrow_lbl.bind("<Button-1>", do_toggle)
+        title_lbl.bind("<Button-1>", do_toggle)
+
+        def on_enter(e):
+            header.configure(bg="#e2e8f0")
+            arrow_lbl.configure(bg="#e2e8f0")
+            title_lbl.configure(bg="#e2e8f0")
+
+        def on_leave(e):
+            header.configure(bg="#f1f5f9")
+            arrow_lbl.configure(bg="#f1f5f9")
+            title_lbl.configure(bg="#f1f5f9")
+
+        header.bind("<Enter>", on_enter)
+        header.bind("<Leave>", on_leave)
+        arrow_lbl.bind("<Enter>", on_enter)
+        arrow_lbl.bind("<Leave>", on_leave)
+        title_lbl.bind("<Enter>", on_enter)
+        title_lbl.bind("<Leave>", on_leave)
+
+        if is_expanded:
+            content.pack(fill=tk.X, expand=True)
+
+        return content, do_expand, do_collapse
+
+    def _update_sidebar_scroll(self):
+        if hasattr(self, "sidebar_canvas") and hasattr(self, "scrollable_content"):
+            self.root.update_idletasks()
+            self.sidebar_canvas.configure(scrollregion=self.sidebar_canvas.bbox("all"))
+
+    def _on_category_selected(self):
+        cat = self._cat_var.get()
+        self._current_category = cat
+        self._refresh_plot_list()
+
+    def _refresh_plot_list(self):
+        if not hasattr(self, "plot_list"):
+            return
+        cat = getattr(self, "_current_category", "全部")
+        if cat in ("全部", "全部 (20)"):
+            listed = list(MODES)
+        elif cat in ("轨迹", "轨迹 (3)"):
+            listed = [m for m in MODES if m in PLOT_CATEGORIES["轨迹与高程 (Trajectory & Position)"]]
+        elif cat in ("精度", "精度 (5)"):
+            listed = [m for m in MODES if m in PLOT_CATEGORIES["定位精度与误差 (Accuracy & Errors)"]]
+        elif cat in ("状态", "状态 (3)"):
+            listed = [m for m in MODES if m in PLOT_CATEGORIES["解算状态与可靠性 (Status & Reliability)"]]
+        elif cat in ("卫星", "卫星 (9)"):
+            listed = [m for m in MODES if m in PLOT_CATEGORIES["卫星星历与信号质量 (Satellites & Signal Quality)"]]
+        else:
+            listed = list(MODES)
+
+        self._current_listed_modes = listed
+
+        # Find currently active modes on canvas
+        active_modes = set()
+        curr_mode = self.mode.get() if hasattr(self, "mode") else ""
+        if curr_mode == "Custom Analysis":
+            active_modes = {p.get("mode") for p in self.custom_panels if p.get("mode")}
+        elif curr_mode == "Dashboard":
+            active_modes = set(self.dashboard_modes)
+        elif curr_mode in MODES:
+            active_modes = {curr_mode}
+
+        prev_selected = set()
+        for idx in self.plot_list.curselection():
+            if idx < len(self._current_listed_modes):
+                prev_selected.add(self._current_listed_modes[idx])
+
+        self.plot_list.delete(0, tk.END)
+        for idx, m in enumerate(self._current_listed_modes):
+            bilingual_name = MODE_BILINGUAL.get(m, m)
+            is_active = m in active_modes
+            prefix = "● " if is_active else "  "
+            self.plot_list.insert(tk.END, f"{prefix}{bilingual_name}")
+            if is_active:
+                self.plot_list.itemconfig(idx, fg="#0b6bcb")
+            else:
+                self.plot_list.itemconfig(idx, fg="#1e293b")
+            if m in prev_selected:
+                self.plot_list.select_set(idx)
+
+        self._update_sidebar_scroll()
 
     def _build_plot(self):
         self.fig=plt.Figure(figsize=(10,6),dpi=100,facecolor="white"); self.ax=self.fig.add_subplot(111)
         self.main_pane=ttk.Panedwindow(self.root,orient=tk.HORIZONTAL);self.main_pane.pack(side=tk.TOP,fill=tk.BOTH,expand=True)
-        self.sidebar=ttk.Frame(self.main_pane,padding=5);self.plot_frame=ttk.Frame(self.main_pane)
+        self.sidebar=ttk.Frame(self.main_pane,padding=2,width=285);self.plot_frame=ttk.Frame(self.main_pane)
         self.main_pane.add(self.sidebar,weight=0);self.main_pane.add(self.plot_frame,weight=1)
-        
-        # Standard sidebar (Available plots, Custom grid, Segments)
-        self.standard_sidebar=ttk.Frame(self.sidebar); self.standard_sidebar.pack(fill=tk.BOTH,expand=True)
-        ttk.Label(self.standard_sidebar,text="Available plots",font=("Segoe UI",10,"bold")).pack(anchor="w",pady=(0,4))
-        list_frame=ttk.Frame(self.standard_sidebar);list_frame.pack(fill=tk.BOTH,expand=True)
-        self.plot_list=tk.Listbox(list_frame,selectmode=tk.EXTENDED,exportselection=False,width=23,height=8)
-        list_scroll=ttk.Scrollbar(list_frame,orient=tk.VERTICAL,command=self.plot_list.yview);self.plot_list.configure(yscrollcommand=list_scroll.set)
-        self.plot_list.pack(side=tk.LEFT,fill=tk.BOTH,expand=True);list_scroll.pack(side=tk.RIGHT,fill=tk.Y)
-        self.plot_list.bind("<ButtonPress-1>",self._begin_plot_drag,add="+")
-        # Keep Tk's Listbox class binding from extending the selection across
-        # every row while a plot is being dragged to the canvas.
-        self.plot_list.bind("<B1-Motion>",lambda _e:"break",add="+")
-        # Tk's implicit mouse grab sends release to the drag-origin widget.
-        self.plot_list.bind("<ButtonRelease-1>",self._drop_plot_on_panel,add="+")
-        self.root.bind_all("<ButtonRelease-1>",self._drop_plot_on_panel,add="+")
-        for name in MODES:self.plot_list.insert(tk.END,name)
-        btn_box = ttk.Frame(self.standard_sidebar)
+
+        # Scrollable sidebar container
+        self.sidebar_canvas = tk.Canvas(self.sidebar, borderwidth=0, highlightthickness=0, width=285)
+        self.sidebar_scroll = ttk.Scrollbar(self.sidebar, orient=tk.VERTICAL, command=self.sidebar_canvas.yview)
+        self.sidebar_canvas.configure(yscrollcommand=self.sidebar_scroll.set)
+        self.sidebar_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.sidebar_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.scrollable_content = ttk.Frame(self.sidebar_canvas, padding=(2, 2))
+        self.sidebar_window = self.sidebar_canvas.create_window((0, 0), window=self.scrollable_content, anchor="nw")
+
+        self.scrollable_content.bind("<Configure>", lambda e: self.sidebar_canvas.configure(scrollregion=self.sidebar_canvas.bbox("all")))
+        self.sidebar_canvas.bind("<Configure>", lambda e: self.sidebar_canvas.itemconfig(self.sidebar_window, width=e.width))
+
+        def _on_wheel(event):
+            w = self.root.winfo_containing(event.x_root, event.y_root)
+            if not w: return
+            if w in (self.plot_list, getattr(self, "segment_box", None)):
+                w.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                return "break"
+            curr = w
+            while curr:
+                if curr == self.sidebar:
+                    self.sidebar_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                    return "break"
+                curr = getattr(curr, "master", None)
+
+        self.root.bind_all("<MouseWheel>", _on_wheel, add="+")
+
+        # Standard sidebar (Available plots, Custom layout, Line styles, Segments)
+        self.standard_sidebar = ttk.Frame(self.scrollable_content)
+        self.standard_sidebar.pack(fill=tk.BOTH, expand=True)
+
+        # Card 1: 可用图表库 (Available Plots)
+        card1_content, self._expand_card1, self._collapse_card1 = self._create_accordion_card(
+            self.standard_sidebar, "可用图表库 (Available Plots)", is_expanded=True
+        )
+
+        # 1. Category Filter Pills
+        cat_frame = ttk.Frame(card1_content)
+        cat_frame.pack(fill=tk.X, pady=(0, 4))
+        self._cat_var = tk.StringVar(value="全部")
+        categories = [
+            ("全部", "全部 (20)"),
+            ("轨迹", "轨迹 (3)"),
+            ("精度", "精度 (5)"),
+            ("状态", "状态 (3)"),
+            ("卫星", "卫星 (9)"),
+        ]
+        for key, disp in categories:
+            rb = ttk.Radiobutton(
+                cat_frame, text=key, value=key,
+                variable=self._cat_var, style="Toolbutton",
+                command=self._on_category_selected
+            )
+            rb.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+
+        # 2. Listbox & Scrollbar
+        list_frame = ttk.Frame(card1_content)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+        self.plot_list = tk.Listbox(list_frame, selectmode=tk.EXTENDED, exportselection=False, width=28, height=8)
+        list_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.plot_list.yview)
+        self.plot_list.configure(yscrollcommand=list_scroll.set)
+        self.plot_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.plot_list.bind("<ButtonPress-1>", self._begin_plot_drag, add="+")
+        self.plot_list.bind("<B1-Motion>", lambda _e: "break", add="+")
+        self.plot_list.bind("<ButtonRelease-1>", self._drop_plot_on_panel, add="+")
+        self.root.bind_all("<ButtonRelease-1>", self._drop_plot_on_panel, add="+")
+        self.plot_list.bind("<Double-Button-1>", lambda _e: self.add_selected_plot())
+
+        # 3. Action Buttons
+        btn_box = ttk.Frame(card1_content)
         btn_box.pack(fill=tk.X, pady=(4, 1))
         ttk.Button(btn_box, text="➕ 追加 (Add)", command=self.add_selected_plot).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-        ttk.Button(btn_box, text="🔄 替换 (Show)", command=self.show_selected).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
-        
-        btn_sel_box = ttk.Frame(self.standard_sidebar)
+        ttk.Button(btn_box, text="⟳ 替换 (Show)", command=self.show_selected).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
+
+        btn_sel_box = ttk.Frame(card1_content)
         btn_sel_box.pack(fill=tk.X, pady=1)
         ttk.Button(btn_sel_box, text="全选 (All)", command=lambda: self.plot_list.select_set(0, tk.END)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
         ttk.Button(btn_sel_box, text="清空 (Clear)", command=lambda: self.plot_list.selection_clear(0, tk.END)).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
-        self.plot_list.bind("<Double-Button-1>", lambda _e: self.add_selected_plot())
 
-        # Line & Curve Style Controls
-        ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=5)
-        style_frame=ttk.LabelFrame(self.standard_sidebar,text="Line & Curve Styles",padding=4)
-        style_frame.pack(fill=tk.X,pady=(1,4))
-        r_s1=ttk.Frame(style_frame);r_s1.pack(fill=tk.X,pady=1)
-        ttk.Label(r_s1,text="Target:").pack(side=tk.LEFT)
-        ttk.Combobox(r_s1,textvariable=self.line_scope,values=["All Subplots","Current Subplot"],state="readonly",width=13).pack(side=tk.RIGHT,fill=tk.X,expand=True)
-        r_s2=ttk.Frame(style_frame);r_s2.pack(fill=tk.X,pady=1)
-        ttk.Label(r_s2,text="Line:").pack(side=tk.LEFT)
-        c_ls=ttk.Combobox(r_s2,textvariable=self.line_style,values=["Solid (―)","Dashed (---)","Dotted (···)","Dash-Dot (-·-)","Scatter Only","Line + Marker"],state="readonly",width=13)
-        c_ls.pack(side=tk.RIGHT,fill=tk.X,expand=True);c_ls.bind("<<ComboboxSelected>>",lambda _e:self._on_style_changed())
-        r_s3=ttk.Frame(style_frame);r_s3.pack(fill=tk.X,pady=1)
-        ttk.Label(r_s3,text="Width:").pack(side=tk.LEFT)
-        sp_w=ttk.Spinbox(r_s3,from_=0.5,to=5.0,increment=0.25,textvariable=self.line_width,width=4,command=self._on_style_changed)
-        sp_w.pack(side=tk.LEFT,padx=2);sp_w.bind("<Return>",lambda _e:self._on_style_changed())
-        ttk.Label(r_s3,text="Marker:").pack(side=tk.LEFT,padx=(2,0))
-        c_m=ttk.Combobox(r_s3,textvariable=self.marker_style,values=["None","Circle (o)","Square (s)","Point (.)","Cross (+)"],state="readonly",width=8)
-        c_m.pack(side=tk.RIGHT,fill=tk.X,expand=True);c_m.bind("<<ComboboxSelected>>",lambda _e:self._on_style_changed())
-        r_s4=ttk.Frame(style_frame);r_s4.pack(fill=tk.X,pady=(2,1))
-        ttk.Button(r_s4,text="Reset",command=self._reset_curve_styles).pack(side=tk.LEFT,fill=tk.X,expand=True,padx=1)
-        ttk.Button(r_s4,text="Apply",command=self._on_style_changed).pack(side=tk.RIGHT,fill=tk.X,expand=True,padx=1)
+        # Card 2: 多图排版与方案 (Custom Layout & Profiles)
+        card2_content, self._expand_card2, self._collapse_card2 = self._create_accordion_card(
+            self.standard_sidebar, "多图排版与方案 (Layout & Profiles)", is_expanded=True
+        )
 
-        ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=5)
-        ttk.Label(self.standard_sidebar,text="Marked time segments",font=("Segoe UI",9,"bold")).pack(anchor="w")
-        seg_frame=ttk.Frame(self.standard_sidebar);seg_frame.pack(fill=tk.X,pady=(2,0))
-        self.segment_box=tk.Listbox(seg_frame,height=3,width=23,exportselection=False)
-        self.segment_box.bind("<Double-Button-1>",self.on_segment_double_click)
-        seg_scroll=ttk.Scrollbar(seg_frame,orient=tk.VERTICAL,command=self.segment_box.yview);self.segment_box.configure(yscrollcommand=seg_scroll.set)
-        self.segment_box.pack(side=tk.LEFT,fill=tk.X,expand=True);seg_scroll.pack(side=tk.RIGHT,fill=tk.Y)
-        ttk.Button(self.standard_sidebar,text="Delete selected segment",command=self.delete_segment).pack(fill=tk.X,pady=(2,0))
-        ttk.Button(self.standard_sidebar,text="📸 Export Segment Subplots…",command=self.open_batch_export_dialog).pack(fill=tk.X,pady=(2,0))
-
-        ttk.Separator(self.standard_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=5)
-        ttk.Label(self.standard_sidebar,text="Custom Layout (多图排版)",font=("Segoe UI",9,"bold")).pack(anchor="w")
-
-        # 1. Preset Selector
-        p_row = ttk.Frame(self.standard_sidebar); p_row.pack(fill=tk.X, pady=(2, 2))
+        p_row = ttk.Frame(card2_content); p_row.pack(fill=tk.X, pady=(2, 2))
         ttk.Label(p_row, text="Preset:").pack(side=tk.LEFT)
         self.preset_combo = ttk.Combobox(
             p_row, textvariable=self.custom_preset,
@@ -336,40 +510,78 @@ class RTKPlotApp:
         self.preset_combo.pack(side=tk.RIGHT, fill=tk.X, expand=True)
         self.preset_combo.bind("<<ComboboxSelected>>", self._on_custom_preset_changed)
 
-        # 2. Time Sync Checkbutton
-        ttk.Checkbutton(self.standard_sidebar, text="⏱️ Sync Time Axes (时间轴联动)", variable=self.sync_time_axes, command=self.redraw).pack(anchor="w", pady=(1, 2))
+        ttk.Checkbutton(card2_content, text="⏱ 时间轴联动 (Sync Time)", variable=self.sync_time_axes, command=self.redraw).pack(anchor="w", pady=(1, 2))
 
-        # 3. Order adjustment & Slot actions
-        order_f = ttk.Frame(self.standard_sidebar); order_f.pack(fill=tk.X, pady=(1, 2))
+        order_f = ttk.Frame(card2_content); order_f.pack(fill=tk.X, pady=(1, 2))
         ttk.Button(order_f, text="➕ 添加", command=self.add_selected_plot).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(order_f, text="▲ 上移", command=lambda: self._move_custom_panel(-1)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(order_f, text="▼ 下移", command=lambda: self._move_custom_panel(1)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(order_f, text="★ 主图", command=self._promote_custom_panel_to_primary).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=1)
 
-        # 4. Profiles
-        prof_f = ttk.Frame(self.standard_sidebar); prof_f.pack(fill=tk.X, pady=(2, 2))
+        prof_f = ttk.Frame(card2_content); prof_f.pack(fill=tk.X, pady=(2, 2))
         ttk.Label(prof_f, text="Profile:").pack(side=tk.LEFT)
         self.profile_combo = ttk.Combobox(prof_f, textvariable=self.selected_profile_name, values=list(self.layout_profiles.keys()), state="readonly", width=11)
         self.profile_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 2))
         self.profile_combo.bind("<<ComboboxSelected>>", lambda _e: self._apply_layout_profile(self.selected_profile_name.get()))
         ttk.Button(prof_f, text="💾", width=3, command=self._save_current_layout_profile).pack(side=tk.RIGHT)
 
-        # 5. Paging
-        page_f=ttk.Frame(self.standard_sidebar); page_f.pack(fill=tk.X,pady=(2,1))
-        ttk.Button(page_f,text="◀ Page",command=lambda:self._change_custom_page(-1)).pack(side=tk.LEFT,fill=tk.X,expand=True,padx=1)
-        self.custom_page_label=ttk.Label(page_f,text="Page 1 / 1",anchor="center",width=8); self.custom_page_label.pack(side=tk.LEFT,padx=1)
-        ttk.Button(page_f,text="Page ▶",command=lambda:self._change_custom_page(1)).pack(side=tk.RIGHT,fill=tk.X,expand=True,padx=1)
+        page_f = ttk.Frame(card2_content); page_f.pack(fill=tk.X, pady=(2, 1))
+        ttk.Button(page_f, text="◀ Page", command=lambda: self._change_custom_page(-1)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        self.custom_page_label = ttk.Label(page_f, text="Page 1 / 1", anchor="center", width=8); self.custom_page_label.pack(side=tk.LEFT, padx=1)
+        ttk.Button(page_f, text="Page ▶", command=lambda: self._change_custom_page(1)).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=1)
+
+        # Card 3: 曲线与线型样式 (Line & Curve Styles)
+        card3_content, self._expand_card3, self._collapse_card3 = self._create_accordion_card(
+            self.standard_sidebar, "曲线与线型样式 (Line Styles)", is_expanded=False
+        )
+
+        r_s1 = ttk.Frame(card3_content); r_s1.pack(fill=tk.X, pady=1)
+        ttk.Label(r_s1, text="Target:").pack(side=tk.LEFT)
+        ttk.Combobox(r_s1, textvariable=self.line_scope, values=["All Subplots", "Current Subplot"], state="readonly", width=13).pack(side=tk.RIGHT, fill=tk.X, expand=True)
+
+        r_s2 = ttk.Frame(card3_content); r_s2.pack(fill=tk.X, pady=1)
+        ttk.Label(r_s2, text="Line:").pack(side=tk.LEFT)
+        c_ls = ttk.Combobox(r_s2, textvariable=self.line_style, values=["Solid (―)", "Dashed (---)", "Dotted (···)", "Dash-Dot (-·-)", "Scatter Only", "Line + Marker"], state="readonly", width=13)
+        c_ls.pack(side=tk.RIGHT, fill=tk.X, expand=True); c_ls.bind("<<ComboboxSelected>>", lambda _e: self._on_style_changed())
+
+        r_s3 = ttk.Frame(card3_content); r_s3.pack(fill=tk.X, pady=1)
+        ttk.Label(r_s3, text="Width:").pack(side=tk.LEFT)
+        sp_w = ttk.Spinbox(r_s3, from_=0.5, to=5.0, increment=0.25, textvariable=self.line_width, width=4, command=self._on_style_changed)
+        sp_w.pack(side=tk.LEFT, padx=2); sp_w.bind("<Return>", lambda _e: self._on_style_changed())
+        ttk.Label(r_s3, text="Marker:").pack(side=tk.LEFT, padx=(2, 0))
+        c_m = ttk.Combobox(r_s3, textvariable=self.marker_style, values=["None", "Circle (o)", "Square (s)", "Point (.)", "Cross (+)"], state="readonly", width=8)
+        c_m.pack(side=tk.RIGHT, fill=tk.X, expand=True); c_m.bind("<<ComboboxSelected>>", lambda _e: self._on_style_changed())
+
+        r_s4 = ttk.Frame(card3_content); r_s4.pack(fill=tk.X, pady=(2, 1))
+        ttk.Button(r_s4, text="Reset", command=self._reset_curve_styles).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(r_s4, text="Apply", command=self._on_style_changed).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=1)
+
+        # Card 4: 时间区段标记与导出 (Marked Time Segments)
+        card4_content, self._expand_segments_card, self._collapse_segments_card = self._create_accordion_card(
+            self.standard_sidebar, "时间区段标记与导出 (Segments)", is_expanded=False
+        )
+
+        seg_frame = ttk.Frame(card4_content); seg_frame.pack(fill=tk.X, pady=(1, 0))
+        self.segment_box = tk.Listbox(seg_frame, height=3, width=28, exportselection=False)
+        self.segment_box.bind("<Double-Button-1>", self.on_segment_double_click)
+        seg_scroll = ttk.Scrollbar(seg_frame, orient=tk.VERTICAL, command=self.segment_box.yview); self.segment_box.configure(yscrollcommand=seg_scroll.set)
+        self.segment_box.pack(side=tk.LEFT, fill=tk.X, expand=True); seg_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        ttk.Button(card4_content, text="✕ 删除所选区段 (Delete)", command=self.delete_segment).pack(fill=tk.X, pady=(2, 1))
+        ttk.Button(card4_content, text="📷 导出区段多图 (Export)…", command=self.open_batch_export_dialog).pack(fill=tk.X, pady=(1, 1))
+
+        # Initial populate plot list
+        self._refresh_plot_list()
 
         # Multi-compare sidebar (Solution overlay manager)
-        self.compare_sidebar=ttk.Frame(self.sidebar)
-        ttk.Label(self.compare_sidebar,text="Multi-Compare",font=("Segoe UI",10,"bold")).pack(anchor="w",pady=(0,4))
-        ttk.Label(self.compare_sidebar,text="Overlay 2–4 solutions side-by-side with ground truth.",wraplength=165,justify=tk.LEFT).pack(anchor="w",pady=(0,6))
-        ttk.Button(self.compare_sidebar,text="+ Add Solution (.pos)…",command=self.add_compare_solution).pack(fill=tk.X,pady=2)
-        ttk.Button(self.compare_sidebar,text="Open Reference (.csv)…",command=self.open_reference_file).pack(fill=tk.X,pady=2)
-        ttk.Separator(self.compare_sidebar,orient=tk.HORIZONTAL).pack(fill=tk.X,pady=6)
-        ttk.Label(self.compare_sidebar,text="Loaded Solutions:",font=("Segoe UI",9,"bold")).pack(anchor="w")
-        self.compare_list_container=ttk.Frame(self.compare_sidebar);self.compare_list_container.pack(fill=tk.BOTH,expand=True,pady=(4,6))
-        ttk.Button(self.compare_sidebar,text="Clear Extra Solutions",command=self.clear_compare_solutions).pack(fill=tk.X,pady=2)
+        self.compare_sidebar = ttk.Frame(self.scrollable_content)
+        ttk.Label(self.compare_sidebar, text="Multi-Compare", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(self.compare_sidebar, text="Overlay 2–4 solutions side-by-side with ground truth.", wraplength=180, justify=tk.LEFT).pack(anchor="w", pady=(0, 6))
+        ttk.Button(self.compare_sidebar, text="+ Add Solution (.pos)…", command=self.add_compare_solution).pack(fill=tk.X, pady=2)
+        ttk.Button(self.compare_sidebar, text="Open Reference (.csv)…", command=self.open_reference_file).pack(fill=tk.X, pady=2)
+        ttk.Separator(self.compare_sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        ttk.Label(self.compare_sidebar, text="Loaded Solutions:", font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        self.compare_list_container = ttk.Frame(self.compare_sidebar); self.compare_list_container.pack(fill=tk.BOTH, expand=True, pady=(4, 6))
+        ttk.Button(self.compare_sidebar, text="Clear Extra Solutions", command=self.clear_compare_solutions).pack(fill=tk.X, pady=2)
 
         self.canvas=FigureCanvasTkAgg(self.fig,master=self.plot_frame); self.canvas.get_tk_widget().pack(side=tk.TOP,fill=tk.BOTH,expand=True)
         self.canvas.mpl_connect("draw_event",self._on_canvas_draw)
@@ -480,6 +692,7 @@ class RTKPlotApp:
                 self.compare_sidebar.pack_forget()
             if hasattr(self, "standard_sidebar") and not self.standard_sidebar.winfo_manager():
                 self.standard_sidebar.pack(fill=tk.BOTH, expand=True)
+        self._update_sidebar_scroll()
 
     def _refresh_multi_solution_ui(self):
         if not hasattr(self, "compare_list_container"): return
@@ -496,6 +709,7 @@ class RTKPlotApp:
             if idx > 0:
                 del_btn = ttk.Button(row, text="✕", width=2, command=lambda i=idx: self.remove_compare_solution(i))
                 del_btn.pack(side=tk.RIGHT)
+        self._update_sidebar_scroll()
 
     def add_compare_solution(self):
         if self.data is None:
@@ -560,6 +774,8 @@ class RTKPlotApp:
         color=self.segment_palette[(number-1)%len(self.segment_palette)]
         self.segments.append({"start":lo,"end":hi,"name":f"Segment {number}","color":color})
         self.segment_start_idx=None;self._refresh_segment_list()
+        if hasattr(self, "_expand_segments_card") and callable(self._expand_segments_card):
+            self._expand_segments_card()
         self.segment_status.configure(text=f"Added Segment {number}: {self._epoch_datetime_label(lo)} — {self._epoch_datetime_label(hi)} CST")
         self._refresh_segment_overlays()
 
@@ -567,8 +783,15 @@ class RTKPlotApp:
         if not hasattr(self,"segment_box"):return
         self.segment_box.delete(0,tk.END)
         for i,seg in enumerate(self.segments):
-            self.segment_box.insert(tk.END,f"{seg['name']}: {self._epoch_datetime_label(seg['start'])} – {self._epoch_datetime_label(seg['end'])}")
+            if self.data is not None and "pos" in self.data and len(self.data["pos"]) > 0:
+                lbl = f"{seg['name']}: {self._epoch_datetime_label(seg['start'])} – {self._epoch_datetime_label(seg['end'])}"
+            else:
+                lbl = f"{seg['name']}: Epoch {seg['start']} – {seg['end']}"
+            self.segment_box.insert(tk.END, lbl)
             self.segment_box.itemconfig(i,fg=seg["color"])
+        if len(self.segments) > 0 and hasattr(self, "_expand_segments_card") and callable(self._expand_segments_card):
+            self._expand_segments_card()
+        self._update_sidebar_scroll()
 
     def delete_segment(self):
         selected=list(self.segment_box.curselection())
@@ -627,6 +850,8 @@ class RTKPlotApp:
                 new_count += 1
         self._refresh_segment_list()
         self._refresh_segment_overlays()
+        if hasattr(self, "_expand_segments_card") and callable(self._expand_segments_card):
+            self._expand_segments_card()
         messagebox.showinfo("智能诊断完成", f"共自动探测出 {len(detected)} 处异常/跳固定时段（新增标记 {new_count} 处）。\n\n提示：双击左侧列表中的任意时段即可快速缩放聚焦！")
         self.segment_status.configure(text=f"已自动标记 {len(detected)} 处异常时段。双击左侧时段列表可自动缩放聚焦。")
 
@@ -638,7 +863,7 @@ class RTKPlotApp:
 
     def show_selected(self):
         if self.data is None:return
-        selected=[MODES[i] for i in self.plot_list.curselection()]
+        selected=[self._current_listed_modes[i] for i in self.plot_list.curselection() if i < len(self._current_listed_modes)]
         if not selected:return
         self.custom_modes=selected;self.custom_panels=self._initial_custom_panels(selected, self.custom_preset.get());self.custom_page=0;self.selected_custom_panel=0;self.focused_custom_panel=None
         self.mode.set("Custom Analysis");self.redraw()
@@ -769,7 +994,8 @@ class RTKPlotApp:
 
     def _begin_plot_drag(self,event):
         index=self.plot_list.nearest(event.y)
-        if 0<=index<len(MODES) and self.plot_list.bbox(index):self._drag_plot_name=MODES[index]
+        if 0<=index<len(self._current_listed_modes) and self.plot_list.bbox(index):
+            self._drag_plot_name=self._current_listed_modes[index]
 
     def _drop_plot_on_panel(self,event):
         name=self._drag_plot_name;self._drag_plot_name=None
@@ -793,11 +1019,13 @@ class RTKPlotApp:
         selected=self.plot_list.curselection()
         if not selected:return
         panel_index=min(max(0,self.selected_custom_panel),len(self.custom_panels)-1)
-        name=MODES[selected[-1]]
-        self.custom_panels[panel_index]["mode"]=name
-        self.custom_modes=[panel["mode"] for panel in self.custom_panels]
-        self.segment_status.configure(text=f"Panel {panel_index+1} now displays {name}.")
-        self.redraw()
+        sel_idx = selected[-1]
+        if sel_idx < len(self._current_listed_modes):
+            name=self._current_listed_modes[sel_idx]
+            self.custom_panels[panel_index]["mode"]=name
+            self.custom_modes=[panel["mode"] for panel in self.custom_panels]
+            self.segment_status.configure(text=f"Panel {panel_index+1} now displays {name}.")
+            self.redraw()
 
     def _focus_custom_panel(self):
         if self.mode.get()!="Custom Analysis" or not self.custom_panels:return
@@ -825,7 +1053,7 @@ class RTKPlotApp:
             return
         modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
         if not modes:
-            modes = [MODES[i] for i in self.plot_list.curselection()]
+            modes = [self._current_listed_modes[i] for i in self.plot_list.curselection() if i < len(self._current_listed_modes)]
         if not modes:
             return
         self.custom_modes = modes
@@ -840,7 +1068,7 @@ class RTKPlotApp:
             self.mode.set("Custom Analysis")
         modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
         if not modes:
-            modes = [MODES[i] for i in self.plot_list.curselection()]
+            modes = [self._current_listed_modes[i] for i in self.plot_list.curselection() if i < len(self._current_listed_modes)]
         if not modes:
             modes = ["Gnd Trk", "ENU Error", "Solution Status", "Satellites"]
         self.custom_modes = modes
@@ -1004,7 +1232,7 @@ class RTKPlotApp:
         else:
             selected_indices = self.plot_list.curselection()
             if selected_indices:
-                modes_to_add = [MODES[i] for i in selected_indices]
+                modes_to_add = [self._current_listed_modes[i] for i in selected_indices if i < len(self._current_listed_modes)]
             else:
                 self._popup_add_subplot_picker()
                 return
@@ -1039,7 +1267,7 @@ class RTKPlotApp:
             cat_menu = tk.Menu(picker_menu, tearoff=False)
             for m in modes:
                 cat_menu.add_command(
-                    label=m,
+                    label=MODE_BILINGUAL.get(m, m),
                     command=lambda name=m: self._insert_or_append_subplot(name, insert_idx)
                 )
             picker_menu.add_cascade(label=cat_name, menu=cat_menu)
@@ -1136,6 +1364,7 @@ class RTKPlotApp:
         self.sky_current=None;self.sky_labels=[];self.sky_plots=[];self.time_cursors=[];self.custom_updaters=[];self.custom_dynamic_artists=[];self.dop_frames={};self.cov_twin_axes={}
         self.track_axes=[];self.datetime_axes=[];self.segment_track_lines=[];self.segment_sky_artists=[];self.segment_artists=[]
         self.ax.clear(); self.fig.clear(); mode=self.mode.get(); p=self._filtered(); full=self.data["pos"]; s=self.data["sat"]
+        self._refresh_plot_list()
         if mode=="Multi-Compare":
             self._toggle_sidebar_mode("multi_compare")
             self._draw_multi_compare();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
@@ -2361,12 +2590,12 @@ class RTKPlotApp:
         for cat_name, modes in PLOT_CATEGORIES.items():
             cat_submenu = tk.Menu(replace_menu, tearoff=False)
             for m in modes:
-                cat_submenu.add_command(label=m, command=lambda new_m=m: self._replace_subplot(ax, new_m))
+                cat_submenu.add_command(label=MODE_BILINGUAL.get(m, m), command=lambda new_m=m: self._replace_subplot(ax, new_m))
             replace_menu.add_cascade(label=cat_name, menu=cat_submenu)
-        menu.add_cascade(label="🔄 替换此子图为 (Replace Subplot with…)", menu=replace_menu)
+        menu.add_cascade(label="⟳ 替换此子图为 (Replace Subplot with…)", menu=replace_menu)
 
         menu.add_separator()
-        menu.add_command(label="📸 单独导出此子图 (300 DPI PNG)…", command=lambda: self._export_single_subplot(ax))
+        menu.add_command(label="单独导出此子图 (300 DPI PNG)…", command=lambda: self._export_single_subplot(ax))
         menu.add_command(label="↺ 重置此子图视野 (Reset Zoom)", command=lambda: self._restore_axis(ax))
 
         mode = self.mode.get()
@@ -2936,7 +3165,7 @@ class BatchExportDialog(tk.Toplevel):
     def __init__(self, app):
         super().__init__(app.root)
         self.app = app
-        self.title("📸 批量导出所选子图与数据切片")
+        self.title("批量导出所选子图与数据切片")
         self.geometry("640x720")
         self.minsize(560, 620)
         self.transient(app.root)

@@ -29,26 +29,31 @@ Q_COLORS = {1: "#07851d", 2: "#dc8a12", 3: "#5b83c4", 4: "#9b59b6", 5: "#777777"
 MODES = ["Gnd Trk", "ENU Position", "Height", "ENU Error", "Solution Status",
          "AR Ratio", "Differential Age", "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals",
          "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Multipath Skyplot", "Per-PRN Residuals", "Covariance", "False Fix Analysis", "Innovation / NIS",
-         "Error CDF", "Error Histogram", "Constellation Summary"]
+         "Error CDF", "Error Histogram", "Constellation Summary",
+         "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Clock Bias & ISB", "Body-Frame Error"]
 
 NON_TIME_SERIES_MODES = (
     "Gnd Trk", "Skyplot", "Multipath Skyplot", "Multipath Proxy",
     "Per-PRN Residuals", "Innovation / NIS", "Error CDF",
-    "Error Histogram", "Constellation Summary"
+    "Error Histogram", "Constellation Summary",
+    "El vs SNR & Resp", "Top Outlier Satellites"
 )
 
 PLOT_CATEGORIES = {
+    "故障诊断链路 (Fault Diagnostics)": [
+        "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Clock Bias & ISB", "Body-Frame Error"
+    ],
     "轨迹与高程 (Trajectory & Position)": [
-        "Gnd Trk", "ENU Position", "Height"
+        "Gnd Trk", "ENU Position", "Height", "Body-Frame Error"
     ],
     "定位精度与误差 (Accuracy & Errors)": [
-        "ENU Error", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance"
+        "ENU Error", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad"
     ],
     "解算状态与可靠性 (Status & Reliability)": [
-        "Solution Status", "AR Ratio", "Differential Age", "Innovation / NIS"
+        "Solution Status", "AR Ratio", "Differential Age", "Innovation / NIS", "Clock Bias & ISB"
     ],
     "卫星星历与信号质量 (Satellites & Signal Quality)": [
-        "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals", "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Multipath Skyplot", "Per-PRN Residuals", "Constellation Summary"
+        "Satellites", "DOP", "Directional DOP", "Skyplot", "C/N0", "Elevation", "Residuals", "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Multipath Skyplot", "Per-PRN Residuals", "Top Outlier Satellites", "El vs SNR & Resp", "Constellation Summary"
     ]
 }
 
@@ -77,7 +82,51 @@ MODE_BILINGUAL = {
     "Error CDF": "误差累计分布 (CDF)",
     "Error Histogram": "误差直方图 (Histogram)",
     "Constellation Summary": "各星座汇总 (Constellation)",
+    "Residual Triad": "伪距残差三线 (Residual Triad)",
+    "El vs SNR & Resp": "高度角-SNR-残差 (El vs SNR & Resp)",
+    "Top Outlier Satellites": "粗差卫星贡献榜 (Top Outliers)",
+    "Directional DOP": "方向DOP与扇区 (Directional DOP)",
+    "Clock Bias & ISB": "接收机钟差与ISB (Clock & ISB)",
+    "Body-Frame Error": "车体坐标系误差 (Body-Frame Err)",
 }
+
+DIAGNOSTIC_WORKSPACES = [
+    {
+        "id": 1,
+        "name": "① 外部环境与多路径",
+        "desc": "星空多路径热力图、高度角-信噪比-残差联合分布与伪距残差三线时序",
+        "preset": "Focus Left (左主右副)",
+        "modes": ["Multipath Skyplot", "El vs SNR & Resp", "Residual Triad"]
+    },
+    {
+        "id": 2,
+        "name": "② 单星污染与健康度",
+        "desc": "全星座可见性/周跳泳道图、粗差卫星贡献度排行榜与载噪比时序",
+        "preset": "Focus Top (上主下副)",
+        "modes": ["Satellite Visibility Gantt", "Top Outlier Satellites", "C/N0"]
+    },
+    {
+        "id": 3,
+        "name": "③ 星座几何与DOP",
+        "desc": "可见卫星数量（按系统堆叠）与方向 DOP / 8扇区覆盖",
+        "preset": "Vertical Stack (纵向流)",
+        "modes": ["Satellites", "Directional DOP"]
+    },
+    {
+        "id": 4,
+        "name": "④ 模糊度固定与滤波",
+        "desc": "假固定点空间识别、状态协方差 ±3σ 检验与接收机钟差/系统间偏差",
+        "preset": "Focus Left (左主右副)",
+        "modes": ["False Fix Analysis", "Covariance", "Clock Bias & ISB"]
+    },
+    {
+        "id": 5,
+        "name": "⑤ 全局精度与轨迹复盘",
+        "desc": "2D航迹着色图、车体坐标系(沿航向/跨航向/垂直)误差分解与误差CDF",
+        "preset": "Focus Left (左主右副)",
+        "modes": ["Gnd Trk", "Body-Frame Error", "Error CDF"]
+    }
+]
 
 
 @lru_cache(maxsize=16384)
@@ -185,6 +234,8 @@ class RTKPlotApp:
         filem.add_command(label="Open Ground Truth (.csv)…",command=self.open_reference_file)
         filem.add_separator()
         filem.add_command(label="Generate Diagnostic Report…",command=self.open_report_dialog,accelerator="Ctrl+R")
+        filem.add_command(label="Export Academic Defense PPTX (武汉大学母版)…",command=self.export_academic_pptx)
+        filem.add_command(label="Export Diagnostic HTML Dossier (综合分析HTML)…",command=self.export_diagnostic_html)
         filem.add_command(label="Export Current Plot…",command=self.export_plot,accelerator="Ctrl+S")
         filem.add_command(label="Batch Export Subplots…",command=self.open_batch_export_dialog,accelerator="Ctrl+E")
         filem.add_command(label="Export Google Earth KML (3D)…",command=self.export_kml)
@@ -193,7 +244,19 @@ class RTKPlotApp:
         filem.add_separator(); filem.add_command(label="Exit",command=self.root.destroy); bar.add_cascade(label="File",menu=filem)
         edit=tk.Menu(bar,tearoff=False); edit.add_command(label="Save Plot As…",command=self.export_plot); edit.add_command(label="Reset View",command=self.redraw); bar.add_cascade(label="Edit",menu=edit)
         
-        # New Plots Menu with 4 Categorized Submenus
+        # Diagnostics Menu (五大故障诊断场景工作区)
+        diag_m = tk.Menu(bar, tearoff=False)
+        for idx, ws in enumerate(DIAGNOSTIC_WORKSPACES):
+            diag_m.add_command(label=f"{ws['name']} ({ws['desc'][:16]}…)", command=lambda i=idx: self.switch_workspace(i))
+        diag_m.add_separator()
+        diag_m.add_command(label="Auto Detect Issues (自动探测异常区段)", command=self.auto_detect_issues)
+        diag_m.add_command(label="Quality Assessment Report (数据质量诊断评估)…", command=self.open_report_dialog)
+        diag_m.add_separator()
+        diag_m.add_command(label="Export Academic Defense PPTX (武大母版)…", command=self.export_academic_pptx)
+        diag_m.add_command(label="Export Diagnostic HTML Dossier (综合分析)…", command=self.export_diagnostic_html)
+        bar.add_cascade(label="Diagnostics (故障诊断)", menu=diag_m)
+
+        # Plots Menu with Categorized Submenus
         plots_m=tk.Menu(bar,tearoff=False)
         for cat_name, m_list in PLOT_CATEGORIES.items():
             cat_menu=tk.Menu(plots_m,tearoff=False)
@@ -298,6 +361,19 @@ class RTKPlotApp:
         ttk.Button(row2,text="GeoJSON…",command=self.export_geojson).pack(side=tk.LEFT,padx=3)
         self.segment_status=ttk.Label(row2,text="右键子图快捷菜单 · 双击满屏放大/还原 · 列表双击聚焦区段 · Shift+拖拽标记区段",anchor="w")
         self.segment_status.pack(side=tk.LEFT,padx=8,fill=tk.X,expand=True)
+
+        # 3. Diagnostic Workspaces Bar (五大故障诊断场景工作区)
+        row_ws = ttk.Frame(self.root, padding=(8, 2))
+        row_ws.pack(side=tk.TOP, fill=tk.X)
+        ttk.Label(row_ws, text="诊断工作区:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(row_ws, text="① 外部多路径", command=lambda: self.switch_workspace(0)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row_ws, text="② 单星污染", command=lambda: self.switch_workspace(1)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row_ws, text="③ 星座几何与DOP", command=lambda: self.switch_workspace(2)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row_ws, text="④ 模糊度与滤波", command=lambda: self.switch_workspace(3)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row_ws, text="⑤ 精度与轨迹复盘", command=lambda: self.switch_workspace(4)).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(row_ws, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=2)
+        ttk.Button(row_ws, text="📊 导出答辩PPTX", command=self.export_academic_pptx).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row_ws, text="🌐 导出HTML报告", command=self.export_diagnostic_html).pack(side=tk.LEFT, padx=2)
 
     def _create_accordion_card(self, parent, title, is_expanded=True, on_toggle=None):
         card = ttk.Frame(parent)
@@ -848,7 +924,10 @@ class RTKPlotApp:
         # 3. Position epoch slider to start of segment
         self.slider.set(seg["start"])
         self.canvas.draw_idle()
-        self.segment_status.configure(text=f"🔍 已自动缩放并聚焦至时段: {seg['name']} ({self._epoch_datetime_label(seg['start'])} — {self._epoch_datetime_label(seg['end'])} CST)")
+        st = float(p.iloc[seg["start"]].tow)
+        et = float(p.iloc[seg["end"]].tow)
+        d_res = diag.diagnose_anomaly_segment(p, self.data["sat"], st, et)
+        self.segment_status.configure(text=f"🔍 聚焦 [{seg['name']}]: 【{d_res['primary_cause']}】{d_res['summary']} | 建议: {d_res['recommendation']}")
 
     def auto_detect_issues(self):
         if self.data is None:
@@ -1389,11 +1468,11 @@ class RTKPlotApp:
             self._draw_dashboard();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
         if mode=="Custom Analysis":
             self._draw_custom_grid();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
-        if mode in ("ENU Position","ENU Error","Error Histogram"):
+        if mode in ("ENU Position","ENU Error","Error Histogram","Body-Frame Error"):
             sharex = (mode != "Error Histogram")
             axes=self.fig.subplots(3,1,sharex=sharex);self.plot_axes=list(axes);self.ax=axes[0]
-        elif mode=="Constellation Summary":
-            axes=self.fig.subplots(1,2);self.plot_axes=list(axes);self.ax=axes[0]
+        elif mode in ("Constellation Summary", "Directional DOP", "Clock Bias & ISB"):
+            axes=self.fig.subplots(2,1,sharex=True if mode != "Constellation Summary" else False);self.plot_axes=list(axes);self.ax=axes[0]
         else:
             self.ax=self.fig.add_subplot(111,projection="polar" if mode in ("Skyplot", "Multipath Skyplot") else None);self.plot_axes=[self.ax]
         ax=self.ax
@@ -1424,10 +1503,78 @@ class RTKPlotApp:
         elif mode=="Error CDF":self._draw_error_cdf(ax,p)
         elif mode=="Error Histogram":self._draw_error_histogram(self.plot_axes,p)
         elif mode=="Constellation Summary":self._draw_constellation_summary(self.plot_axes,s)
+        elif mode=="Residual Triad":self._draw_residual_triad(ax)
+        elif mode=="El vs SNR & Resp":self._draw_el_snr_resp(ax)
+        elif mode=="Top Outlier Satellites":self._draw_top_outliers(ax)
+        elif mode=="Directional DOP":
+            dop_df = diag.compute_directional_dop(self.data)
+            if not dop_df.empty and len(self.plot_axes) >= 2:
+                sec_cols = [c for c in dop_df.columns if c.startswith("sector_")]
+                if sec_cols:
+                    sec_labels = ["北(N)", "东北(NE)", "东(E)", "东南(SE)", "南(S)", "西南(SW)", "西(W)", "西北(NW)"]
+                    sec_colors = ["#2878B5", "#00b4d8", "#36965A", "#8ac926", "#ffca3a", "#ff924c", "#ff595e", "#6a4c93"]
+                    self.plot_axes[0].stackplot(dop_df.time, *[dop_df[c] for c in sec_cols], labels=sec_labels, colors=sec_colors, alpha=0.7)
+                    self.plot_axes[0].set(ylabel="各扇区星数 (颗)", title="8 扇区空间几何覆盖与方向 DOP 精度因子")
+                    self.plot_axes[0].legend(fontsize=7, ncol=4, loc="upper right")
+                else:
+                    self.plot_axes[0].plot(dop_df.time, dop_df.HDOP, color="#2878B5", label="HDOP")
+                    self.plot_axes[0].plot(dop_df.time, dop_df.VDOP, color="#36965A", label="VDOP")
+                    self.plot_axes[0].set(ylabel="DOP", title="方向 DOP 几何精度因子")
+                    self.plot_axes[0].legend(fontsize=8)
+                self.plot_axes[1].plot(dop_df.time, dop_df.EDOP, color="#2878B5", lw=1.1, label="EDOP (东向跨街分量)")
+                self.plot_axes[1].plot(dop_df.time, dop_df.NDOP, color="#E07A2D", lw=1.1, label="NDOP (北向沿街分量)")
+                self.plot_axes[1].plot(dop_df.time, dop_df.VDOP, color="#36965A", lw=1.1, label="VDOP (天向高程分量)")
+                self.plot_axes[1].set(xlabel="相对时间 (s)", ylabel="方向 DOP 分量")
+                lim_y = min(float(dop_df[["EDOP", "NDOP", "VDOP"]].quantile(0.99).max()) * 1.5, 30.0)
+                self.plot_axes[1].set_ylim(0, max(5.0, lim_y))
+                self.plot_axes[1].legend(fontsize=8, ncol=3, loc="upper right")
+            else:
+                self._draw_directional_dop(ax)
+        elif mode=="Clock Bias & ISB":
+            clk = self.data.get("clk")
+            if clk is not None and not clk.empty and len(self.plot_axes) >= 2:
+                t0 = self.data["pos"].tow.iloc[0]
+                clk_t = clk.tow - t0
+                self.plot_axes[0].plot(clk_t, clk.clk_gps, color="#2878B5", lw=1.1, label="GPS 接收机钟差 (ns)")
+                if "drift" in clk.columns and clk.drift.abs().max() > 0:
+                    ax0_tw = self.plot_axes[0].twinx()
+                    ax0_tw.plot(clk_t, clk.drift, color="#E07A2D", lw=0.9, ls="--", label="钟漂 (ns/s)")
+                    ax0_tw.set_ylabel("钟漂 (ns/s)", color="#E07A2D")
+                    self.cov_twin_axes[id(self.plot_axes[0])] = ax0_tw
+                self.plot_axes[0].set(ylabel="钟差 (ns)", title="接收机钟差漂移与系统间偏差 ($CLK)")
+                self.plot_axes[0].legend(fontsize=8, loc="upper left")
+                if "isb_glo" in clk.columns and clk.isb_glo.abs().max() > 0:
+                    self.plot_axes[1].plot(clk_t, clk.isb_glo, label="ISB GLONASS-GPS", color="#9b59b6", lw=1.0)
+                if "isb_gal" in clk.columns and clk.isb_gal.abs().max() > 0:
+                    self.plot_axes[1].plot(clk_t, clk.isb_gal, label="ISB Galileo-GPS", color="#36965A", lw=1.0)
+                if "isb_bds" in clk.columns and clk.isb_bds.abs().max() > 0:
+                    self.plot_axes[1].plot(clk_t, clk.isb_bds, label="ISB BDS-GPS", color="#d90429", lw=1.0)
+                if "isb_qzs" in clk.columns and clk.isb_qzs.abs().max() > 0:
+                    self.plot_axes[1].plot(clk_t, clk.isb_qzs, label="ISB QZSS-GPS", color="#E07A2D", lw=1.0)
+                self.plot_axes[1].set(xlabel="相对时间 (s)", ylabel="ISB 系统间偏差 (m)")
+                self.plot_axes[1].legend(fontsize=8, ncol=4, loc="upper right")
+            else:
+                self._draw_clock_bias_isb(ax)
+        elif mode=="Body-Frame Error":
+            if self.data.get("has_truth") and "along_err" in p.columns and len(self.plot_axes) >= 3:
+                self.plot_axes[0].plot(p.time, p.along_err, color="#2878B5", lw=0.8, label="Along-track (沿航向/纵向)")
+                self.plot_axes[0].axhline(0, color="k", lw=0.5, ls=":")
+                self.plot_axes[0].set(ylabel="沿向误差 (m)", title="车体坐标系误差分解 (Along-track / Cross-track / Vertical)")
+                self.plot_axes[0].legend(fontsize=8)
+                self.plot_axes[1].plot(p.time, p.cross_err, color="#d90429", lw=0.8, label="Cross-track (跨航向/横向)")
+                self.plot_axes[1].axhline(0, color="k", lw=0.5, ls=":")
+                self.plot_axes[1].set(ylabel="横向误差 (m)")
+                self.plot_axes[1].legend(fontsize=8)
+                self.plot_axes[2].plot(p.time, p.vert_err, color="#36965A", lw=0.8, label="Vertical (垂直高程/天向)")
+                self.plot_axes[2].axhline(0, color="k", lw=0.5, ls=":")
+                self.plot_axes[2].set(xlabel="相对时间 (s)", ylabel="天向误差 (m)")
+                self.plot_axes[2].legend(fontsize=8)
+            else:
+                self._draw_body_frame_error(ax, p)
         for plot_ax in self.plot_axes:plot_ax.grid(self.grid_on.get(),linestyle="--",alpha=.45)
         if mode not in NON_TIME_SERIES_MODES:
             for plot_ax in self.plot_axes:self.time_cursors.append(plot_ax.axvline(0,color="#333",ls="--",lw=.8,alpha=.7,zorder=10))
-        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","C/N0","Elevation","Residuals","Cycle Slips","Satellite Visibility Gantt","Covariance","False Fix Analysis"):
+        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","C/N0","Elevation","Residuals","Cycle Slips","Satellite Visibility Gantt","Covariance","False Fix Analysis","Residual Triad","Directional DOP","Clock Bias & ISB","Body-Frame Error"):
             for plot_ax in self.plot_axes:self._set_datetime_axis(plot_ax)
         self._apply_segment_overlays();self._register_dynamic_artists()
         self.fig.tight_layout();self.canvas.draw_idle();self._update_cursor();self.update_analysis()
@@ -1668,6 +1815,190 @@ class RTKPlotApp:
         axes[1].set(xlabel="导航星座", ylabel="载噪比 C/N₀ (dB-Hz)", title="各星座 L1 载噪比分布 (Boxplot)")
         axes[1].grid(self.grid_on.get(), alpha=0.3)
 
+    def switch_workspace(self, ws_idx: int):
+        """Switch to one of the 5 Diagnostic Workspaces."""
+        if not (0 <= ws_idx < len(DIAGNOSTIC_WORKSPACES)):
+            return
+        ws = DIAGNOSTIC_WORKSPACES[ws_idx]
+        modes = list(ws["modes"])
+        preset = ws["preset"]
+        self.custom_preset.set(preset)
+        self.custom_modes = list(modes)
+        self.custom_panels = self._initial_custom_panels(modes, preset)
+        self.custom_page = 0
+        self.selected_custom_panel = 0
+        self.focused_custom_panel = None
+        self.mode.set("Custom Analysis")
+        self.segment_status.configure(text=f"已切换至诊断工作区 [{ws['name']}]: {ws['desc']}")
+        self.redraw()
+
+    def export_academic_pptx(self):
+        """Export publication-ready Wuhan University academic presentation."""
+        if self.data is None:
+            messagebox.showwarning("提示", "请先打开解算数据文件。")
+            return
+        import rtklib_export_report as rep
+        init_name = f"{self.pos_path.stem}_故障诊断学术汇报.pptx" if self.pos_path else "RTKLIB_故障诊断学术汇报.pptx"
+        out_file = filedialog.asksaveasfilename(
+            title="导出武汉大学学术答辩 PPTX (16:9)",
+            defaultextension=".pptx",
+            filetypes=[("PowerPoint Presentation", "*.pptx"), ("All Files", "*.*")],
+            initialfile=init_name
+        )
+        if not out_file:
+            return
+        try:
+            self.segment_status.configure(text="正在生成武汉大学学术答辩 PPTX，请稍候...")
+            self.root.update_idletasks()
+            rep.generate_academic_pptx(self.data, out_file, segments=self.segments)
+            self.segment_status.configure(text=f"学术答辩 PPTX 已成功导出至: {out_file}")
+            if messagebox.askyesno("导出成功", f"武汉大学学术汇报 PPTX 已成功生成！\n\n路径: {out_file}\n\n是否立即打开查看？"):
+                os.startfile(out_file)
+        except Exception as exc:
+            messagebox.showerror("导出失败", f"生成 PPTX 发生异常:\n{exc}")
+
+    def export_diagnostic_html(self):
+        """Export standalone interactive HTML diagnostic report."""
+        if self.data is None:
+            messagebox.showwarning("提示", "请先打开解算数据文件。")
+            return
+        import rtklib_export_report as rep
+        init_name = f"{self.pos_path.stem}_全链路故障诊断报告.html" if self.pos_path else "RTKLIB_全链路故障诊断报告.html"
+        out_file = filedialog.asksaveasfilename(
+            title="导出全链路故障诊断 HTML 综合分析报告",
+            defaultextension=".html",
+            filetypes=[("HTML File", "*.html"), ("All Files", "*.*")],
+            initialfile=init_name
+        )
+        if not out_file:
+            return
+        try:
+            self.segment_status.configure(text="正在生成全链路故障诊断 HTML 报告，请稍候...")
+            self.root.update_idletasks()
+            rep.generate_diagnostic_html(self.data, out_file, segments=self.segments)
+            self.segment_status.configure(text=f"全链路诊断 HTML 报告已成功导出至: {out_file}")
+            if messagebox.askyesno("导出成功", f"全链路故障诊断 HTML 综合报告已成功生成！\n\n路径: {out_file}\n\n是否立即在浏览器中打开？"):
+                import webbrowser
+                webbrowser.open(Path(out_file).as_uri())
+        except Exception as exc:
+            messagebox.showerror("导出失败", f"生成 HTML 发生异常:\n{exc}")
+
+    def _draw_residual_triad(self, ax):
+        triad = diag.compute_residual_triad(self.data)
+        if triad.empty:
+            ax.text(0.5, 0.5, "无有效伪距残差数据 (需 .stat 文件)", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("伪距残差统计三线时序")
+            return
+        ax.plot(triad.time, triad.max_resp, color="#d90429", lw=1.1, label="第一大残差 (Max |resp|)")
+        ax.plot(triad.time, triad.sec_resp, color="#00b4d8", lw=1.0, label="第二大残差 (2nd Max)")
+        ax.plot(triad.time, triad.rms_resp, color="#0B2B52", lw=1.2, ls="--", label="全场RMS (RMS |resp|)")
+        ax.set(xlabel="时间 (s)", ylabel="伪距残差 (m)", title="伪距残差统计三线时序 (Max / 2nd Max / RMS)")
+        ax.legend(fontsize=8, loc="upper right")
+        ax.grid(self.grid_on.get(), alpha=0.3)
+
+    def _draw_el_snr_resp(self, ax):
+        sat = self.data.get("sat")
+        if sat is None or sat.empty:
+            ax.text(0.5, 0.5, "无卫星观测数据 (需 .stat 文件)", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("高度角-载噪比-残差联合分布")
+            return
+        s1 = sat[(sat.freq == 1) & (sat.snr > 0) & (sat.resp != 0)]
+        if s1.empty:
+            s1 = sat[(sat.freq == 1) & (sat.snr > 0)]
+        if not s1.empty:
+            s1_sub = s1.iloc[::max(1, len(s1)//20000)]
+            resp_clip = np.clip(s1_sub.resp.abs(), 0, 8) if "resp" in s1_sub.columns else 0
+            ax.scatter(s1_sub.el, s1_sub.snr, c=resp_clip, cmap="turbo", s=6, alpha=0.45, edgecolors="none")
+            el_grid = np.linspace(5, 90, 100)
+            ax.plot(el_grid, 28.0 + 22.0 * np.sin(np.deg2rad(el_grid)), "k--", lw=1.5, label="标称信噪比包络")
+            ax.legend(loc="lower right", fontsize=8)
+        ax.set_xlim(0, 90)
+        ax.set(xlabel="高度角 (°)", ylabel="载噪比 (dB-Hz)", title="高度角 - 载噪比 - 残差联合分布")
+        ax.grid(self.grid_on.get(), alpha=0.3)
+
+    def _draw_top_outliers(self, ax):
+        df_rank = diag.compute_satellite_health_rankings(self.data)
+        if df_rank.empty:
+            ax.text(0.5, 0.5, "无卫星残差统计数据", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("粗差卫星贡献度排行榜")
+            return
+        top = df_rank.head(10).iloc[::-1]
+        constell_colors = {"G": "#2878B5", "R": "#9b59b6", "E": "#36965A", "C": "#d90429", "J": "#E07A2D"}
+        bar_colors = [constell_colors.get(prn[0], "#777777") for prn in top.prn]
+        bars = ax.barh(top.prn, top.p95_resp, color=bar_colors, height=0.6, alpha=0.85)
+        for b, (_, row) in zip(bars, top.iterrows()):
+            max_c = row.get("max_share_count", row.get("max_resp_count", 0))
+            slips = row.get("total_slips", row.get("slip_count", 0))
+            ax.text(b.get_width() + 0.05, b.get_y() + b.get_height()/2,
+                    f"P95: {row.p95_resp:.2f}m | 最大次: {int(max_c)} | 周跳: {int(slips)}",
+                    va="center", ha="left", fontsize=7.5, color="#333333")
+        ax.set(xlabel="P95 伪距残差 (m)", ylabel="卫星 PRN", title="粗差卫星贡献度排行榜 (Top Outliers)")
+        ax.set_xlim(0, max(float(top.p95_resp.max()) * 1.55, 3.0))
+        ax.grid(self.grid_on.get(), alpha=0.3, axis="x")
+
+    def _draw_directional_dop(self, ax):
+        dop_df = diag.compute_directional_dop(self.data)
+        if dop_df.empty:
+            ax.text(0.5, 0.5, "无法计算方向 DOP (需 .stat 卫星仰角方位角)", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("方向 DOP 几何精度因子")
+            return
+        ax.plot(dop_df.time, dop_df.EDOP, color="#2878B5", lw=1.1, label="EDOP (东向)")
+        ax.plot(dop_df.time, dop_df.NDOP, color="#E07A2D", lw=1.1, label="NDOP (北向)")
+        ax.plot(dop_df.time, dop_df.VDOP, color="#36965A", lw=1.1, label="VDOP (天向)")
+        if "HDOP" in dop_df.columns:
+            ax.plot(dop_df.time, dop_df.HDOP, color="#666666", lw=0.9, ls="--", label="HDOP (水平)")
+        ax.set(xlabel="时间 (s)", ylabel="DOP 值", title="方向 DOP 几何精度因子 (EDOP / NDOP / VDOP)")
+        lim_y = min(float(dop_df[["EDOP", "NDOP", "VDOP"]].quantile(0.99).max()) * 1.5, 30.0)
+        ax.set_ylim(0, max(5.0, lim_y))
+        ax.legend(fontsize=8, ncol=4, loc="upper right")
+        ax.grid(self.grid_on.get(), alpha=0.3)
+
+    def _draw_clock_bias_isb(self, ax):
+        clk = self.data.get("clk")
+        if clk is None or clk.empty:
+            ax.text(0.5, 0.5, "无接收机钟差数据 (未在 .stat 中找到 $CLK)", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("接收机钟差漂移与系统间偏差 (Clock Bias & ISB)")
+            return
+        t0 = self.data["pos"].tow.iloc[0]
+        clk_t = clk.tow - t0
+        has_isb = False
+        if "isb_glo" in clk.columns and clk.isb_glo.abs().max() > 0:
+            ax.plot(clk_t, clk.isb_glo, label="ISB GLONASS-GPS", color="#9b59b6", lw=1.0)
+            has_isb = True
+        if "isb_gal" in clk.columns and clk.isb_gal.abs().max() > 0:
+            ax.plot(clk_t, clk.isb_gal, label="ISB Galileo-GPS", color="#36965A", lw=1.0)
+            has_isb = True
+        if "isb_bds" in clk.columns and clk.isb_bds.abs().max() > 0:
+            ax.plot(clk_t, clk.isb_bds, label="ISB BDS-GPS", color="#d90429", lw=1.0)
+            has_isb = True
+        if "isb_qzs" in clk.columns and clk.isb_qzs.abs().max() > 0:
+            ax.plot(clk_t, clk.isb_qzs, label="ISB QZSS-GPS", color="#E07A2D", lw=1.0)
+            has_isb = True
+        if "drift" in clk.columns and clk.drift.abs().max() > 0:
+            ax.plot(clk_t, clk.drift, label="钟漂 (ns/s)", color="#2878B5", lw=1.0, ls="--")
+        elif not has_isb and "clk_gps" in clk.columns:
+            ax.plot(clk_t, clk.clk_gps, label="接收机钟差 (ns)", color="#2878B5", lw=1.0)
+        ax.set(xlabel="时间 (s)", ylabel="偏差 / 漂移 (m 或 ns)", title="接收机钟差漂移与系统间偏差 ($CLK)")
+        ax.legend(fontsize=8, loc="upper right")
+        ax.grid(self.grid_on.get(), alpha=0.3)
+
+    def _draw_body_frame_error(self, ax, p):
+        if not self.data.get("has_truth"):
+            ax.text(0.5, 0.5, "需要真值参考轨迹才能分解车体坐标系误差", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("车体坐标系误差分解 (Along-track / Cross-track / Vertical)")
+            return
+        has_body = ("along_err" in p.columns and "cross_err" in p.columns)
+        if not has_body:
+            ax.text(0.5, 0.5, "缺少航向角数据，无法投影至车体坐标系", ha="center", va="center", transform=ax.transAxes)
+            return
+        ax.plot(p.time, p.along_err, label="沿航向误差 (Along-track)", color="#2878B5", lw=0.9)
+        ax.plot(p.time, p.cross_err, label="跨航向误差 (Cross-track)", color="#d90429", lw=0.9)
+        ax.plot(p.time, p.vert_err, label="垂直高程误差 (Vertical)", color="#36965A", lw=0.8, ls="--")
+        ax.axhline(0, color="k", lw=0.5, ls=":")
+        ax.set(xlabel="时间 (s)", ylabel="误差 (m)", title="车体坐标系误差分解 (Along-track / Cross-track / Vertical)")
+        ax.legend(fontsize=8, ncol=3, loc="upper right")
+        ax.grid(self.grid_on.get(), alpha=0.3)
+
     def _draw_custom_grid(self):
         modes=self.custom_modes
         if not modes or not self.custom_panels:
@@ -1739,6 +2070,12 @@ class RTKPlotApp:
             elif name=="Error CDF":self._draw_error_cdf(ax,p)
             elif name=="Error Histogram":self._draw_error_histogram([ax],p)
             elif name=="Constellation Summary":self._draw_constellation_summary([ax],s)
+            elif name=="Residual Triad":self._draw_residual_triad(ax)
+            elif name=="El vs SNR & Resp":self._draw_el_snr_resp(ax)
+            elif name=="Top Outlier Satellites":self._draw_top_outliers(ax)
+            elif name=="Directional DOP":self._draw_directional_dop(ax)
+            elif name=="Clock Bias & ISB":self._draw_clock_bias_isb(ax)
+            elif name=="Body-Frame Error":self._draw_body_frame_error(ax,p)
             ax.grid(self.grid_on.get(),alpha=.28)
             if is_time_series:
                 self._set_datetime_axis(ax);ax.xaxis.set_major_locator(MaxNLocator(3));ax.tick_params(axis="x",labelsize=7,labelrotation=0)
@@ -2043,6 +2380,40 @@ class RTKPlotApp:
                 s1=s[s.freq==1]; con_list=list(s1.constellation.unique())
                 lines.append(f"按星座统览：涵盖 {len(con_list)} 个系统 ({', '.join(con_list)})；左侧为各星座跟踪卫星数时序，右侧为 L1 载噪比 (C/N₀) 箱线分布。")
             else:lines.append("未加载 .stat 卫星记录。")
+        elif mode=="Residual Triad":
+            triad = diag.compute_residual_triad(self.data)
+            if not triad.empty:
+                lines.append(f"伪距残差三线统计：全场第一大残差中位数 {triad.max_resp.median():.2f}m (峰值 {triad.max_resp.max():.2f}m)；第二大残差中位数 {triad.sec_resp.median():.2f}m；RMS中位数 {triad.rms_resp.median():.2f}m。")
+                lines.append("诊断启示：当最大与第二大残差同步冲高时，判定为大范围多路径/多星污染；若仅单星突兀冲高而第二大残差平稳，判定为偶发粗差/单星失锁。")
+            else:lines.append("未加载 .stat 卫星残差数据。")
+        elif mode=="El vs SNR & Resp":
+            lines.append("高度角-载噪比-残差联合分布：正常情况下仰角越高信噪比越大；若高仰角(>45°)出现异常低信噪比(<35dB-Hz)且伴随大残差，指示头顶遮挡或强反射多路径。")
+        elif mode=="Top Outlier Satellites":
+            df_rank = diag.compute_satellite_health_rankings(self.data)
+            if not df_rank.empty:
+                worst = df_rank.iloc[0]
+                lines.append(f"粗差贡献度榜首：卫星 【{worst.prn}】 (P95残差={worst.p95_resp:.2f}m, 占全场最大残差 {worst.max_resp_share*100:.1f}%, 周跳={int(worst.slip_count)}次)。")
+                lines.append("调优建议：若某颗卫星持续独占最大残差，可在配置文件中将其添加至 exclsats 予以剔除排除实验。")
+            else:lines.append("未加载 .stat 卫星数据。")
+        elif mode=="Directional DOP":
+            dop_df = diag.compute_directional_dop(self.data)
+            if not dop_df.empty:
+                lines.append(f"方向 DOP 评估：EDOP中位数 {dop_df.EDOP.median():.2f}，NDOP中位数 {dop_df.NDOP.median():.2f}，VDOP中位数 {dop_df.VDOP.median():.2f}。")
+                if dop_df.EDOP.median() > dop_df.NDOP.median() * 1.5:
+                    lines.append("构型退化提示：东向 EDOP 显著恶化于北向 NDOP，呈现典型南北向街道“一线天”遮挡引起的几何对称性缺失。")
+            else:lines.append("无法计算方向 DOP。")
+        elif mode=="Clock Bias & ISB":
+            clk = self.data.get("clk")
+            if clk is not None and not clk.empty:
+                lines.append(f"接收机钟差状态：有效 $CLK 历元数 {len(clk):,}；GPS钟差范围 {clk.clk_gps.min():.1f} ~ {clk.clk_gps.max():.1f} ns。")
+                if "drift" in clk.columns:
+                    lines.append(f"钟漂评估：平均钟漂 {clk.drift.mean():+.2f} ns/s，最大钟漂 {clk.drift.abs().max():.2f} ns/s。钟漂平稳表明接收机晶振健康且无严重伪距粗差污染时钟状态。")
+            else:lines.append("当前数据未包含 $CLK 接收机时钟参数。")
+        elif mode=="Body-Frame Error":
+            if d["has_truth"] and "along_err" in p.columns:
+                lines.append(f"车体坐标系误差分解：沿航向(纵向) RMSE {self._rms(p.along_err):.3f} m (偏置 {p.along_err.mean():+.3f}m)；跨航向(横向) RMSE {self._rms(p.cross_err):.3f} m (偏置 {p.cross_err.mean():+.3f}m)；高程 RMSE {self._rms(p.vert_err):.3f} m。")
+                lines.append("工程诊断：若纵向误差随车速线性放大，说明存在时间戳硬同步时延；若横向误差呈转弯正弦振荡，说明存在天线杆臂(Lever-arm)未精确补偿。")
+            else:lines.append("需要真值参考轨迹才能投影分解车体坐标系误差。")
         if not lines:lines=["该视图当前没有足够数据生成统计摘要。"]
         self.analysis_info.configure(text="\n".join(lines))
 
@@ -2604,6 +2975,26 @@ class RTKPlotApp:
             self._draw_error_histogram([ax], p)
         elif name == "Constellation Summary":
             self._draw_constellation_summary([ax], s)
+        elif name == "Residual Triad":
+            self._draw_residual_triad(ax)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "El vs SNR & Resp":
+            self._draw_el_snr_resp(ax)
+        elif name == "Top Outlier Satellites":
+            self._draw_top_outliers(ax)
+        elif name == "Directional DOP":
+            self._draw_directional_dop(ax)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Clock Bias & ISB":
+            self._draw_clock_bias_isb(ax)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+        elif name == "Body-Frame Error":
+            self._draw_body_frame_error(ax, p)
+            self._set_datetime_axis(ax)
+            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         else:
             ax.text(.5, .5, f"{name}", ha="center", transform=ax.transAxes)
 
@@ -2896,7 +3287,10 @@ class RTKPlotApp:
                     number=len(self.segments)+1;color=self.segment_palette[(number-1)%len(self.segment_palette)]
                     self.segments.append({"start":idx_lo,"end":idx_hi,"name":f"Segment {number}","color":color})
                     self._refresh_segment_list();self._refresh_segment_overlays()
-                    self.segment_status.configure(text=f"Shift-drag added Segment {number}: {self._epoch_datetime_label(idx_lo)} — {self._epoch_datetime_label(idx_hi)} CST")
+                    st = float(self.data["pos"].iloc[idx_lo].tow)
+                    et = float(self.data["pos"].iloc[idx_hi].tow)
+                    d_res = diag.diagnose_anomaly_segment(self.data["pos"], self.data["sat"], st, et)
+                    self.segment_status.configure(text=f"Shift-drag 标记 Segment {number}: 【{d_res['primary_cause']}】{d_res['summary']} | 建议: {d_res['recommendation']}")
             self.canvas.draw_idle();return
         if self._drag_epoch:
             self._drag_epoch=False;self.canvas.get_tk_widget().configure(cursor="");return
@@ -3875,6 +4269,8 @@ class DiagnosticReportDialog(tk.Toplevel):
 
         ttk.Button(btn_bar, text="📋 复制报告至剪贴板 (Copy)", command=self._copy_clipboard).pack(side=tk.LEFT, padx=6)
         ttk.Button(btn_bar, text="💾 导出报告 (.md)", command=self._save_file).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_bar, text="📊 导出答辩 PPTX (武大母版)", command=self.app.export_academic_pptx).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_bar, text="🌐 导出诊断 HTML", command=self.app.export_diagnostic_html).pack(side=tk.LEFT, padx=6)
         ttk.Button(btn_bar, text="关闭", command=self.destroy).pack(side=tk.RIGHT, padx=6)
 
     def _copy_clipboard(self):

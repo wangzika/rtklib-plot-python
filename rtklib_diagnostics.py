@@ -147,7 +147,8 @@ def load_data(pos_path: Path, reference_path: Path | None = None,
         ref = pd.read_csv(reference_path, skipinitialspace=True)
         needed = ["GPS TOW (s)", "Latitude (deg)", "Longitude (deg)", "ECEF X (m)", "ECEF Y (m)", "ECEF Z (m)"]
         if all(c in ref for c in needed):
-            ref = ref[needed].dropna().sort_values("GPS TOW (s)")
+            keep_cols = list(dict.fromkeys(needed + [c for c in ["Heading (deg)", "Roll (deg)", "Pitch (deg)"] if c in ref.columns]))
+            ref = ref[keep_cols].dropna(subset=needed).sort_values("GPS TOW (s)")
             xyz0 = ref[["ECEF X (m)", "ECEF Y (m)", "ECEF Z (m)"]].to_numpy()
             ref_lat0 = float(ref.iloc[0]["Latitude (deg)"])
             ref_lon0 = float(ref.iloc[0]["Longitude (deg)"])
@@ -160,6 +161,8 @@ def load_data(pos_path: Path, reference_path: Path | None = None,
                 pos[f"d{c.lower()}"] = pos[c] - pos[f"gt_{c}"]
             pos["eh"] = np.hypot(pos.de, pos.dn)
             pos["e3d"] = np.sqrt(pos.de**2 + pos.dn**2 + pos.du**2)
+            if "Heading (deg)" in ref.columns:
+                pos["heading"] = np.interp(pos.tow, ref["GPS TOW (s)"], ref["Heading (deg)"], left=np.nan, right=np.nan)
         else:
             ref = None
 
@@ -169,6 +172,17 @@ def load_data(pos_path: Path, reference_path: Path | None = None,
         xyz0 = pos[["x", "y", "z"]].iloc[0].to_numpy()
         enu_pos = _ecef_to_enu(pos[["x", "y", "z"]].to_numpy() - xyz0, ref_lat0, ref_lon0)
         pos[["E", "N", "U"]] = enu_pos
+
+    if "heading" not in pos:
+        de_dt = np.r_[np.nan, np.diff(pos.E)]
+        dn_dt = np.r_[np.nan, np.diff(pos.N)]
+        pos["heading"] = (np.rad2deg(np.arctan2(de_dt, dn_dt)) + 360.0) % 360.0
+
+    if "de" in pos and "dn" in pos:
+        psi = np.deg2rad(pos["heading"])
+        pos["along_err"] = pos.dn * np.cos(psi) + pos.de * np.sin(psi)
+        pos["cross_err"] = pos.de * np.cos(psi) - pos.dn * np.sin(psi)
+        pos["vert_err"] = pos.du
 
     if pos["is_llh"].iloc[0]:
         pos["sigE"] = pos["sde"]
@@ -193,18 +207,32 @@ def load_data(pos_path: Path, reference_path: Path | None = None,
         pos["covEN"] = ce[:, 0, 1]
         pos["rhoEN"] = ce[:, 0, 1] / np.maximum(pos.sigE * pos.sigN, 1e-15)
     sat = []
-    if stat_path.exists():
-        for line in stat_path.open(encoding="utf-8", errors="replace"):
-            if not line.startswith("$SAT,"): continue
-            f = line.rstrip().split(",")
-            try:
-                sat.append([int(f[1]), float(f[2]), f[3], int(f[4]), float(f[5]), float(f[6]), float(f[7]), float(f[8]), int(f[9]), float(f[10]), int(f[11]), int(f[12])])
-            except (ValueError, IndexError): pass
+    clk = []
+    if stat_path and Path(stat_path).exists():
+        for line in Path(stat_path).open(encoding="utf-8", errors="replace"):
+            if line.startswith("$SAT,"):
+                f = line.rstrip().split(",")
+                try:
+                    sat.append([int(f[1]), float(f[2]), f[3], int(f[4]), float(f[5]), float(f[6]), float(f[7]), float(f[8]), int(f[9]), float(f[10]), int(f[11]), int(f[12])])
+                except (ValueError, IndexError): pass
+            elif line.startswith("$CLK,"):
+                f = line.rstrip().split(",")
+                try:
+                    clk.append([int(f[1]), float(f[2]), int(f[3]), int(f[4]), float(f[5]), float(f[6]),
+                                float(f[7]), float(f[8]), float(f[9]), float(f[10])])
+                except (ValueError, IndexError): pass
     sats = pd.DataFrame(sat, columns=["week", "tow", "prn", "freq", "az", "el", "resp", "resc", "vsat", "snr", "fix", "slipc"])
+    clks = pd.DataFrame(clk, columns=["week", "tow", "stat", "rcvr", "clk_gps", "clk_std", "isb_glo", "isb_gal", "isb_qzs", "isb_bds"])
     if not sats.empty:
         sats["time"] = sats.tow - pos.tow.iloc[0]
         sats["constellation"] = sats.prn.str[0].map({"G":"GPS", "R":"GLONASS", "E":"Galileo", "C":"BeiDou", "J":"QZSS", "S":"SBAS"}).fillna("Other")
-    return {"pos": pos, "sat": sats, "reference": ref, "has_truth": "de" in pos,
+    if not clks.empty:
+        if 1 in clks.rcvr.values:
+            clks = clks[clks.rcvr == 1].reset_index(drop=True)
+        clks["time"] = clks.tow - pos.tow.iloc[0]
+        dt = np.r_[np.nan, np.diff(clks.tow)]
+        clks["drift"] = np.r_[np.nan, np.diff(clks.clk_gps)] / np.maximum(dt, 1e-6)
+    return {"pos": pos, "sat": sats, "clk": clks, "reference": ref, "has_truth": "de" in pos,
             "pos_path": pos_path, "stat_path": stat_path}
 
 
@@ -299,6 +327,261 @@ def render_hud_card(ax, metrics: dict, loc: str = "upper right", font_size: floa
         ),
         zorder=100
     )
+
+
+def compute_residual_triad(data: dict) -> pd.DataFrame:
+    """
+    Compute epoch-by-epoch pseudorange residual triad:
+    - max_resp: Max absolute pseudorange residual |resp|
+    - sec_resp: Second max absolute pseudorange residual
+    - rms_resp: RMS of pseudorange residuals
+    - worst_prn: PRN causing max |resp|
+    - count: Number of valid residuals in the epoch
+    """
+    if "_cached_resp_triad" in data:
+        return data["_cached_resp_triad"]
+
+    sat = data.get("sat")
+    pos = data.get("pos")
+    if sat is None or sat.empty or pos is None or pos.empty:
+        return pd.DataFrame()
+
+    s1 = sat[(sat.freq == 1) & (sat.resp != 0)]
+    if s1.empty:
+        return pd.DataFrame()
+
+    t0 = pos.tow.iloc[0]
+    grouped = s1.groupby("tow")
+    rows = []
+    for tow, g in grouped:
+        abs_r = g.resp.abs().values
+        if len(abs_r) == 0:
+            continue
+        order = np.argsort(abs_r)[::-1]
+        sorted_r = abs_r[order]
+        sorted_prn = g.prn.values[order]
+        max_r = sorted_r[0]
+        sec_r = sorted_r[1] if len(sorted_r) > 1 else np.nan
+        rms_r = np.sqrt(np.mean(sorted_r**2))
+        worst_p = sorted_prn[0]
+        rows.append((tow, tow - t0, max_r, sec_r, rms_r, worst_p, len(sorted_r)))
+
+    df = pd.DataFrame(rows, columns=["tow", "time", "max_resp", "sec_resp", "rms_resp", "worst_prn", "count"])
+    data["_cached_resp_triad"] = df
+    return df
+
+
+def compute_directional_dop(data: dict) -> pd.DataFrame:
+    """
+    Compute epoch-by-epoch directional DOPs (EDOP, NDOP, VDOP, HDOP, PDOP)
+    and 8-sector azimuth visible satellite counts.
+    """
+    if "_cached_directional_dop" in data:
+        return data["_cached_directional_dop"]
+
+    sat = data.get("sat")
+    pos = data.get("pos")
+    if sat is None or sat.empty or pos is None or pos.empty:
+        return pd.DataFrame()
+
+    sats_used = sat[(sat.vsat == 1) & (sat.el > 0) & (sat.freq == 1)]
+    if sats_used.empty:
+        return pd.DataFrame()
+
+    t0 = pos.tow.iloc[0]
+    grouped = sats_used.groupby("tow")
+    rows = []
+    sector_names = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+    for tow, g in grouped:
+        n_sats = len(g)
+        az = g.az.values % 360.0
+        sec_indices = np.floor(az / 45.0).astype(int) % 8
+        counts = [int(np.sum(sec_indices == s)) for s in range(8)]
+
+        if n_sats < 4:
+            rows.append((tow, tow - t0, np.nan, np.nan, np.nan, np.nan, np.nan, n_sats, *counts))
+            continue
+
+        az_rad = np.deg2rad(az)
+        el_rad = np.deg2rad(g.el.values)
+        cos_el = np.cos(el_rad)
+        A = np.column_stack([
+            cos_el * np.sin(az_rad),
+            cos_el * np.cos(az_rad),
+            np.sin(el_rad),
+            np.ones(n_sats)
+        ])
+        try:
+            Q = np.linalg.inv(A.T @ A)
+            edop = np.sqrt(max(0, Q[0, 0]))
+            ndop = np.sqrt(max(0, Q[1, 1]))
+            vdop = np.sqrt(max(0, Q[2, 2]))
+            hdop = np.sqrt(edop**2 + ndop**2)
+            pdop = np.sqrt(edop**2 + ndop**2 + vdop**2)
+            rows.append((tow, tow - t0, edop, ndop, vdop, hdop, pdop, n_sats, *counts))
+        except np.linalg.LinAlgError:
+            rows.append((tow, tow - t0, np.nan, np.nan, np.nan, np.nan, np.nan, n_sats, *counts))
+
+    cols = ["tow", "time", "EDOP", "NDOP", "VDOP", "HDOP", "PDOP", "nsat_used"] + [f"sec_{s}" for s in sector_names]
+    df = pd.DataFrame(rows, columns=cols)
+    data["_cached_directional_dop"] = df
+    return df
+
+
+def compute_satellite_health_rankings(data: dict) -> pd.DataFrame:
+    """
+    Compute per-PRN health and contamination ranking summary.
+    """
+    if "_cached_prn_health_ranking" in data:
+        return data["_cached_prn_health_ranking"]
+
+    sat = data.get("sat")
+    if sat is None or sat.empty:
+        return pd.DataFrame()
+
+    s1 = sat[(sat.freq == 1) & (sat.resp != 0)]
+    max_prn_counts = {}
+    if not s1.empty:
+        idx_max = s1.groupby("tow")["resp"].apply(lambda s: s.abs().idxmax())
+        max_prns = s1.loc[idx_max, "prn"].value_counts()
+        max_prn_counts = max_prns.to_dict()
+
+    summary_rows = []
+    total_epochs = sat.tow.nunique()
+
+    for prn, g in sat[sat.freq == 1].groupby("prn"):
+        c_name = g.constellation.iloc[0] if "constellation" in g else "Other"
+        abs_resp = g.resp.abs()[g.resp != 0]
+        abs_resc = g.resc.abs()[g.resc != 0] * 100.0
+        snr_vals = g.snr[g.snr > 0]
+        
+        n_tracked = len(g)
+        n_used = int((g.vsat == 1).sum())
+        n_slips = int((g.slipc > 0).sum())
+        max_cnt = max_prn_counts.get(prn, 0)
+        max_pct = (max_cnt / max(1, total_epochs)) * 100.0
+
+        summary_rows.append({
+            "prn": prn,
+            "constellation": c_name,
+            "tracked_epochs": n_tracked,
+            "used_epochs": n_used,
+            "used_rate": (n_used / max(1, n_tracked)) * 100.0,
+            "mean_resp": float(abs_resp.mean()) if not abs_resp.empty else 0.0,
+            "med_resp": float(abs_resp.median()) if not abs_resp.empty else 0.0,
+            "p95_resp": float(abs_resp.quantile(0.95)) if not abs_resp.empty else 0.0,
+            "max_resp": float(abs_resp.max()) if not abs_resp.empty else 0.0,
+            "mean_resc_cm": float(abs_resc.mean()) if not abs_resc.empty else 0.0,
+            "mean_snr": float(snr_vals.mean()) if not snr_vals.empty else 0.0,
+            "total_slips": n_slips,
+            "slip_count": n_slips,
+            "max_share_count": max_cnt,
+            "max_resp_count": max_cnt,
+            "max_share_pct": max_pct,
+            "max_resp_share": max_pct / 100.0,
+        })
+
+    df = pd.DataFrame(summary_rows).sort_values("p95_resp", ascending=False).reset_index(drop=True)
+    data["_cached_prn_health_ranking"] = df
+    return df
+
+
+def diagnose_anomaly_segment(pos_df: pd.DataFrame, sat_df: pd.DataFrame, start_tow: float, end_tow: float) -> dict:
+    """
+    Intelligent Root-Cause Attribution Engine for an arbitrary problem time interval [start_tow, end_tow].
+    Identifies the culprit satellites, geometric DOP degradation, cycle slips, or low-elevation multipath.
+    """
+    sub_pos = pos_df[(pos_df.tow >= start_tow) & (pos_df.tow <= end_tow)]
+    sub_sat = sat_df[(sat_df.tow >= start_tow) & (sat_df.tow <= end_tow)]
+    
+    n_epochs = len(sub_pos)
+    if n_epochs == 0:
+        return {"summary": "选定时间区间无有效历元记录", "primary_cause": "无数据", "worst_satellites": []}
+
+    q_counts = sub_pos.q.value_counts(normalize=True).to_dict()
+    fix_rate = q_counts.get(1, 0.0) * 100.0
+    float_rate = q_counts.get(2, 0.0) * 100.0
+    mean_ratio = float(sub_pos.ratio.mean()) if "ratio" in sub_pos else 0.0
+    mean_ns = float(sub_pos.ns.mean()) if "ns" in sub_pos else 0.0
+
+    has_truth = "e3d" in sub_pos and sub_pos.e3d.notna().any()
+    max_e3d = float(sub_pos.e3d.max()) if has_truth else 0.0
+    mean_e3d = float(sub_pos.e3d.mean()) if has_truth else 0.0
+
+    s1 = sub_sat[(sub_sat.freq == 1)]
+    worst_sats = []
+    low_el_multipath = False
+    cycle_slip_dominant = False
+    geom_degraded = False
+
+    if not s1.empty:
+        prn_stats = []
+        for prn, g in s1.groupby("prn"):
+            abs_resp = g.resp.abs()[g.resp != 0]
+            mean_el = float(g.el.mean())
+            mean_snr = float(g.snr[g.snr > 0].mean()) if (g.snr > 0).any() else 0.0
+            slips = int((g.slipc > 0).sum())
+            p95_r = float(abs_resp.quantile(0.95)) if not abs_resp.empty else 0.0
+            prn_stats.append({
+                "prn": prn,
+                "p95_resp": p95_r,
+                "mean_el": mean_el,
+                "mean_snr": mean_snr,
+                "slips": slips
+            })
+        prn_df = pd.DataFrame(prn_stats).sort_values("p95_resp", ascending=False)
+        if not prn_df.empty:
+            worst_sats = prn_df.head(3).to_dict(orient="records")
+            top1 = worst_sats[0]
+            if top1["p95_resp"] > 2.5 and top1["mean_el"] < 25.0:
+                low_el_multipath = True
+            if top1["slips"] >= 2 or sum(p["slips"] for p in worst_sats) >= 3:
+                cycle_slip_dominant = True
+
+    if mean_ns < 6:
+        geom_degraded = True
+
+    if max_e3d > 1.0 and fix_rate > 50.0 and mean_ratio >= 3.0:
+        primary_cause = "假固定 (False Fix)"
+        summary = f"检测到假固定：Ratio均值达到 {mean_ratio:.1f} 维持高置信度，但实际3D误差高达 {max_e3d:.2f}m！"
+        rec = "建议调高 Ratio 检验门限至 3.5 以上，或提高最小连续固定历元数约束。"
+    elif cycle_slip_dominant:
+        culprits = ", ".join(f"{s['prn']}({s['slips']}次周跳)" for s in worst_sats if s["slips"] > 0)
+        primary_cause = "单星周跳与失锁污染"
+        summary = f"跟踪环路频繁失锁：卫星 {culprits} 发生多次周跳，破坏载波相位连续性，导致滤波解发散。"
+        rec = f"建议在配置中将高周跳卫星加入 exclsats 剔除，或调严周跳探测阈值。"
+    elif low_el_multipath:
+        culprit = worst_sats[0]["prn"] if worst_sats else "低仰角星"
+        culprit_el = worst_sats[0]["mean_el"] if worst_sats else 15.0
+        culprit_r = worst_sats[0]["p95_resp"] if worst_sats else 3.0
+        primary_cause = "低高度角强多路径干扰"
+        summary = f"多路径反射污染：卫星 {culprit} 高度角仅 {culprit_el:.1f}°，伪距残差冲高至 {culprit_r:.2f}m！"
+        rec = f"建议将仰角掩模 (elmask) 由当前设置调高至 {int(culprit_el + 5)}°，或启用高度角加权模型。"
+    elif geom_degraded:
+        primary_cause = "可用卫星数过少 / 几何构型退化"
+        summary = f"几何衰减：有效卫星数仅剩 {mean_ns:.1f} 颗，空间几何稀度严重退化导致定位解发散。"
+        rec = "建议引入多星座联合解算（如 BDS/Galileo/QZSS），补充几何构型。"
+    else:
+        primary_cause = "环境遮挡与综合噪声"
+        summary = f"观测噪声偏高：该区间浮点解占比 {float_rate:.1f}%，最大定位误差 {max_e3d:.2f}m。"
+        rec = "建议调大伪距测量噪声方差基准，增强卡尔曼滤波器的稳健性。"
+
+    return {
+        "start_tow": start_tow,
+        "end_tow": end_tow,
+        "duration_s": end_tow - start_tow,
+        "n_epochs": n_epochs,
+        "fix_rate": fix_rate,
+        "float_rate": float_rate,
+        "mean_ratio": mean_ratio,
+        "mean_ns": mean_ns,
+        "max_e3d": max_e3d,
+        "primary_cause": primary_cause,
+        "summary": summary,
+        "recommendation": rec,
+        "worst_satellites": worst_sats
+    }
 
 
 def crop_and_export_pos(pos_path: Path, output_path: Path, start_tow: float, end_tow: float) -> int:

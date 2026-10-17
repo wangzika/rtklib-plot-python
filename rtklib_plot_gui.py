@@ -31,6 +31,12 @@ MODES = ["Gnd Trk", "ENU Position", "Height", "ENU Error", "Solution Status",
          "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Multipath Skyplot", "Per-PRN Residuals", "Covariance", "False Fix Analysis", "Innovation / NIS",
          "Error CDF", "Error Histogram", "Constellation Summary"]
 
+NON_TIME_SERIES_MODES = (
+    "Gnd Trk", "Skyplot", "Multipath Skyplot", "Multipath Proxy",
+    "Per-PRN Residuals", "Innovation / NIS", "Error CDF",
+    "Error Histogram", "Constellation Summary"
+)
+
 PLOT_CATEGORIES = {
     "轨迹与高程 (Trajectory & Position)": [
         "Gnd Trk", "ENU Position", "Height"
@@ -1417,9 +1423,9 @@ class RTKPlotApp:
         elif mode=="Error Histogram":self._draw_error_histogram(self.plot_axes,p)
         elif mode=="Constellation Summary":self._draw_constellation_summary(self.plot_axes,s)
         for plot_ax in self.plot_axes:plot_ax.grid(self.grid_on.get(),linestyle="--",alpha=.45)
-        if mode not in ("Gnd Trk","Skyplot","Multipath Skyplot","Per-PRN Residuals","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary"):
+        if mode not in NON_TIME_SERIES_MODES:
             for plot_ax in self.plot_axes:self.time_cursors.append(plot_ax.axvline(0,color="#333",ls="--",lw=.8,alpha=.7,zorder=10))
-        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","C/N0","Elevation","Residuals","Multipath Proxy","Cycle Slips","Satellite Visibility Gantt","Covariance","False Fix Analysis"):
+        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","C/N0","Elevation","Residuals","Cycle Slips","Satellite Visibility Gantt","Covariance","False Fix Analysis"):
             for plot_ax in self.plot_axes:self._set_datetime_axis(plot_ax)
         self._apply_segment_overlays();self._register_dynamic_artists()
         self.fig.tight_layout();self.canvas.draw_idle();self._update_cursor();self.update_analysis()
@@ -1678,9 +1684,10 @@ class RTKPlotApp:
             panel=self.custom_panels[i]
             name=panel["mode"]
             rect=(.065,.09,.92,.82) if self.focused_custom_panel is not None else panel["rect"]
-            is_time_series = name not in ("Gnd Trk","Skyplot","Multipath Skyplot","Per-PRN Residuals","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary")
+            is_time_series = name not in NON_TIME_SERIES_MODES
             share = base_time_ax if (self.sync_time_axes.get() and is_time_series and self.focused_custom_panel is None) else None
             ax=self.fig.add_axes(rect,projection="polar" if name in ("Skyplot", "Multipath Skyplot") else None, sharex=share)
+            ax._panel_mode = name
             if self.sync_time_axes.get() and is_time_series and base_time_ax is None and self.focused_custom_panel is None:
                 base_time_ax = ax
             self.plot_axes.append(ax)
@@ -1731,16 +1738,19 @@ class RTKPlotApp:
             elif name=="Error Histogram":self._draw_error_histogram([ax],p)
             elif name=="Constellation Summary":self._draw_constellation_summary([ax],s)
             ax.grid(self.grid_on.get(),alpha=.28)
-            if name not in ("Gnd Trk","Skyplot","Multipath Skyplot","Per-PRN Residuals","Innovation / NIS","Error CDF","Error Histogram","Constellation Summary"):
+            if is_time_series:
                 self._set_datetime_axis(ax);ax.xaxis.set_major_locator(MaxNLocator(3));ax.tick_params(axis="x",labelsize=7,labelrotation=0)
                 self.time_cursors.append(ax.axvline(0,color="#333",ls="--",lw=.7,alpha=.65))
             self._register_custom_dynamic(name,ax,p,full)
         for ax in self.plot_axes:
             box=ax.get_position()
-            has_panel_below=any(other is not ax and other.get_position().y1<box.y0-.005
+            p_mode=getattr(ax, "_panel_mode", "")
+            is_ts=p_mode not in NON_TIME_SERIES_MODES
+            has_ts_panel_below=any(other is not ax and getattr(other, "_panel_mode", "") not in NON_TIME_SERIES_MODES
+                and other.get_position().y1<box.y0-.005
                 and min(box.x1,other.get_position().x1)-max(box.x0,other.get_position().x0)>.2*min(box.width,other.get_position().width)
                 for other in self.plot_axes)
-            if has_panel_below:ax.tick_params(axis="x",labelbottom=False);ax.set_xlabel("")
+            if has_ts_panel_below and is_ts and self.sync_time_axes.get():ax.tick_params(axis="x",labelbottom=False);ax.set_xlabel("")
         self.fig.suptitle("Custom RTKLIB Analysis",fontsize=13,weight="bold")
 
     def _register_custom_dynamic(self,name,ax,p,full):
@@ -2134,11 +2144,49 @@ class RTKPlotApp:
         h=s[(s.resc!=0)&(s.freq==1)];ax.scatter(h.time,h.resc*100,s=3,alpha=.12,label="Carrier residual (cm)")
         ax.set(xlabel="Time from start (s)",ylabel="Residual (m / cm)",title="RTKLIB Post-fit Residuals");ax.legend()
 
-    def _draw_multipath(self,ax):
-        s=self.data["sat"];g=s[(s.freq==1)&(s.resp!=0)]
-        if g.empty:ax.text(.5,.5,"No usable pseudorange residuals",ha="center",va="center",transform=ax.transAxes);return
-        g=self._display_sample(g,60000)
-        ax.scatter(g.el,g.resp.abs(),s=4,alpha=.14);ax.set(xlabel="Elevation (°)",ylabel="|Pseudorange post-fit residual| (m)",title="Multipath diagnostic proxy (not a direct MP combination)")
+    def _draw_multipath(self, ax):
+        s = self.data["sat"]
+        if s.empty:
+            ax.text(0.5, 0.5, "No .stat satellite records", ha="center", va="center", transform=ax.transAxes)
+            return
+        g = s[(s.freq == 1) & (s.resp != 0)]
+        if g.empty:
+            ax.text(0.5, 0.5, "No usable pseudorange residuals", ha="center", va="center", transform=ax.transAxes)
+            return
+
+        sampled = self._display_sample(g, 60000)
+        ax.scatter(sampled.el, sampled.resp.abs(), s=4, alpha=0.15, color="#1f77b4", edgecolors="none", label="Observed |Residual|")
+
+        if "_cached_mp_binned" not in self.data:
+            bins = np.arange(0, 95, 5)
+            abs_resp = g.resp.abs()
+            el_cut = pd.cut(g.el, bins=bins)
+            grouped = abs_resp.groupby(el_cut, observed=False)
+            med = grouped.median().values
+            p95 = grouped.quantile(0.95).values
+            centers = 0.5 * (bins[:-1] + bins[1:])
+            valid = ~np.isnan(med)
+            self.data["_cached_mp_binned"] = (centers[valid], med[valid], p95[valid])
+
+        centers, med, p95 = self.data["_cached_mp_binned"]
+        if len(centers) > 0:
+            ax.plot(centers, med, color="#d95f02", lw=2.0, marker="o", ms=3.5, label="Median (50%)", zorder=5)
+            ax.plot(centers, p95, color="#e7298a", lw=1.8, ls="--", marker="s", ms=3.0, label="P95 Envelope", zorder=5)
+
+        ax.set_xlim(0, 90)
+        ax.set_xticks(np.arange(0, 91, 15))
+        ax.set_xticklabels([f"{x}°" for x in range(0, 91, 15)])
+
+        if len(p95) > 0 and not np.isnan(np.nanmax(p95)):
+            ymax = min(max(4.0, float(np.nanmax(p95)) * 1.35), 25.0)
+            ax.set_ylim(0, ymax)
+        else:
+            ax.set_ylim(bottom=0)
+
+        ax.set_xlabel("Elevation (°)", fontsize=8)
+        ax.set_ylabel("|Pseudorange residual| (m)", fontsize=8)
+        ax.set_title("Pseudorange Residual vs Elevation (Multipath Diagnostic Proxy)", fontsize=9, weight="bold")
+        ax.legend(loc="upper right", fontsize=7, framealpha=0.85)
 
     @staticmethod
     def _display_sample(frame,limit):

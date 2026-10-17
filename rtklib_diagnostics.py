@@ -609,10 +609,11 @@ def plot_05(d,out):
 def _sat_epoch(d):
     s=d["sat"]
     if s.empty: return pd.DataFrame()
-    return (s.groupby(["tow","time"])
-            .apply(lambda g: pd.Series({"tracked": g.prn.nunique(),
-                                        "used": g.loc[g.vsat == 1, "prn"].nunique()}),
-                   include_groups=False).reset_index())
+    s_uniq = s[["tow", "time", "prn"]].drop_duplicates()
+    tracked = s_uniq.groupby(["tow", "time"], sort=False).size().rename("tracked")
+    s_used = s.loc[s.vsat == 1, ["tow", "time", "prn"]].drop_duplicates()
+    used = s_used.groupby(["tow", "time"], sort=False).size().rename("used")
+    return pd.concat([tracked, used], axis=1).fillna(0).astype({"tracked": int, "used": int}).reset_index()
 
 def plot_06(d,out):
     s=d["sat"]
@@ -623,16 +624,67 @@ def plot_06(d,out):
     ss.plot.area(ax=ax[1],stacked=True,alpha=.85,color=[COLORS.get(c) for c in ss.columns]); ax[1].set(xlabel="时间 (s)",ylabel="使用卫星数",title="按星座堆叠（L1 频率、vsat=1、按 PRN 去重）"); ax[1].legend(ncol=6,fontsize=7); _save(fig,out,"plot_06_satellite_counts")
 
 def _compute_dop(s):
-    rows=[]
-    for (tow,t),g in s[(s.freq==1)&(s.vsat==1)].groupby(["tow","time"]):
-        g=g.drop_duplicates("prn")
-        if len(g)<4: continue
-        az,el=np.deg2rad(g.az),np.deg2rad(g.el)
-        A=np.c_[np.cos(el)*np.sin(az),np.cos(el)*np.cos(az),np.sin(el),np.ones(len(g))]
+    if s is None or s.empty:
+        return pd.DataFrame(columns=["tow", "time", "PDOP", "HDOP", "VDOP"])
+    sub = s.loc[(s.freq == 1) & (s.vsat == 1), ["tow", "time", "prn", "az", "el"]].drop_duplicates(["tow", "prn"])
+    if sub.empty:
+        return pd.DataFrame(columns=["tow", "time", "PDOP", "HDOP", "VDOP"])
+
+    az_rad = np.deg2rad(sub["az"].to_numpy())
+    el_rad = np.deg2rad(sub["el"].to_numpy())
+    cos_el = np.cos(el_rad)
+    sub_e = cos_el * np.sin(az_rad)
+    sub_n = cos_el * np.cos(az_rad)
+    sub_u = np.sin(el_rad)
+
+    sub_tows = sub["tow"].to_numpy()
+    sub_times = sub["time"].to_numpy()
+
+    change_mask = np.concatenate(([True], sub_tows[1:] != sub_tows[:-1]))
+    split_indices = np.nonzero(change_mask)[0]
+    num_epochs = len(split_indices)
+
+    rows = []
+    for k in range(num_epochs):
+        start = split_indices[k]
+        end = split_indices[k + 1] if k + 1 < num_epochs else len(sub_tows)
+        n_sats = end - start
+        if n_sats < 4:
+            continue
+        tow = sub_tows[start]
+        t = sub_times[start]
+
+        e_k = sub_e[start:end]
+        n_k = sub_n[start:end]
+        u_k = sub_u[start:end]
+
+        s_ee = np.dot(e_k, e_k)
+        s_en = np.dot(e_k, n_k)
+        s_eu = np.dot(e_k, u_k)
+        s_e1 = np.sum(e_k)
+
+        s_nn = np.dot(n_k, n_k)
+        s_nu = np.dot(n_k, u_k)
+        s_n1 = np.sum(n_k)
+
+        s_uu = np.dot(u_k, u_k)
+        s_u1 = np.sum(u_k)
+
+        ATA = np.array([
+            [s_ee, s_en, s_eu, s_e1],
+            [s_en, s_nn, s_nu, s_n1],
+            [s_eu, s_nu, s_uu, s_u1],
+            [s_e1, s_n1, s_u1, n_sats]
+        ])
         try:
-            Q=np.linalg.inv(A.T@A); rows.append([tow,t,*np.sqrt(np.maximum([Q[0,0]+Q[1,1]+Q[2,2],Q[0,0]+Q[1,1],Q[2,2]],0))])
-        except np.linalg.LinAlgError: pass
-    return pd.DataFrame(rows,columns=["tow","time","PDOP","HDOP","VDOP"])
+            Q = np.linalg.inv(ATA)
+            q00, q11, q22 = Q[0, 0], Q[1, 1], Q[2, 2]
+            if q00 >= 0 and q11 >= 0 and q22 >= 0:
+                rows.append((tow, t, np.sqrt(q00 + q11 + q22), np.sqrt(q00 + q11), np.sqrt(q22)))
+        except np.linalg.LinAlgError:
+            pass
+
+    return pd.DataFrame(rows, columns=["tow", "time", "PDOP", "HDOP", "VDOP"])
 
 def plot_07(d,out):
     dop=_compute_dop(d["sat"])

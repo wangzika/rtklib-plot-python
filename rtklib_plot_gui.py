@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, scrolledtext
@@ -68,6 +69,7 @@ MODE_BILINGUAL = {
 }
 
 
+@lru_cache(maxsize=16384)
 def gpst_to_local_datetime(week, tow):
     """Convert GPST week/TOW to CST, applying the applicable GPS-UTC offset."""
     gps_epoch=datetime(1980,1,6)
@@ -1613,9 +1615,8 @@ class RTKPlotApp:
             target_ax.text(0.5, 0.5, "缺少 .stat 卫星观测数据", ha="center", va="center", transform=target_ax.transAxes, fontsize=10)
             return
         s1 = s[s.freq == 1]
-        counts = s1.groupby(["time", "constellation"]).prn.nunique().unstack(fill_value=0)
         valid_snr = s1[s1.snr > 0]
-        con_cols = [c for c in counts.columns if c in diag.COLORS] or list(counts.columns)
+        con_cols = [c for c in diag.COLORS if c in valid_snr.constellation.values] or sorted(valid_snr.constellation.unique())
 
         if not isinstance(axes, (list, tuple, np.ndarray)) or len(axes) < 2:
             ax = axes[0] if isinstance(axes, (list, tuple, np.ndarray)) else axes
@@ -1629,6 +1630,10 @@ class RTKPlotApp:
             ax.set(xlabel="导航星座", ylabel="载噪比 C/N₀ (dB-Hz)", title="各星座 L1 载噪比分布 (Boxplot)")
             ax.grid(self.grid_on.get(), alpha=0.3)
             return
+
+        if "_cached_con_counts" not in self.data:
+            self.data["_cached_con_counts"] = s1.groupby(["time", "constellation"]).prn.nunique().unstack(fill_value=0)
+        counts = self.data["_cached_con_counts"]
 
         for col in counts.columns:
             axes[0].plot(counts.index, counts[col], label=col, color=diag.COLORS.get(col, "#666"), lw=1.0)
@@ -1984,13 +1989,17 @@ class RTKPlotApp:
         axes[0].set_title("ENU Position Error Components",fontsize=12,weight="bold");axes[-1].set_xlabel("Time from start (s)")
 
     def _draw_sats(self,ax):
-        e=diag._sat_epoch(self.data)
+        if "_cached_sat_epoch" not in self.data:
+            self.data["_cached_sat_epoch"] = diag._sat_epoch(self.data)
+        e = self.data["_cached_sat_epoch"]
         if e.empty:return
         kw=self._get_line_kwargs("Satellites",default_ls="-",default_lw=1.0)
         ax.plot(e.time,e.tracked,label="Tracked satellites",color="#2878B5",**kw);ax.plot(e.time,e.used,label="Used satellites",color="#e07a2d",**kw);ax.set(xlabel="Time from start (s)",ylabel="Satellites",title="Tracked and Used Satellites");ax.legend()
 
     def _draw_dop(self,ax):
-        d=diag._compute_dop(self.data["sat"])
+        if "_cached_dop" not in self.data:
+            self.data["_cached_dop"] = diag._compute_dop(self.data["sat"])
+        d = self.data["_cached_dop"]
         self.dop_frames[ax]=d
         if d.empty:ax.text(.5,.5,"Not enough satellite geometry for DOP",ha="center",va="center",transform=ax.transAxes);return
         kw=self._get_line_kwargs("DOP",default_ls="-",default_lw=.8)
@@ -2329,15 +2338,19 @@ class RTKPlotApp:
             self.vehicle_trail.set_data(self._track_e[start:i+1:stride],self._track_n[start:i+1:stride])
             self.vehicle_label.xy=(r.E,r.N);self.vehicle_label.set_text(f"  {i+1}/{len(p)}  Q={int(r.q)}:{Q_LABELS.get(int(r.q),'?')}")
         if self.data["has_truth"] and np.isfinite(r.get("gt_E",np.nan)):
-            rlat,rlon,rh=ecef_to_geodetic(r.x,r.y,r.z)
-            ref=self.data["reference"];tow=float(r.tow)
-            gt_xyz=[np.interp(tow,ref["GPS TOW (s)"],ref[c],left=np.nan,right=np.nan) for c in ["ECEF X (m)","ECEF Y (m)","ECEF Z (m)"]]
-            glat,glon,gh=ecef_to_geodetic(*gt_xyz)
-            de,dn,du=float(r.de),float(r.dn),float(r.du);eh=float(r.eh);e3d=float(r.e3d)
-            self.truth_info.configure(text=(f"RTK: {rlat:.8f}°N, {rlon:.8f}°E, h={rh:.3f} m     "
-                f"Truth: {glat:.8f}°N, {glon:.8f}°E, h={gh:.3f} m\n"
-                f"Error RTK−Truth: ΔE={de:+.3f} m, ΔN={dn:+.3f} m, ΔU={du:+.3f} m     "
-                f"Horizontal={eh:.3f} m, 3D={e3d:.3f} m"))
+            if "_truth_str_cache" not in self.data:
+                self.data["_truth_str_cache"] = {}
+            if i not in self.data["_truth_str_cache"]:
+                rlat,rlon,rh=ecef_to_geodetic(r.x,r.y,r.z)
+                ref=self.data["reference"];tow=float(r.tow)
+                gt_xyz=[np.interp(tow,ref["GPS TOW (s)"],ref[c],left=np.nan,right=np.nan) for c in ["ECEF X (m)","ECEF Y (m)","ECEF Z (m)"]]
+                glat,glon,gh=ecef_to_geodetic(*gt_xyz)
+                de,dn,du=float(r.de),float(r.dn),float(r.du);eh=float(r.eh);e3d=float(r.e3d)
+                self.data["_truth_str_cache"][i] = (f"RTK: {rlat:.8f}°N, {rlon:.8f}°E, h={rh:.3f} m     "
+                    f"Truth: {glat:.8f}°N, {glon:.8f}°E, h={gh:.3f} m\n"
+                    f"Error RTK−Truth: ΔE={de:+.3f} m, ΔN={dn:+.3f} m, ΔU={du:+.3f} m     "
+                    f"Horizontal={eh:.3f} m, 3D={e3d:.3f} m")
+            self.truth_info.configure(text=self.data["_truth_str_cache"][i])
             if self.truth_marker is not None:self.truth_marker.set_data([r.gt_E],[r.gt_N])
             if self.error_link is not None:self.error_link.set_data([r.E,r.gt_E],[r.N,r.gt_N])
         elif self.data is None or not self.data["has_truth"]:

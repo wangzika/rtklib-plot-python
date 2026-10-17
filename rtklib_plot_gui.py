@@ -188,6 +188,7 @@ class RTKPlotApp:
         filem.add_command(label="Export Current Plot…",command=self.export_plot,accelerator="Ctrl+S")
         filem.add_command(label="Batch Export Subplots…",command=self.open_batch_export_dialog,accelerator="Ctrl+E")
         filem.add_command(label="Export Google Earth KML (3D)…",command=self.export_kml)
+        filem.add_command(label="Export Google My Maps KML (2D)…",command=self.export_kml_2d)
         filem.add_command(label="Export Standard GeoJSON…",command=self.export_geojson)
         filem.add_separator(); filem.add_command(label="Exit",command=self.root.destroy); bar.add_cascade(label="File",menu=filem)
         edit=tk.Menu(bar,tearoff=False); edit.add_command(label="Save Plot As…",command=self.export_plot); edit.add_command(label="Reset View",command=self.redraw); bar.add_cascade(label="Edit",menu=edit)
@@ -293,6 +294,7 @@ class RTKPlotApp:
         ttk.Button(row2,text="Auto Detect Issues",command=self.auto_detect_issues).pack(side=tk.LEFT,padx=4)
         ttk.Button(row2,text="Diagnostic Report",command=self.open_report_dialog).pack(side=tk.LEFT,padx=4)
         ttk.Button(row2,text="Google Earth 3D…",command=self.export_kml).pack(side=tk.LEFT,padx=3)
+        ttk.Button(row2,text="My Maps 2D…",command=self.export_kml_2d).pack(side=tk.LEFT,padx=3)
         ttk.Button(row2,text="GeoJSON…",command=self.export_geojson).pack(side=tk.LEFT,padx=3)
         self.segment_status=ttk.Label(row2,text="右键子图快捷菜单 · 双击满屏放大/还原 · 列表双击聚焦区段 · Shift+拖拽标记区段",anchor="w")
         self.segment_status.pack(side=tk.LEFT,padx=8,fill=tk.X,expand=True)
@@ -3334,7 +3336,12 @@ class RTKPlotApp:
             return
         try:
             mt.export_kml_3d(self.data["pos"], path, segments=self.segments, pos_name=self.pos_path.name if self.pos_path else base)
-            msg = f"Google Earth 3D KML 文件已成功导出至：\n{path}\n\n是否立即在 Google Earth 中打开？"
+            msg = (
+                f"Google Earth 3D KML 文件已成功导出至：\n{path}\n\n"
+                f"【提示】：此文件包含 3D 高程拉伸与时间轴，专用于「Google Earth (谷歌地球)」！\n"
+                f"若在网页版「Google 我的地图 (My Maps)」中使用，请选择【My Maps 2D…】以防导入报错。\n\n"
+                f"是否立即在 Google Earth 中打开？"
+            )
             if messagebox.askyesno("导出成功", msg):
                 try:
                     os.startfile(path)
@@ -3342,6 +3349,33 @@ class RTKPlotApp:
                     pass
         except Exception as exc:
             messagebox.showerror("导出 KML 失败", str(exc))
+
+    def export_kml_2d(self):
+        if self.data is None:
+            messagebox.showwarning("Warning", "请先打开 .pos 解算文件。")
+            return
+        base = self.pos_path.stem if self.pos_path else "rtklib_solution"
+        path = filedialog.asksaveasfilename(
+            title="导出 Google My Maps 2D 兼容 KML (我的地图)",
+            defaultextension=".kml",
+            initialfile=f"{base}_2d_mymaps.kml",
+            filetypes=[("Google My Maps KML files", "*.kml"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        try:
+            mt.export_kml_2d_mymaps(self.data["pos"], path, pos_name=self.pos_path.name if self.pos_path else base)
+            msg = (
+                f"Google My Maps 2D 兼容 KML 文件已成功导出至：\n{path}\n\n"
+                f"该文件已做如下优化：\n"
+                f"1. 移除了 My Maps 不支持的 3D 拉伸与时序标签；\n"
+                f"2. 顶点数量自动抽稀控制在 8,000 点内（规避 My Maps 10,000 点上限）；\n"
+                f"3. 保持 FIX/FLOAT/SINGLE 状态彩色分段与起止点。\n\n"
+                f"现在上传到「Google 我的地图 (maps.google.com/d)」即可 100% 成功解析！"
+            )
+            messagebox.showinfo("导出成功", msg)
+        except Exception as exc:
+            messagebox.showerror("导出 2D KML 失败", str(exc))
 
     def export_geojson(self):
         if self.data is None:

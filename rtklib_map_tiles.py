@@ -365,6 +365,115 @@ def export_kml_3d(
     return out_path
 
 
+def export_kml_2d_mymaps(
+    pos_df: pd.DataFrame,
+    out_path: Path | str,
+    pos_name: str = "RTKLIB Solution",
+    max_points: int = 8000
+) -> Path:
+    """
+    Generate a 100% Google My Maps (我的地图) compliant 2D KML file:
+    - Auto downsamples to stay well under My Maps' 10,000 points / 5MB limits
+    - Strips unsupported 3D tags (<extrude>, <altitudeMode>, <TimeSpan>, <PolyStyle>)
+    - Segments lines by Q status with pure 2D LineString
+    - Adds Start/End waypoints
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    p = pos_df.copy()
+    if len(p) > max_points:
+        step = int(np.ceil(len(p) / max_points))
+        p = p.iloc[::step].reset_index(drop=True)
+
+    has_llh = "lat" in p.columns and "lon" in p.columns and p["lat"].notna().any()
+    if not has_llh:
+        raise ValueError("Position data does not contain valid latitude/longitude coordinates.")
+
+    kml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<kml xmlns="http://www.opengis.net/kml/2.2">',
+        '<Document>',
+        f'  <name>{pos_name} — 2D Trajectory</name>',
+        f'  <description>RTKLIB GNSS Solution for Google My Maps</description>',
+        '',
+        '  <Style id="fix_style">',
+        '    <LineStyle><color>ff00c800</color><width>4</width></LineStyle>',
+        '  </Style>',
+        '  <Style id="float_style">',
+        '    <LineStyle><color>ff0080ff</color><width>4</width></LineStyle>',
+        '  </Style>',
+        '  <Style id="single_style">',
+        '    <LineStyle><color>ffa0a0a0</color><width>3</width></LineStyle>',
+        '  </Style>',
+        '  <Style id="other_style">',
+        '    <LineStyle><color>ff9020a0</color><width>3</width></LineStyle>',
+        '  </Style>',
+        '  <Style id="pin_start">',
+        '    <IconStyle><Icon><href>https://maps.google.com/mapfiles/kml/paddle/grn-circle.png</href></Icon></IconStyle>',
+        '  </Style>',
+        '  <Style id="pin_end">',
+        '    <IconStyle><Icon><href>https://maps.google.com/mapfiles/kml/paddle/red-circle.png</href></Icon></IconStyle>',
+        '  </Style>',
+        ''
+    ]
+
+    q_vals = p.q.to_numpy()
+    transitions = np.where(q_vals[:-1] != q_vals[1:])[0] + 1
+    split_indices = np.r_[0, transitions, len(p)]
+
+    q_style_map = {1: "fix_style", 2: "float_style", 5: "single_style"}
+    q_name_map = {1: "FIX", 2: "FLOAT", 5: "SINGLE"}
+
+    for k in range(len(split_indices) - 1):
+        s_idx = split_indices[k]
+        e_idx = split_indices[k + 1]
+        chunk = p.iloc[s_idx:e_idx]
+        if chunk.empty:
+            continue
+        q = int(chunk.iloc[0].q)
+        style_id = q_style_map.get(q, "other_style")
+        q_label = q_name_map.get(q, f"Q={q}")
+
+        coords_str = " ".join(f"{row.lon:.7f},{row.lat:.7f},0" for _, row in chunk.iterrows())
+
+        kml.append('  <Placemark>')
+        kml.append(f'    <name>{q_label} #{k+1} ({len(chunk)} 历元)</name>')
+        kml.append(f'    <styleUrl>#{style_id}</styleUrl>')
+        kml.append('    <LineString>')
+        kml.append('      <tessellate>1</tessellate>')
+        kml.append(f'      <coordinates>{coords_str}</coordinates>')
+        kml.append('    </LineString>')
+        kml.append('  </Placemark>')
+
+    p_start = p.iloc[0]
+    p_end = p.iloc[-1]
+    kml.append('  <Placemark>')
+    kml.append('    <name>🚩 起始点 (Start)</name>')
+    kml.append('    <styleUrl>#pin_start</styleUrl>')
+    kml.append(f'    <description>起始坐标: {p_start.lat:.7f}°N, {p_start.lon:.7f}°E</description>')
+    kml.append('    <Point>')
+    kml.append(f'      <coordinates>{p_start.lon:.7f},{p_start.lat:.7f},0</coordinates>')
+    kml.append('    </Point>')
+    kml.append('  </Placemark>')
+
+    kml.append('  <Placemark>')
+    kml.append('    <name>🏁 终点 (End)</name>')
+    kml.append('    <styleUrl>#pin_end</styleUrl>')
+    kml.append(f'    <description>终点坐标: {p_end.lat:.7f}°N, {p_end.lon:.7f}°E</description>')
+    kml.append('    <Point>')
+    kml.append(f'      <coordinates>{p_end.lon:.7f},{p_end.lat:.7f},0</coordinates>')
+    kml.append('    </Point>')
+    kml.append('  </Placemark>')
+
+    kml.append('</Document>')
+    kml.append('</kml>')
+
+    out_path.write_text("\n".join(kml), encoding="utf-8")
+    return out_path
+
+
+
 def export_geojson(pos_df: pd.DataFrame, out_path: Path | str, sample_step: int = 1) -> Path:
     """Export standard GeoJSON FeatureCollection with line string and epoch properties."""
     import json

@@ -30,18 +30,18 @@ MODES = ["Gnd Trk", "ENU Position", "Height", "ENU Error", "Solution Status",
          "AR Ratio", "Differential Age", "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals",
          "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Multipath Skyplot", "Per-PRN Residuals", "Covariance", "False Fix Analysis", "Innovation / NIS",
          "Error CDF", "Error Histogram", "Constellation Summary",
-         "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Clock Bias & ISB", "Body-Frame Error"]
+         "Env & Geometry Combined", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Clock Bias & ISB", "Body-Frame Error"]
 
 NON_TIME_SERIES_MODES = (
     "Gnd Trk", "Skyplot", "Multipath Skyplot", "Multipath Proxy",
     "Per-PRN Residuals", "Innovation / NIS", "Error CDF",
     "Error Histogram", "Constellation Summary",
-    "El vs SNR & Resp", "Top Outlier Satellites"
+    "El vs SNR & Resp", "Top Outlier Satellites", "Env & Geometry Combined"
 )
 
 PLOT_CATEGORIES = {
     "故障诊断链路 (Fault Diagnostics)": [
-        "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Clock Bias & ISB", "Body-Frame Error"
+        "Env & Geometry Combined", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Clock Bias & ISB", "Body-Frame Error"
     ],
     "轨迹与高程 (Trajectory & Position)": [
         "Gnd Trk", "ENU Position", "Height", "Body-Frame Error"
@@ -58,6 +58,7 @@ PLOT_CATEGORIES = {
 }
 
 MODE_BILINGUAL = {
+    "Env & Geometry Combined": "①+③ 环境与几何综合 (Env & Geometry)",
     "Gnd Trk": "地面轨迹 (Gnd Trk)",
     "ENU Position": "ENU位置 (ENU Pos)",
     "Height": "大地高程 (Height)",
@@ -366,6 +367,7 @@ class RTKPlotApp:
         row_ws = ttk.Frame(self.root, padding=(8, 2))
         row_ws.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(row_ws, text="诊断工作区:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(row_ws, text="①+③ 环境与几何", command=lambda: self.set_mode("Env & Geometry Combined")).pack(side=tk.LEFT, padx=2)
         ttk.Button(row_ws, text="① 外部多路径", command=lambda: self.switch_workspace(0)).pack(side=tk.LEFT, padx=2)
         ttk.Button(row_ws, text="② 单星污染", command=lambda: self.switch_workspace(1)).pack(side=tk.LEFT, padx=2)
         ttk.Button(row_ws, text="③ 星座几何与DOP", command=lambda: self.switch_workspace(2)).pack(side=tk.LEFT, padx=2)
@@ -1468,6 +1470,8 @@ class RTKPlotApp:
             self._draw_dashboard();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
         if mode=="Custom Analysis":
             self._draw_custom_grid();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
+        if mode=="Env & Geometry Combined":
+            self._draw_env_geometry_combined();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
         if mode in ("ENU Position","ENU Error","Error Histogram","Body-Frame Error"):
             sharex = (mode != "Error Histogram")
             axes=self.fig.subplots(3,1,sharex=sharex);self.plot_axes=list(axes);self.ax=axes[0]
@@ -1999,6 +2003,113 @@ class RTKPlotApp:
         ax.legend(fontsize=8, ncol=3, loc="upper right")
         ax.grid(self.grid_on.get(), alpha=0.3)
 
+    def _draw_env_geometry_combined(self):
+        """Draw 5-in-1 integrated Module 1 (Environment) & Module 3 (Geometry) figure."""
+        from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
+        sat = self.data.get("sat")
+        if sat is None or sat.empty:
+            ax = self.fig.add_subplot(111)
+            ax.text(0.5, 0.5, "无卫星观测与残差数据 (需 .stat 文件)", ha="center", va="center", transform=ax.transAxes, fontsize=14)
+            self.plot_axes = [ax]; self.ax = ax
+            return
+
+        gs_main = GridSpec(1, 2, figure=self.fig, width_ratios=[1.1, 1.4], wspace=0.22)
+        gs_left = GridSpecFromSubplotSpec(2, 1, subplot_spec=gs_main[0], hspace=0.45)
+        gs_right = GridSpecFromSubplotSpec(3, 1, subplot_spec=gs_main[1], hspace=0.32)
+
+        # 1. Left-Top: Polar Multipath Skyplot
+        ax_sky = self.fig.add_subplot(gs_left[0], projection="polar")
+        s_valid = sat[(sat.freq == 1) & (sat.resp != 0)]
+        if not s_valid.empty:
+            s_sub = s_valid.iloc[::max(1, len(s_valid) // 12000)]
+            theta = np.deg2rad(s_sub.az)
+            r = 90.0 - s_sub.el
+            sc1 = ax_sky.scatter(theta, r, c=np.clip(s_sub.resp.abs(), 0, 8), cmap="turbo", s=8, alpha=0.6, edgecolors="none")
+            cb1 = self.fig.colorbar(sc1, ax=ax_sky, orientation="vertical", fraction=0.045, pad=0.08)
+            cb1.set_label("伪距残差 |resp| (m)", fontsize=9, weight="bold")
+            cb1.ax.tick_params(labelsize=8)
+        ax_sky.set_theta_zero_location("N")
+        ax_sky.set_theta_direction(-1)
+        ax_sky.set_ylim(0, 90)
+        ax_sky.set_yticks([30, 60, 90])
+        ax_sky.set_yticklabels(['60°', '30°', '0°'], fontsize=8.5, color='#555')
+        ax_sky.set_rlabel_position(135)
+        ax_sky.tick_params(labelsize=9)
+        ax_sky.set_title('(a) 空间多路径与建筑物遮挡星空图', fontsize=11, weight='bold', pad=10)
+
+        # 2. Left-Bottom: El vs SNR & Resp
+        ax_el = self.fig.add_subplot(gs_left[1])
+        s_snr = sat[(sat.freq == 1) & (sat.snr > 0)]
+        if not s_snr.empty:
+            s_sub2 = s_snr.iloc[::max(1, len(s_snr) // 15000)]
+            sc2 = ax_el.scatter(s_sub2.el, s_sub2.snr, c=np.clip(s_sub2.resp.abs(), 0, 8), cmap="turbo", s=6, alpha=0.45, edgecolors="none")
+            el_grid = np.linspace(5, 90, 100)
+            ax_el.plot(el_grid, 28.0 + 22.0 * np.sin(np.deg2rad(el_grid)), 'k--', lw=1.5, label='标称信噪比包络')
+            ax_el.legend(loc='lower right', fontsize=8.5)
+        ax_el.set_xlim(0, 90)
+        ax_el.set_xticks(np.arange(0, 91, 15))
+        ax_el.set_xticklabels([f'{x}°' for x in range(0, 91, 15)], fontsize=9)
+        ax_el.tick_params(labelsize=9)
+        ax_el.set_xlabel('卫星高度角 (°)', fontsize=10, weight='bold')
+        ax_el.set_ylabel('载噪比 (dB-Hz)', fontsize=10, weight='bold')
+        ax_el.set_title('(b) 卫星高度角 - 载噪比 - 残差联合分布', fontsize=11, weight='bold', pad=6)
+        ax_el.grid(self.grid_on.get(), ls='--', alpha=0.35)
+
+        # 3. Right-Top: Satellites Stack
+        ax_sat = self.fig.add_subplot(gs_right[0])
+        s1_valid = sat[(sat.freq == 1) & (sat.vsat == 1)]
+        if not s1_valid.empty:
+            con_counts = s1_valid.groupby(['time', 'constellation']).prn.nunique().unstack(fill_value=0)
+            t_con = con_counts.index.to_numpy()
+            c_names = [c for c in ['GPS', 'GLONASS', 'Galileo', 'BeiDou', 'QZSS'] if c in con_counts.columns]
+            y_stack = [con_counts[c].to_numpy() for c in c_names]
+            stack_colors = [diag.COLORS.get(c, '#2878B5') for c in c_names]
+            ax_sat.stackplot(t_con, *y_stack, labels=c_names, colors=stack_colors, alpha=0.85)
+            ax_sat.legend(loc='upper right', fontsize=8, ncol=len(c_names))
+        ax_sat.set_ylabel('可用星数 (颗)', fontsize=10, weight='bold')
+        ax_sat.set_title('(c) 多系统跟踪与参与解算有效卫星数时序', fontsize=11, weight='bold')
+        ax_sat.grid(self.grid_on.get(), ls='--', alpha=0.35)
+        ax_sat.tick_params(labelsize=9, labelbottom=False)
+
+        # 4. Right-Middle: Directional DOP
+        ax_dop = self.fig.add_subplot(gs_right[1], sharex=ax_sat)
+        dop_df = diag.compute_directional_dop(self.data)
+        if not dop_df.empty:
+            ax_dop.plot(dop_df.time, dop_df.EDOP, color='#2878B5', lw=1.1, label='EDOP (东向跨街)')
+            ax_dop.plot(dop_df.time, dop_df.NDOP, color='#E07A2D', lw=1.1, label='NDOP (北向沿街)')
+            ax_dop.plot(dop_df.time, dop_df.VDOP, color='#36965A', lw=1.1, label='VDOP (天向高程)')
+            ax_dop.plot(dop_df.time, dop_df.PDOP, color='#111111', lw=1.2, ls=':', label='PDOP (空间几何)')
+            ax_dop.axhline(6.0, color='gray', ls='--', lw=0.9, alpha=0.7, label='良好门限 6.0')
+            ax_dop.set_ylim(0, min(float(dop_df[['EDOP', 'NDOP', 'VDOP']].quantile(0.99).max()) * 1.5, 25.0))
+            ax_dop.legend(loc='upper right', fontsize=8, ncol=5)
+        ax_dop.set_ylabel('DOP 精度因子', fontsize=10, weight='bold')
+        ax_dop.set_title('(d) 方向 DOP 空间几何对称性衰减时序', fontsize=11, weight='bold')
+        ax_dop.grid(self.grid_on.get(), ls='--', alpha=0.35)
+        ax_dop.tick_params(labelsize=9, labelbottom=False)
+
+        # 5. Right-Bottom: Residual Triad
+        ax_tri = self.fig.add_subplot(gs_right[2], sharex=ax_sat)
+        triad = diag.compute_residual_triad(self.data)
+        if not triad.empty:
+            ax_tri.plot(triad.time, triad.max_resp, color='#d90429', lw=1.1, label='第一大残差 (Max |resp|)')
+            ax_tri.plot(triad.time, triad.sec_resp, color='#00b4d8', lw=0.95, label='第二大残差 (2nd Max)')
+            ax_tri.plot(triad.time, triad.rms_resp, color='#0B2B52', lw=1.2, ls='--', label='历元均方根 (RMS)')
+            ax_tri.axhline(3.0, color='gray', ls=':', lw=0.9, label='粗差门限 3.0 m')
+            ax_tri.legend(loc='upper right', fontsize=8, ncol=4)
+        ax_tri.set_ylabel('伪距残差 (m)', fontsize=10, weight='bold')
+        ax_tri.set_xlabel('观测时间 (s)', fontsize=10, weight='bold')
+        ax_tri.set_title('(e) 伪距残差三线联合响应诊断 (Max vs 2nd Max vs RMS)', fontsize=11, weight='bold')
+        ax_tri.grid(self.grid_on.get(), ls='--', alpha=0.35)
+        ax_tri.tick_params(labelsize=9)
+
+        self.fig.align_ylabels([ax_sat, ax_dop, ax_tri])
+        self.plot_axes = [ax_sky, ax_el, ax_sat, ax_dop, ax_tri]
+        self.ax = ax_sky
+
+        for p_ax in (ax_sat, ax_dop, ax_tri):
+            self.time_cursors.append(p_ax.axvline(0, color="#333", ls="--", lw=0.8, alpha=0.7, zorder=10))
+            self._set_datetime_axis(p_ax)
+
     def _draw_custom_grid(self):
         modes=self.custom_modes
         if not modes or not self.custom_panels:
@@ -2071,6 +2182,7 @@ class RTKPlotApp:
             elif name=="Error Histogram":self._draw_error_histogram([ax],p)
             elif name=="Constellation Summary":self._draw_constellation_summary([ax],s)
             elif name=="Residual Triad":self._draw_residual_triad(ax)
+            elif name=="Env & Geometry Combined":self._draw_residual_triad(ax)
             elif name=="El vs SNR & Resp":self._draw_el_snr_resp(ax)
             elif name=="Top Outlier Satellites":self._draw_top_outliers(ax)
             elif name=="Directional DOP":self._draw_directional_dop(ax)

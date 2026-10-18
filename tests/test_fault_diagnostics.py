@@ -95,5 +95,32 @@ for idx in range(5):
     ws = gui.DIAGNOSTIC_WORKSPACES[idx]
     print(f"   Switched to Workspace {idx+1} [{ws['name']}]: OK (mode={app.mode.get()}, panels={len(app.custom_panels)})")
 
+print("6. Testing Env & Geometry Combined mode in GUI...")
+app.set_mode("Env & Geometry Combined")
+assert len(app.plot_axes) == 5, f"Expected 5 plot axes in combined mode, got {len(app.plot_axes)}"
+print("   Env & Geometry Combined in GUI: OK (5 subplots rendered)")
+
 root.destroy()
+
+print("7. Testing plot_combined_environment_and_geometry...")
+test_img = ROOT.parent / "test_combined_verify.png"
+fig_comb = rep.plot_combined_environment_and_geometry(data, test_img)
+assert test_img.exists() and test_img.stat().st_size > 10000, "Combined image generation failed"
+print(f"   plot_combined_environment_and_geometry: OK ({test_img.stat().st_size:,} bytes)")
+test_img.unlink(missing_ok=True)
+
+print("8. Testing academic PPTX generation with combined slide...")
+pptx_out = ROOT.parent / "test_diagnostic_verify.pptx"
+rep.generate_academic_pptx(data, pptx_out)
+assert pptx_out.exists() and pptx_out.stat().st_size > 50000, "PPTX export failed"
+print(f"   generate_academic_pptx: OK ({pptx_out.stat().st_size:,} bytes)")
+pptx_out.unlink(missing_ok=True)
+
+print("9. Testing HTML report generation with combined figure...")
+html_out = ROOT.parent / "test_diagnostic_verify.html"
+rep.generate_diagnostic_html(data, html_out)
+assert html_out.exists() and html_out.stat().st_size > 50000, "HTML export failed"
+print(f"   generate_diagnostic_html: OK ({html_out.stat().st_size:,} bytes)")
+html_out.unlink(missing_ok=True)
+
 print("\n>>> ALL VERIFICATION TESTS PASSED SUCCESSFULLY! <<<")

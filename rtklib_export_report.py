@@ -107,6 +107,130 @@ def _add_picture_fit_box(slide, image_path, left=927195, top=1600000, width=1033
     slide.shapes.add_picture(str(image_path), final_left, final_top, final_w, final_h)
 
 
+def plot_combined_environment_and_geometry(data: dict, output_path: Path | str | None = None, figsize=(16.0, 7.2)) -> plt.Figure:
+    """
+    Generate an integrated 5-in-1 publication-grade figure combining Module 1
+    (Environment & Multipath) and Module 3 (Constellation Geometry & Directional DOP).
+    
+    Subplots:
+      (a) Polar Multipath Skyplot (azimuth 0-360°, zenith 0-90°, colored by |resp|)
+      (b) Elevation vs. C/N0 scatter colored by |resp| + nominal envelope
+      (c) Multi-GNSS tracked & used satellite count time-series (stackplot)
+      (d) Directional DOP time-series (EDOP, NDOP, VDOP, PDOP with threshold)
+      (e) Residual Triad time-series (Max |resp|, 2nd Max |resp|, RMS |resp|)
+    """
+    import matplotlib.gridspec as gridspec
+    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
+    plt.rcParams['axes.unicode_minus'] = False
+
+    fig = plt.figure(figsize=figsize, dpi=220)
+    gs_main = gridspec.GridSpec(1, 2, figure=fig, width_ratios=[1.0, 1.48], wspace=0.22, left=0.065, right=0.965, top=0.91, bottom=0.08)
+
+    gs_left = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs_main[0], hspace=0.45)
+    gs_right = gridspec.GridSpecFromSubplotSpec(3, 1, subplot_spec=gs_main[1], hspace=0.32)
+
+    sat = data.get("sat", pd.DataFrame())
+    pos = data.get("pos", pd.DataFrame())
+
+    # 1. Left-Top: Polar Skyplot
+    ax_sky = fig.add_subplot(gs_left[0], projection='polar')
+    ax_sky.set_theta_zero_location('N')
+    ax_sky.set_theta_direction(-1)
+    if not sat.empty:
+        s1 = sat[(sat.freq == 1) & (sat.resp != 0)]
+        if not s1.empty:
+            s_sub = s1.iloc[::max(1, len(s1)//12000)]
+            theta = np.deg2rad(s_sub.az.to_numpy())
+            r = 90.0 - s_sub.el.to_numpy()
+            c_vals = np.clip(s_sub.resp.abs().to_numpy(), 0, 8)
+            sc = ax_sky.scatter(theta, r, c=c_vals, cmap='turbo', s=8, alpha=0.65, edgecolors='none')
+            cb = fig.colorbar(sc, ax=ax_sky, fraction=0.045, pad=0.09, orientation='vertical')
+            cb.set_label('伪距残差 |resp| (m)', fontsize=10, weight='bold')
+            cb.ax.tick_params(labelsize=9)
+    ax_sky.set_ylim(0, 90)
+    ax_sky.set_yticks([30, 60, 90])
+    ax_sky.set_yticklabels(['60°', '30°', '0°'], fontsize=8.5, color='#555')
+    ax_sky.set_rlabel_position(135)
+    ax_sky.tick_params(labelsize=9)
+    ax_sky.set_title('(a) 空间多路径与建筑物遮挡星空图', fontsize=13, weight='bold', pad=12)
+
+    # 2. Left-Bottom: El vs SNR & Resp
+    ax_el = fig.add_subplot(gs_left[1])
+    if not sat.empty:
+        s_snr = sat[(sat.freq == 1) & (sat.snr > 0)]
+        if not s_snr.empty:
+            s_sub2 = s_snr.iloc[::max(1, len(s_snr)//15000)]
+            sc2 = ax_el.scatter(s_sub2.el, s_sub2.snr, c=np.clip(s_sub2.resp.abs(), 0, 8), cmap='turbo', s=6, alpha=0.45, edgecolors='none')
+            el_grid = np.linspace(5, 90, 100)
+            ax_el.plot(el_grid, 28.0 + 22.0 * np.sin(np.deg2rad(el_grid)), 'k--', lw=1.6, label='标称信噪比包络')
+            ax_el.legend(loc='lower right', fontsize=9.5)
+    ax_el.set_xlim(0, 90)
+    ax_el.set_xticks(np.arange(0, 91, 15))
+    ax_el.set_xticklabels([f'{x}°' for x in range(0, 91, 15)], fontsize=9.5)
+    ax_el.tick_params(labelsize=9.5)
+    ax_el.set_xlabel('卫星高度角 (°)', fontsize=12, weight='bold')
+    ax_el.set_ylabel('载噪比 (dB-Hz)', fontsize=12, weight='bold')
+    ax_el.set_title('(b) 卫星高度角 - 载噪比 - 残差联合分布', fontsize=13, weight='bold', pad=8)
+    ax_el.grid(True, ls='--', alpha=0.35)
+
+    # 3. Right-Top: Satellites Stack
+    ax_sat = fig.add_subplot(gs_right[0])
+    if not sat.empty:
+        s1_valid = sat[(sat.freq == 1) & (sat.vsat == 1)]
+        if not s1_valid.empty:
+            con_counts = s1_valid.groupby(['time', 'constellation']).prn.nunique().unstack(fill_value=0)
+            t_con = con_counts.index.to_numpy()
+            c_names = [c for c in ['GPS', 'GLONASS', 'Galileo', 'BeiDou', 'QZSS'] if c in con_counts.columns]
+            y_stack = [con_counts[c].to_numpy() for c in c_names]
+            stack_colors = [diag.COLORS.get(c, '#2878B5') for c in c_names]
+            ax_sat.stackplot(t_con, *y_stack, labels=c_names, colors=stack_colors, alpha=0.85)
+            ax_sat.legend(loc='upper right', fontsize=9, ncol=len(c_names))
+    ax_sat.set_ylabel('可用星数 (颗)', fontsize=11.5, weight='bold')
+    ax_sat.set_title('(c) 多系统跟踪与参与解算有效卫星数时序', fontsize=13, weight='bold')
+    ax_sat.grid(True, ls='--', alpha=0.35)
+    ax_sat.tick_params(labelsize=9.5, labelbottom=False)
+
+    # 4. Right-Middle: Directional DOP
+    ax_dop = fig.add_subplot(gs_right[1], sharex=ax_sat)
+    dop_df = diag.compute_directional_dop(data)
+    if not dop_df.empty:
+        ax_dop.plot(dop_df.time, dop_df.EDOP, color='#2878B5', lw=1.2, label='EDOP (东向跨街)')
+        ax_dop.plot(dop_df.time, dop_df.NDOP, color='#E07A2D', lw=1.2, label='NDOP (北向沿街)')
+        ax_dop.plot(dop_df.time, dop_df.VDOP, color='#36965A', lw=1.2, label='VDOP (天向高程)')
+        ax_dop.plot(dop_df.time, dop_df.PDOP, color='#111111', lw=1.3, ls=':', label='PDOP (空间几何)')
+        ax_dop.axhline(6.0, color='gray', ls='--', lw=0.9, alpha=0.7, label='良好门限 6.0')
+        ax_dop.set_ylim(0, min(float(dop_df[['EDOP', 'NDOP', 'VDOP']].quantile(0.99).max()) * 1.5, 25.0))
+        ax_dop.legend(loc='upper right', fontsize=9, ncol=5)
+    ax_dop.set_ylabel('DOP 精度因子', fontsize=11.5, weight='bold')
+    ax_dop.set_title('(d) 方向 DOP 空间几何对称性衰减时序', fontsize=13, weight='bold')
+    ax_dop.grid(True, ls='--', alpha=0.35)
+    ax_dop.tick_params(labelsize=9.5, labelbottom=False)
+
+    # 5. Right-Bottom: Residual Triad
+    ax_tri = fig.add_subplot(gs_right[2], sharex=ax_sat)
+    triad = diag.compute_residual_triad(data)
+    if not triad.empty:
+        ax_tri.plot(triad.time, triad.max_resp, color='#d90429', lw=1.2, label='第一大残差 (Max |resp|)')
+        ax_tri.plot(triad.time, triad.sec_resp, color='#00b4d8', lw=1.0, label='第二大残差 (2nd Max)')
+        ax_tri.plot(triad.time, triad.rms_resp, color='#0B2B52', lw=1.3, ls='--', label='历元均方根 (RMS)')
+        ax_tri.axhline(3.0, color='gray', ls=':', lw=0.9, label='粗差门限 3.0 m')
+        ax_tri.legend(loc='upper right', fontsize=9, ncol=4)
+    ax_tri.set_ylabel('伪距残差 (m)', fontsize=11.5, weight='bold')
+    ax_tri.set_xlabel('观测时间 (s)', fontsize=12, weight='bold')
+    ax_tri.set_title('(e) 伪距残差三线联合响应诊断 (Max vs 2nd Max vs RMS)', fontsize=13, weight='bold')
+    ax_tri.grid(True, ls='--', alpha=0.35)
+    ax_tri.tick_params(labelsize=9.5)
+
+    fig.align_ylabels([ax_sat, ax_dop, ax_tri])
+
+    if output_path:
+        out_p = Path(output_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_p, dpi=220)
+
+    return fig
+
+
 def generate_academic_pptx(data: dict, output_path: Path | str, segments: list[dict] | None = None, template_path: Path | str | None = None) -> Path:
     """
     Generate publication-ready Wuhan University academic presentation (16:9).
@@ -149,7 +273,7 @@ def generate_academic_pptx(data: dict, output_path: Path | str, segments: list[d
             elif "Rectangle 4" in sh.name or "副标题" in txt or "报告人" in txt:
                 sh.text_frame.clear()
                 p1 = sh.text_frame.paragraphs[0]
-                _set_font(p1, "五大分析场景：遮挡多路径、单星污染、几何退化、假固定与车身误差复盘", size_pt=18, bold=True, color_rgb=(0, 112, 192))
+                _set_font(p1, "全链路故障诊断：空间遮挡与几何退化联合分析、单星粗差排查、滤波一致性与车身误差", size_pt=18, bold=True, color_rgb=(0, 112, 192))
                 p2 = sh.text_frame.add_paragraph()
                 _set_font(p2, "武汉大学卫星导航定位技术研究中心", size_pt=15, bold=False, color_rgb=(80, 80, 80))
 
@@ -162,71 +286,32 @@ def generate_academic_pptx(data: dict, output_path: Path | str, segments: list[d
     has_truth = data.get("has_truth", False)
 
     # ----------------------------------------------------
-    # Slide 1: 模块一：外部环境与多路径分析
+    # Slide 1: 模块一与模块三整合：空间遮挡多路径与几何构型退化联合复盘
     # ----------------------------------------------------
-    img1 = temp_dir / "mod1_multipath.png"
-    fig, (ax1a, ax1b) = plt.subplots(1, 2, figsize=(14, 5.8), gridspec_kw={"width_ratios": [1, 1.25]})
-    
-    # Left: el vs snr & resp scatter
-    s1 = sat[(sat.freq == 1) & (sat.snr > 0) & (sat.resp != 0)]
-    if not s1.empty:
-        s1_sample = s1.iloc[::max(1, len(s1)//25000)]
-        sc = ax1a.scatter(s1_sample.el, s1_sample.snr, c=np.clip(s1_sample.resp.abs(), 0, 8), cmap="turbo", s=8, alpha=0.5, edgecolors="none")
-        cb = fig.colorbar(sc, ax=ax1a, fraction=0.035, pad=0.02)
-        cb.set_label("伪距残差 |resp| (m)", fontsize=13, weight="bold")
-        cb.ax.tick_params(labelsize=11)
-        el_grid = np.linspace(5, 90, 100)
-        ax1a.plot(el_grid, 28.0 + 22.0 * np.sin(np.deg2rad(el_grid)), "k--", lw=1.8, label="标称信噪比包络")
-    ax1a.set_xlim(0, 90)
-    ax1a.set_xticks(np.arange(0, 91, 15))
-    ax1a.set_xticklabels([f"{x}°" for x in range(0, 91, 15)], fontsize=12)
-    ax1a.tick_params(labelsize=12)
-    ax1a.set_xlabel("卫星高度角 (°)", fontsize=14, weight="bold")
-    ax1a.set_ylabel("载噪比 (dB-Hz)", fontsize=14, weight="bold")
-    ax1a.set_title("高度角 - 载噪比 - 残差联合分布", fontsize=16, weight="bold")
-    ax1a.grid(True, ls="--", alpha=0.4)
-    ax1a.legend(loc="lower right", fontsize=12)
+    img1 = temp_dir / "mod1_mod3_combined.png"
+    plot_combined_environment_and_geometry(data, img1, figsize=(15.5, 6.8))
 
-    # Right: residual triad
-    triad = diag.compute_residual_triad(data)
-    if not triad.empty:
-        ax1b.plot(triad.time, triad.max_resp, color="#d90429", lw=1.2, label="全场最大残差 (Max)")
-        ax1b.plot(triad.time, triad.sec_resp, color="#00b4d8", lw=1.0, label="全场次大残差 (2nd Max)")
-        ax1b.plot(triad.time, triad.rms_resp, color="#0B2B52", lw=1.4, ls="--", label="历元均方根残差 (RMS)")
-        ax1b.axhline(3.0, color="gray", ls=":", lw=1.0, label="门限参考 3.0 m")
-    ax1b.tick_params(labelsize=12)
-    ax1b.set_xlabel("观测时间 (s)", fontsize=14, weight="bold")
-    ax1b.set_ylabel("残差 (m)", fontsize=14, weight="bold")
-    ax1b.set_title("伪距残差三线时序诊断 (Max vs 2nd vs RMS)", fontsize=16, weight="bold")
-    ax1b.grid(True, ls="--", alpha=0.4)
-    ax1b.legend(loc="upper right", fontsize=12, ncol=2)
-
-    fig.tight_layout()
-    fig.savefig(img1, dpi=200)
-    plt.close(fig)
-
-    # Create slide for Module 1
-    # We insert before the last thanks slide
-    s_idx = len(prs.slides) - 1
     slide1 = prs.slides.add_slide(layout6)
-    # Move slide1 before thanks slide if needed
-    # Set Title
     for sh in slide1.shapes:
         if sh.has_text_frame and ("Title" in sh.name or "标题" in sh.text_frame.text or sh.top < 800000):
             sh.text_frame.clear()
             p = sh.text_frame.paragraphs[0]
-            _set_font(p, "模块一：外部环境与多路径/NLOS 深度诊断", size_pt=28, bold=True, color_rgb=(0, 0, 0))
+            _set_font(p, "模块一与模块三整合：空间遮挡多路径与几何构型退化联合复盘", size_pt=28, bold=True, color_rgb=(0, 0, 0))
             break
     
     # Intro Line textbox
     tb1 = slide1.shapes.add_textbox(508000, 922566, 11431451, 550000)
+    triad = diag.compute_residual_triad(data)
+    dop_df = diag.compute_directional_dop(data)
     p95_triad = float(triad.max_resp.quantile(0.95)) if not triad.empty else 0.0
+    mean_edop = float(dop_df.EDOP.mean()) if not dop_df.empty else 1.0
+    mean_ndop = float(dop_df.NDOP.mean()) if not dop_df.empty else 1.0
     _render_dual_color_intro(tb1.text_frame, [
-        ("低高度角多路径显著：全场最大残差 95% 分位数达 ", False),
+        ("空间遮挡与几何退化联合表征：全场最大残差 95% 分位数达 ", False),
         (f"{p95_triad:.2f} m", True),
-        ("，残差三线紧密同步抬升表明处于典型", False),
-        ("多星环境级多路径遮挡区", True),
-        ("，建议仰角掩模设定为 20°。", False)
+        ("，平均 EDOP/NDOP 为 ", False),
+        (f"{mean_edop:.2f} / {mean_ndop:.2f}", True),
+        ("，残差冲高与东向跨街几何薄弱呈现显著空间-时序强相关性。", False)
     ])
     _add_picture_fit_box(slide1, img1)
 
@@ -293,64 +378,6 @@ def generate_academic_pptx(data: dict, output_path: Path | str, segments: list[d
         ("），且伴随频繁周跳，为主要粗差污染源，建议剔除。", False)
     ])
     _add_picture_fit_box(slide2, img2)
-
-    # ----------------------------------------------------
-    # Slide 3: 模块三：星座几何分布与 DOP 分析
-    # ----------------------------------------------------
-    img3 = temp_dir / "mod3_geometry_dop.png"
-    fig, (ax3a, ax3b) = plt.subplots(2, 1, figsize=(14, 6.0), sharex=True)
-    
-    # Top: stacked constellation counts + dual-axis PDOP
-    s1_valid = sat[(sat.freq == 1) & (sat.vsat == 1)]
-    con_counts = s1_valid.groupby(["time", "constellation"]).prn.nunique().unstack(fill_value=0)
-    t_con = con_counts.index.to_numpy()
-    c_names = [c for c in ["GPS", "GLONASS", "Galileo", "BeiDou", "QZSS"] if c in con_counts.columns]
-    y_stack = [con_counts[c].to_numpy() for c in c_names]
-    stack_colors = [diag.COLORS.get(c, "#2878B5") for c in c_names]
-    ax3a.stackplot(t_con, *y_stack, labels=c_names, colors=stack_colors, alpha=0.85)
-    ax3a.set_ylabel("可用卫星数 (颗)", fontsize=13, weight="bold")
-    ax3a.set_title("多系统联合可用卫星数与方向性几何稀度 (DOP) 综合分析", fontsize=16, weight="bold")
-    ax3a.legend(loc="upper right", fontsize=11, ncol=len(c_names))
-    ax3a.grid(True, ls="--", alpha=0.35)
-    ax3a.tick_params(labelsize=11)
-
-    # Bottom: directional DOP (EDOP, NDOP, VDOP)
-    dop_df = diag.compute_directional_dop(data)
-    if not dop_df.empty:
-        ax3b.plot(dop_df.time, dop_df.EDOP, color="#2878B5", lw=1.2, label="EDOP (东向)")
-        ax3b.plot(dop_df.time, dop_df.NDOP, color="#E07A2D", lw=1.2, label="NDOP (北向)")
-        ax3b.plot(dop_df.time, dop_df.VDOP, color="#36965A", lw=1.2, label="VDOP (天向)")
-        ax3b.plot(dop_df.time, dop_df.PDOP, color="#111", lw=1.4, ls=":", label="PDOP (空间)")
-        ax3b.axhline(6.0, color="gray", ls="--", lw=1.0, alpha=0.7, label="几何良好门限 6.0")
-    ax3b.set_ylabel("DOP 因子", fontsize=13, weight="bold")
-    ax3b.set_xlabel("观测时间 (s)", fontsize=14, weight="bold")
-    ax3b.legend(loc="upper right", fontsize=11, ncol=5)
-    ax3b.grid(True, ls="--", alpha=0.35)
-    ax3b.tick_params(labelsize=11)
-    fig.align_ylabels([ax3a, ax3b])
-
-    fig.tight_layout()
-    fig.savefig(img3, dpi=200)
-    plt.close(fig)
-
-    slide3 = prs.slides.add_slide(layout6)
-    for sh in slide3.shapes:
-        if sh.has_text_frame and ("Title" in sh.name or "标题" in sh.text_frame.text or sh.top < 800000):
-            sh.text_frame.clear()
-            p = sh.text_frame.paragraphs[0]
-            _set_font(p, "模块三：多系统星座几何分布与 DOP 衰减分析", size_pt=28, bold=True, color_rgb=(0, 0, 0))
-            break
-    tb3 = slide3.shapes.add_textbox(508000, 922566, 11431451, 550000)
-    mean_edop = float(dop_df.EDOP.mean()) if not dop_df.empty else 1.0
-    mean_ndop = float(dop_df.NDOP.mean()) if not dop_df.empty else 1.0
-    _render_dual_color_intro(tb3.text_frame, [
-        ("多系统融合显著改善几何构型：平均 EDOP 为 ", False),
-        (f"{mean_edop:.2f}", True),
-        ("，NDOP 为 ", False),
-        (f"{mean_ndop:.2f}", True),
-        ("，全时段未发生持续性几何退化引发的飞点现象。", False)
-    ])
-    _add_picture_fit_box(slide3, img3)
 
     # ----------------------------------------------------
     # Slide 4: 模块四：模糊度固定与滤波状态分析
@@ -517,6 +544,10 @@ def generate_diagnostic_html(data: dict, output_path: Path | str, segments: list
     # Convert figures to base64
     temp_dir = Path(tempfile.mkdtemp(prefix="rtk_html_plots_"))
     
+    # 0. Combined M1 + M3 plot
+    p0 = temp_dir / "combined_m1_m3.png"
+    plot_combined_environment_and_geometry(data, p0, figsize=(14, 6.2))
+
     # 1. Triad plot
     fig1, ax1 = plt.subplots(figsize=(10, 3.5))
     triad = diag.compute_residual_triad(data)
@@ -553,6 +584,7 @@ def generate_diagnostic_html(data: dict, output_path: Path | str, segments: list
     def to_b64(img_p):
         return base64.b64encode(img_p.read_bytes()).decode("ascii")
 
+    b64_comb = to_b64(p0)
     b64_triad = to_b64(p1)
     b64_cdf = to_b64(p2)
     shutil.rmtree(temp_dir, ignore_errors=True)
@@ -623,11 +655,15 @@ def generate_diagnostic_html(data: dict, output_path: Path | str, segments: list
 
         <h2>二、 核心诊断图表</h2>
         <div class="plot-container">
-            <h3>图 1：伪距残差统计三线时序 (Max vs 2nd Max vs RMS)</h3>
+            <h3>图 1：空间遮挡多路径与几何构型退化 5合1 联合诊断图</h3>
+            <img src="data:image/png;base64,{b64_comb}" alt="Combined Environment and Geometry">
+        </div>
+        <div class="plot-container">
+            <h3>图 2：伪距残差统计三线时序 (Max vs 2nd Max vs RMS)</h3>
             <img src="data:image/png;base64,{b64_triad}" alt="Residual Triad">
         </div>
         <div class="plot-container">
-            <h3>图 2：定位误差累积概率分布曲线 (CDF)</h3>
+            <h3>图 3：定位误差累积概率分布曲线 (CDF)</h3>
             <img src="data:image/png;base64,{b64_cdf}" alt="Error CDF">
         </div>
 

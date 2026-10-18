@@ -34,6 +34,20 @@ for ws in gui.DIAGNOSTIC_WORKSPACES:
     for m in ws["modes"]:
         assert m in gui.MODES, f"Mode {m} not in MODES!"
 
+print("2b. Testing detect_problematic_segments (Union: eh > 1m or e3d > 3m)...")
+segs, meta = diag.detect_problematic_segments(data["pos"], sat_df=data["sat"], error_limit=1.0, e3d_limit=3.0, return_details=True)
+print(f"   Detected {len(segs)} segments with truth. Meta mode: {meta['mode']}")
+assert len(segs) == 11, f"Expected 11 segments for Odaiba with new logic, got {len(segs)}"
+assert meta["has_truth"] == True
+assert any(s["type"] == "false_fix" for s in segs), "Should detect false fix segments"
+
+# Test fallback without truth
+pos_no_truth = data["pos"].drop(columns=[c for c in ["eh", "e3d", "de", "dn", "du"] if c in data["pos"].columns])
+segs_fallback, meta_fallback = diag.detect_problematic_segments(pos_no_truth, sat_df=data["sat"], resp_limit=3.0, return_details=True)
+print(f"   Fallback detection (no truth): {len(segs_fallback)} segments. Meta mode: {meta_fallback['mode']}")
+assert len(segs_fallback) > 0, "Should detect anomaly segments in residual fallback mode"
+assert meta_fallback["mode"] == "residual_fallback"
+
 print("3. Testing diagnose_anomaly_segment...")
 st = float(data['pos'].tow.iloc[100])
 et = float(data['pos'].tow.iloc[500])

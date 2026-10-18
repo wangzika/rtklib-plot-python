@@ -771,64 +771,196 @@ def generate_markdown_report(rep: dict, pos_name: str = "solution") -> str:
     return "\n".join(lines)
 
 
-def detect_problematic_segments(pos_df: pd.DataFrame, error_limit: float = 1.0, min_duration: float = 2.0) -> list[dict]:
-    """Scan position epochs and automatically identify loss-of-fix or severe error intervals."""
+def detect_problematic_segments(
+    pos_df: pd.DataFrame,
+    sat_df: pd.DataFrame | None = None,
+    error_limit: float = 1.0,
+    e3d_limit: float = 3.0,
+    resp_limit: float = 3.0,
+    min_duration: float = 2.0,
+    max_gap: float = 5.0,
+    return_details: bool = False
+) -> list[dict] | tuple[list[dict], dict]:
+    """
+    Scan position epochs and automatically identify severe error intervals.
+
+    Logic:
+    - If ground truth is loaded:
+      Union detection: (horizontal error > error_limit [1.0m]) OR (3D error > e3d_limit [3.0m]).
+      Flags False Fix (Fix status Q=1 but error > limit) with warning prefix.
+    - If ground truth is not loaded:
+      Fallback to pseudorange residual |resp| > resp_limit [3.0m] from sat_df,
+      or 3-sigma formal error if sat_df is not available.
+    - Temporal smoothing:
+      Gaps between anomaly runs < max_gap [5.0s] are automatically bridged/merged.
+      Intervals must persist for at least min_duration [2.0s].
+    """
     if pos_df is None or len(pos_df) < 5:
-        return []
+        meta = {"has_truth": False, "mode": "empty", "count": 0}
+        return ([], meta) if return_details else []
 
-    times = pos_df.time.to_numpy()
+    times = pos_df.time.to_numpy() if "time" in pos_df else np.arange(len(pos_df), dtype=float)
+    palette = ["#C00000", "#D17B0F", "#B23A48", "#AE5A9D", "#0070C0", "#7B61A8"]
+
+    has_truth = ("eh" in pos_df and pos_df["eh"].notna().any() and 
+                 "e3d" in pos_df and pos_df["e3d"].notna().any())
+
+    mode = "ground_truth" if has_truth else "residual_fallback"
+    max_resp_arr = None
+
+    if has_truth:
+        flag = ((pos_df.eh > error_limit) | (pos_df.e3d > e3d_limit)).to_numpy()
+    else:
+        # Fallback to pseudorange residual > resp_limit
+        if sat_df is not None and not sat_df.empty and "resp" in sat_df.columns:
+            mode = "residual_fallback"
+            valid = sat_df[sat_df.vsat == 1] if "vsat" in sat_df else sat_df
+            epoch_max_resp = valid.groupby("tow")["resp"].apply(lambda s: s.abs().max())
+            max_resp_arr = pos_df.tow.map(epoch_max_resp).fillna(0.0).to_numpy()
+            flag = max_resp_arr > resp_limit
+        elif "sde" in pos_df and "sdn" in pos_df:
+            mode = "formal_error_fallback"
+            sd_h = np.hypot(pos_df.sde, pos_df.sdn).to_numpy()
+            sd_u = pos_df.sdu.to_numpy() if "sdu" in pos_df else np.zeros_like(sd_h)
+            flag = (3.0 * sd_h > error_limit) | (3.0 * sd_u > e3d_limit)
+        else:
+            mode = "non_fix_fallback"
+            flag = (pos_df.q != 1).to_numpy() if "q" in pos_df else np.zeros(len(pos_df), dtype=bool)
+
+    if not flag.any():
+        meta = {
+            "has_truth": has_truth,
+            "mode": mode,
+            "count": 0,
+            "error_limit": error_limit,
+            "e3d_limit": e3d_limit,
+            "resp_limit": resp_limit
+        }
+        return ([], meta) if return_details else []
+
+    # 1. Identify raw contiguous true runs
+    diffs = np.diff(flag.astype(int))
+    starts = np.where(diffs == 1)[0] + 1
+    if flag[0]: starts = np.r_[0, starts]
+    ends = np.where(diffs == -1)[0]
+    if flag[-1]: ends = np.r_[ends, len(flag) - 1]
+
+    # 2. Merge adjacent runs separated by less than max_gap seconds
+    merged_runs = []
+    for s_idx, e_idx in zip(starts, ends):
+        if not merged_runs:
+            merged_runs.append([s_idx, e_idx])
+        else:
+            prev_e = merged_runs[-1][1]
+            gap = float(times[s_idx] - times[prev_e])
+            if gap < max_gap:
+                merged_runs[-1][1] = e_idx
+            else:
+                merged_runs.append([s_idx, e_idx])
+
+    # 3. Filter by min_duration and build metadata
     segments = []
-    palette = ["#b23a48", "#d17b0f", "#ae5a9d", "#e07a2d", "#c00000", "#7b61a8"]
+    for s_idx, e_idx in merged_runs:
+        dur = float(times[e_idx] - times[s_idx])
+        if dur < min_duration:
+            continue
 
-    if "q" in pos_df:
-        not_fix = (pos_df.q != 1).to_numpy()
-        diffs = np.diff(not_fix.astype(int))
-        starts = np.where(diffs == 1)[0] + 1
-        if not_fix[0]: starts = np.r_[0, starts]
-        ends = np.where(diffs == -1)[0]
-        if not_fix[-1]: ends = np.r_[ends, len(not_fix)-1]
+        sub = pos_df.iloc[s_idx:e_idx + 1]
+        tow_start = float(sub.tow.iloc[0]) if "tow" in sub else float(s_idx)
+        tow_end = float(sub.tow.iloc[-1]) if "tow" in sub else float(e_idx)
 
-        for s_idx, e_idx in zip(starts, ends):
-            dur = float(times[e_idx] - times[s_idx])
-            if dur >= min_duration:
-                q_sub = pos_df.q.iloc[s_idx:e_idx+1]
-                q_type = "FLOAT" if (q_sub == 2).any() else ("SINGLE" if (q_sub == 5).any() else "NON-FIX")
-                c = palette[len(segments) % len(palette)]
-                segments.append({
-                    "start": int(s_idx),
-                    "end": int(e_idx),
-                    "name": f"掉固定: {q_type}持续{dur:.1f}s",
-                    "reason": f"{q_type} 持续 {dur:.1f} 秒 (历元 {s_idx+1}~{e_idx+1})",
-                    "color": c,
-                    "type": "loss_of_fix"
-                })
+        if has_truth:
+            eh_max = float(sub.eh.max())
+            eh_mean = float(sub.eh.mean())
+            e3d_max = float(sub.e3d.max())
+            is_false_fix = False
+            if "q" in sub:
+                # Check if there are epochs where Q=1 but error exceeded limits
+                is_false_fix = ((sub.q == 1) & ((sub.eh > error_limit) | (sub.e3d > e3d_limit))).any()
+                fix_count = int((sub.q == 1).sum())
+                fix_pct = (fix_count / len(sub)) * 100.0
+            else:
+                fix_pct = 0.0
 
-    if "e3d" in pos_df and pos_df["e3d"].notna().any():
-        high_err = (pos_df.e3d > error_limit).to_numpy()
-        diffs = np.diff(high_err.astype(int))
-        starts = np.where(diffs == 1)[0] + 1
-        if high_err[0]: starts = np.r_[0, starts]
-        ends = np.where(diffs == -1)[0]
-        if high_err[-1]: ends = np.r_[ends, len(high_err)-1]
+            c = palette[len(segments) % len(palette)]
+            if is_false_fix:
+                name = f"【假固定】Max {eh_max:.2f}m (3D {e3d_max:.2f}m, 持续{dur:.1f}s)"
+                color = "#C00000"
+                seg_type = "false_fix"
+                reason = (f"含固定解(Fix率{fix_pct:.0f}%)但误差超标：水平峰值 {eh_max:.2f}m，"
+                          f"3D峰值 {e3d_max:.2f}m，持续 {dur:.1f}s (历元 {s_idx+1}~{e_idx+1})")
+            else:
+                name = f"水平超标: Max {eh_max:.2f}m (3D {e3d_max:.2f}m, 持续{dur:.1f}s)"
+                color = c
+                seg_type = "horizontal_error" if eh_max > error_limit else "3d_error"
+                q_desc = "Float浮点" if ("q" in sub and (sub.q == 2).any()) else ("Single单点" if ("q" in sub and (sub.q == 5).any()) else "超标")
+                reason = (f"{q_desc}持续超标：水平峰值 {eh_max:.2f}m (均值{eh_mean:.2f}m)，"
+                          f"3D峰值 {e3d_max:.2f}m，持续 {dur:.1f}s (历元 {s_idx+1}~{e_idx+1})")
 
-        for s_idx, e_idx in zip(starts, ends):
-            dur = float(times[e_idx] - times[s_idx])
-            if dur >= min_duration:
-                already = any(abs(seg["start"] - s_idx) < 10 and abs(seg["end"] - e_idx) < 10 for seg in segments)
-                if not already:
-                    peak = float(pos_df.e3d.iloc[s_idx:e_idx+1].max())
-                    c = palette[len(segments) % len(palette)]
-                    segments.append({
-                        "start": int(s_idx),
-                        "end": int(e_idx),
-                        "name": f"超标: 3D误差峰值{peak:.2f}m",
-                        "reason": f"3D误差超标 (>{error_limit}m) 持续 {dur:.1f} 秒，峰值 {peak:.2f}m",
-                        "color": c,
-                        "type": "high_error"
-                    })
+            segments.append({
+                "start": int(s_idx),
+                "end": int(e_idx),
+                "name": name,
+                "reason": reason,
+                "color": color,
+                "type": seg_type,
+                "tow_start": tow_start,
+                "tow_end": tow_end,
+                "eh_max": eh_max,
+                "e3d_max": e3d_max,
+                "duration": dur,
+                "fallback": False
+            })
 
-    segments.sort(key=lambda x: x["start"])
-    return segments
+        elif mode == "residual_fallback":
+            sub_resp = max_resp_arr[s_idx:e_idx + 1] if max_resp_arr is not None else np.array([0.0])
+            peak_resp = float(sub_resp.max())
+            c = palette[len(segments) % len(palette)]
+            name = f"伪距残差粗差: Max {peak_resp:.2f}m (持续{dur:.1f}s)"
+            reason = (f"未加载真值，基于伪距残差粗差(>{resp_limit}m)探测；"
+                      f"残差峰值 {peak_resp:.2f}m，持续 {dur:.1f}s (历元 {s_idx+1}~{e_idx+1})")
+            segments.append({
+                "start": int(s_idx),
+                "end": int(e_idx),
+                "name": name,
+                "reason": reason,
+                "color": c,
+                "type": "residual_outlier",
+                "tow_start": tow_start,
+                "tow_end": tow_end,
+                "duration": dur,
+                "max_resp": peak_resp,
+                "fallback": True
+            })
+
+        else:
+            c = palette[len(segments) % len(palette)]
+            name = f"估计中误差超标: 持续{dur:.1f}s"
+            reason = f"未加载真值，基于滤波器估计误差超标探测；持续 {dur:.1f}s (历元 {s_idx+1}~{e_idx+1})"
+            segments.append({
+                "start": int(s_idx),
+                "end": int(e_idx),
+                "name": name,
+                "reason": reason,
+                "color": c,
+                "type": "formal_error",
+                "tow_start": tow_start,
+                "tow_end": tow_end,
+                "duration": dur,
+                "fallback": True
+            })
+
+    meta = {
+        "has_truth": has_truth,
+        "mode": mode,
+        "count": len(segments),
+        "error_limit": error_limit,
+        "e3d_limit": e3d_limit,
+        "resp_limit": resp_limit,
+        "min_duration": min_duration,
+        "max_gap": max_gap
+    }
+    return (segments, meta) if return_details else segments
 
 
 def _save(fig, out, name):

@@ -797,7 +797,15 @@ class RTKPlotApp:
         else:
             self.segments.clear()
             limit = float(self.false_fix_limit.get()) if hasattr(self, "false_fix_limit") else 1.0
-            detected = diag.detect_problematic_segments(self.data["pos"], error_limit=limit, min_duration=2.0)
+            detected = diag.detect_problematic_segments(
+                self.data["pos"],
+                sat_df=self.data.get("sat"),
+                error_limit=limit,
+                e3d_limit=3.0,
+                resp_limit=3.0,
+                min_duration=2.0,
+                max_gap=5.0
+            )
             if detected:
                 self.segments = detected
                 if seg_file:
@@ -989,22 +997,54 @@ class RTKPlotApp:
         if self.data is None:
             messagebox.showwarning("Warning", "请先加载 .pos 解算数据后再进行智能异常探测。")
             return
-        detected = diag.detect_problematic_segments(self.data["pos"], error_limit=float(self.false_fix_limit.get()), min_duration=2.0)
+        limit = float(self.false_fix_limit.get()) if hasattr(self, "false_fix_limit") else 1.0
+        detected, meta = diag.detect_problematic_segments(
+            self.data["pos"],
+            sat_df=self.data.get("sat"),
+            error_limit=limit,
+            e3d_limit=3.0,
+            resp_limit=3.0,
+            min_duration=2.0,
+            max_gap=5.0,
+            return_details=True
+        )
         if not detected:
-            messagebox.showinfo("智能诊断结果", "全文未探测到持续失锁（Float/Single）或3D误差超标时段，解算质量表现优异！")
+            if meta.get("has_truth"):
+                msg = f"全文未探测到持续水平误差 > {limit}m 或 3D 误差 > 3.0m 的异常时段，解算质量表现优异！"
+            else:
+                msg = "全文未探测到持续伪距残差粗差（>3.0m）时段。\n\n提示：加载参考真值（reference.csv）可获得真实毫米/分米级定位误差评估并精准识别假固定。"
+            messagebox.showinfo("智能诊断结果", msg)
             return
-        new_count = 0
-        for item in detected:
-            if not any(abs(s["start"] - item["start"]) < 5 and abs(s["end"] - item["end"]) < 5 for s in self.segments):
-                self.segments.append(item)
-                new_count += 1
+
+        # 智能替换：清空旧探测并生成全新的精准超标区段列表（避免遗留之前无逻辑的旧区段）
+        self.segments = detected
         self._refresh_segment_list()
         self._refresh_segment_overlays()
         self._auto_save_segments()
         if hasattr(self, "_expand_segments_card") and callable(self._expand_segments_card):
             self._expand_segments_card()
-        messagebox.showinfo("智能诊断完成", f"共自动探测出 {len(detected)} 处异常/跳固定时段（新增标记 {new_count} 处）。\n\n提示：双击左侧列表中的任意时段即可快速缩放聚焦！")
-        self.segment_status.configure(text=f"已自动标记 {len(detected)} 处异常时段。双击左侧时段列表可自动缩放聚焦。")
+
+        if meta.get("has_truth"):
+            ff_count = sum(1 for s in detected if s.get("type") == "false_fix")
+            info_text = (
+                f"【智能异常探测完成】\n\n"
+                f"• 判定准则：水平误差 > {limit}m 或 3D误差 > 3.0m（平滑容差 5.0s，持续 ≥ 2.0s）\n"
+                f"• 检出区段：共精确定位 {len(detected)} 处异常时段\n"
+                f"• 假固定警报：发现 {ff_count} 处危险假固定（Fix但严重超标）\n\n"
+                f"提示：双击左侧时段列表中的任意条目，右侧图表与轨迹将自动缩放聚焦！"
+            )
+            status_text = f"已智能定位 {len(detected)} 处超标时段（含 {ff_count} 处假固定），双击列表条目可自动缩放聚焦。"
+        else:
+            info_text = (
+                f"【智能异常探测完成（回退模式）】\n\n"
+                f"• 判定准则：未加载真值，基于「伪距残差 > 3.0m」粗差探测（持续 ≥ 2s，平滑容差 5s）\n"
+                f"• 检出区段：共发现 {len(detected)} 处卫星残差粗差时段\n\n"
+                f"💡 建议：加载参考真值（reference.csv）可获取真实水平与空间误差评估并精准定位假固定！"
+            )
+            status_text = f"（无真值回退模式）已根据伪距残差粗差标记 {len(detected)} 处异常时段。加载真值可获得真实误差。"
+
+        messagebox.showinfo("智能探测完成", info_text)
+        self.segment_status.configure(text=status_text)
 
     def _get_default_segments_path(self):
         if not hasattr(self, "pos_path") or not self.pos_path:

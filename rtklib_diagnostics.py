@@ -147,7 +147,7 @@ def load_data(pos_path: Path, reference_path: Path | None = None,
         ref = pd.read_csv(reference_path, skipinitialspace=True)
         needed = ["GPS TOW (s)", "Latitude (deg)", "Longitude (deg)", "ECEF X (m)", "ECEF Y (m)", "ECEF Z (m)"]
         if all(c in ref for c in needed):
-            keep_cols = list(dict.fromkeys(needed + [c for c in ["Heading (deg)", "Roll (deg)", "Pitch (deg)"] if c in ref.columns]))
+            keep_cols = list(dict.fromkeys(needed + [c for c in ["Ellipsoid Height (m)", "Heading (deg)", "Roll (deg)", "Pitch (deg)"] if c in ref.columns]))
             ref = ref[keep_cols].dropna(subset=needed).sort_values("GPS TOW (s)")
             xyz0 = ref[["ECEF X (m)", "ECEF Y (m)", "ECEF Z (m)"]].to_numpy()
             ref_lat0 = float(ref.iloc[0]["Latitude (deg)"])

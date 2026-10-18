@@ -373,6 +373,126 @@ def export_kml_3d(
     return out_path
 
 
+def export_truth_kml_3d(
+    truth_df: pd.DataFrame,
+    out_path: Path | str,
+    truth_name: str = "Ground Truth Reference",
+    sample_step: int = 1
+) -> Path:
+    """
+    Generate a 3D Google Earth KML file for Ground Truth reference trajectory:
+    - High-contrast pure white/gold line with 3D altitude extrusion curtain
+    - Synchronized TimeSpan timestamps matching solution epochs
+    - Start / End landmark placemarks with WGS84 coordinates and height
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    p = truth_df.copy()
+    if sample_step > 1:
+        p = p.iloc[::sample_step].reset_index(drop=True)
+
+    has_llh = "lat" in p.columns and "lon" in p.columns and p["lat"].notna().any()
+    if not has_llh:
+        raise ValueError("Truth data does not contain valid latitude/longitude coordinates.")
+
+    def get_iso_time(row) -> str:
+        week = int(row.get("week", 0))
+        tow = float(row.get("tow", 0.0))
+        dt = datetime(1980, 1, 6) + timedelta(weeks=week, seconds=tow - 18.0)
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    kml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<kml xmlns="http://www.opengis.net/kml/2.2">',
+        '<Document>',
+        f'  <name>{truth_name} — 3D Reference Track</name>',
+        f'  <open>1</open>',
+        f'  <description><![CDATA[',
+        f'    <h3>GNSS 真实基准参考轨迹 (Ground Truth 3D)</h3>',
+        f'    <p><b>基准源</b>: {truth_name}</p>',
+        f'    <p><b>历元总数</b>: {len(truth_df):,} 历元</p>',
+        f'    <p><b>色彩说明</b>: <font color="#FFFFFF">■ 白色高亮 3D 幕墙参考轨迹</font></p>',
+        f'  ]]></description>',
+        '',
+        '  <!-- Style for Ground Truth Track: High-contrast white line with extruded 3D curtain -->',
+        '  <Style id="truth_style">',
+        '    <LineStyle><color>ffffffff</color><width>4.0</width></LineStyle>',
+        '    <PolyStyle><color>55ffffff</color></PolyStyle>',
+        '  </Style>',
+        '  <Style id="pin_truth_start">',
+        '    <IconStyle><color>ff00ff00</color><scale>1.2</scale>',
+        '      <Icon><href>http://maps.google.com/mapfiles/kml/paddle/wht-circle.png</href></Icon>',
+        '    </IconStyle>',
+        '  </Style>',
+        '  <Style id="pin_truth_end">',
+        '    <IconStyle><color>ff0000ff</color><scale>1.2</scale>',
+        '      <Icon><href>http://maps.google.com/mapfiles/kml/paddle/wht-diamond.png</href></Icon>',
+        '    </IconStyle>',
+        '  </Style>',
+        '',
+        '  <Folder>',
+        '    <name>真值基准轨迹 (3D Truth Track)</name>',
+        '    <Placemark>',
+        f'      <name>🚩 真值参考轨迹 ({len(p):,} 历元)</name>',
+        '      <styleUrl>#truth_style</styleUrl>',
+    ]
+    t_start = get_iso_time(p.iloc[0])
+    t_end = get_iso_time(p.iloc[-1])
+    kml.append(f'      <TimeSpan><begin>{t_start}</begin><end>{t_end}</end></TimeSpan>')
+    coords_str = " ".join(f"{row.lon:.8f},{row.lat:.8f},{float(row.get('h', 0.0)):.2f}" for _, row in p.iterrows())
+    kml.extend([
+        '      <LineString>',
+        '        <extrude>1</extrude>',
+        '        <tessellate>1</tessellate>',
+        '        <altitudeMode>absolute</altitudeMode>',
+        f'        <coordinates>{coords_str}</coordinates>',
+        '      </LineString>',
+        '    </Placemark>',
+        '  </Folder>',
+    ])
+
+    p_start, p_end = p.iloc[0], p.iloc[-1]
+    h_start = float(p_start.get("h", 0.0))
+    h_end = float(p_end.get("h", 0.0))
+    kml.extend([
+        '  <Folder>',
+        '    <name>真值起止参考点 (Truth Waypoints)</name>',
+        '    <Placemark>',
+        '      <name>🚩 真值起始点 (Truth Start)</name>',
+        '      <styleUrl>#pin_truth_start</styleUrl>',
+        '      <description><![CDATA[',
+        f'        时间: {get_iso_time(p_start)} CST<br/>',
+        f'        坐标: {p_start.lat:.7f}°N, {p_start.lon:.7f}°E<br/>',
+        f'        大地高: {h_start:.2f} m',
+        '      ]]></description>',
+        '      <Point>',
+        '        <altitudeMode>absolute</altitudeMode>',
+        f'        <coordinates>{p_start.lon:.8f},{p_start.lat:.8f},{h_start:.2f}</coordinates>',
+        '      </Point>',
+        '    </Placemark>',
+        '    <Placemark>',
+        '      <name>🏁 真值终点 (Truth End)</name>',
+        '      <styleUrl>#pin_truth_end</styleUrl>',
+        '      <description><![CDATA[',
+        f'        时间: {get_iso_time(p_end)} CST<br/>',
+        f'        坐标: {p_end.lat:.7f}°N, {p_end.lon:.7f}°E<br/>',
+        f'        大地高: {h_end:.2f} m',
+        '      ]]></description>',
+        '      <Point>',
+        '        <altitudeMode>absolute</altitudeMode>',
+        f'        <coordinates>{p_end.lon:.8f},{p_end.lat:.8f},{h_end:.2f}</coordinates>',
+        '      </Point>',
+        '    </Placemark>',
+        '  </Folder>',
+        '</Document>',
+        '</kml>'
+    ])
+    out_path.write_text("\n".join(kml), encoding="utf-8")
+    return out_path
+
+
+
 def export_kml_2d_mymaps(
     pos_df: pd.DataFrame,
     out_path: Path | str,
@@ -479,6 +599,82 @@ def export_kml_2d_mymaps(
 
     out_path.write_text("\n".join(kml), encoding="utf-8")
     return out_path
+
+
+def export_truth_kml_2d_mymaps(
+    truth_df: pd.DataFrame,
+    out_path: Path | str,
+    truth_name: str = "Ground Truth Reference",
+    max_points: int = 8000
+) -> Path:
+    """
+    Generate a 100% Google My Maps (我的地图) compliant 2D KML file for Ground Truth:
+    - Downsampled to < 8,000 points
+    - Clean dark/gold continuous 2D LineString
+    - Start / End placemarks
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    p = truth_df.copy()
+    if len(p) > max_points:
+        step = int(np.ceil(len(p) / max_points))
+        p = p.iloc[::step].reset_index(drop=True)
+
+    has_llh = "lat" in p.columns and "lon" in p.columns and p["lat"].notna().any()
+    if not has_llh:
+        raise ValueError("Truth data does not contain valid latitude/longitude coordinates.")
+
+    coords_str = " ".join(f"{row.lon:.7f},{row.lat:.7f},0" for _, row in p.iterrows())
+    p_start, p_end = p.iloc[0], p.iloc[-1]
+
+    kml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<kml xmlns="http://www.opengis.net/kml/2.2">',
+        '<Document>',
+        f'  <name>{truth_name} — 2D Reference Track</name>',
+        f'  <description>Ground Truth Reference Track for Google My Maps</description>',
+        '',
+        '  <Style id="truth_2d_style">',
+        '    <LineStyle><color>ff000000</color><width>4</width></LineStyle>',
+        '  </Style>',
+        '  <Style id="pin_truth_start">',
+        '    <IconStyle><Icon><href>https://maps.google.com/mapfiles/kml/paddle/wht-circle.png</href></Icon></IconStyle>',
+        '  </Style>',
+        '  <Style id="pin_truth_end">',
+        '    <IconStyle><Icon><href>https://maps.google.com/mapfiles/kml/paddle/wht-diamond.png</href></Icon></IconStyle>',
+        '  </Style>',
+        '',
+        '  <Placemark>',
+        f'    <name>🚩 真值参考轨迹 ({len(p):,} 点)</name>',
+        '    <styleUrl>#truth_2d_style</styleUrl>',
+        '    <LineString>',
+        '      <tessellate>1</tessellate>',
+        f'      <coordinates>{coords_str}</coordinates>',
+        '    </LineString>',
+        '  </Placemark>',
+        '  <Placemark>',
+        '    <name>🚩 真值起始点 (Truth Start)</name>',
+        '    <styleUrl>#pin_truth_start</styleUrl>',
+        f'    <description>起始坐标: {p_start.lat:.7f}°N, {p_start.lon:.7f}°E</description>',
+        '    <Point>',
+        f'      <coordinates>{p_start.lon:.7f},{p_start.lat:.7f},0</coordinates>',
+        '    </Point>',
+        '  </Placemark>',
+        '  <Placemark>',
+        '    <name>🏁 真值终点 (Truth End)</name>',
+        '    <styleUrl>#pin_truth_end</styleUrl>',
+        f'    <description>终点坐标: {p_end.lat:.7f}°N, {p_end.lon:.7f}°E</description>',
+        '    <Point>',
+        f'      <coordinates>{p_end.lon:.7f},{p_end.lat:.7f},0</coordinates>',
+        '    </Point>',
+        '  </Placemark>',
+        '</Document>',
+        '</kml>'
+    ]
+    out_path.write_text("\n".join(kml), encoding="utf-8")
+    return out_path
+
 
 
 

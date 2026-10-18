@@ -1651,6 +1651,22 @@ class RTKPlotApp:
         self.segment_status.configure(text=f"已成功载入多图方案: [{profile_name}]")
         self.redraw()
 
+    def _get_active_layout_modes(self) -> list[str]:
+        """Return list of active mode names corresponding to the currently rendered view."""
+        cur_mode = self.mode.get()
+        if cur_mode == "Dashboard":
+            return list(self.dashboard_modes)
+        elif cur_mode == "Env & Geometry Combined":
+            return ["Multipath Skyplot", "El vs SNR & Resp", "Satellites", "Directional DOP", "Residual Triad"]
+        elif cur_mode == "Skyplot & C/N0 (Env)":
+            return ["Multipath Skyplot", "C/N0", "El vs SNR & Resp"]
+        elif cur_mode == "Custom Analysis":
+            if self.custom_panels:
+                return [p["mode"] for p in self.custom_panels if p.get("mode")]
+            return list(self.custom_modes) if self.custom_modes else ["Gnd Trk"]
+        else:
+            return [cur_mode]
+
     def add_selected_plot(self, mode_name=None):
         """Append currently selected item(s) from 'Available plots' list into active layout."""
         if self.data is None:
@@ -1684,27 +1700,25 @@ class RTKPlotApp:
             self.segment_status.configure(text=f"已向 Dashboard 追加 {len(to_add)} 个新子图，当前共 {len(self.dashboard_modes)} 个。")
             self.redraw()
         else:
-            if mode != "Custom Analysis":
-                self.mode.set("Custom Analysis")
-            current_modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+            current_modes = self._get_active_layout_modes()
             to_add = [m for m in modes_to_add if m not in current_modes]
             if not to_add:
-                # Find and focus the existing panel
-                for idx, p in enumerate(self.custom_panels):
-                    if p.get("mode") in modes_to_add:
-                        self.selected_custom_panel = idx
-                        break
+                if mode == "Custom Analysis":
+                    for idx, p in enumerate(self.custom_panels):
+                        if p.get("mode") in modes_to_add:
+                            self.selected_custom_panel = idx
+                            break
                 disp_name = MODE_BILINGUAL.get(modes_to_add[0], modes_to_add[0])
                 self.segment_status.configure(text=f"提示: 图表 [{disp_name}] 已存在于当前排版中，已直接聚焦定位，未重复追加。")
                 self.redraw()
                 return
-            for m in to_add:
-                current_modes.append(m)
-            self.custom_modes = current_modes
-            self.custom_panels = self._initial_custom_panels(current_modes, self.custom_preset.get())
+            new_modes = list(current_modes) + to_add
+            self.mode.set("Custom Analysis")
+            self.custom_modes = new_modes
+            self.custom_panels = self._initial_custom_panels(new_modes, self.custom_preset.get())
             self.selected_custom_panel = len(self.custom_panels) - 1
             self.focused_custom_panel = None
-            self.segment_status.configure(text=f"已追加 {len(to_add)} 个新子图，当前共 {len(self.custom_panels)} 个。")
+            self.segment_status.configure(text=f"已成功追加 {len(to_add)} 个新子图，当前共 {len(self.custom_panels)} 个。")
             self.redraw()
 
     def _popup_add_subplot_picker(self, insert_idx=None):
@@ -1745,11 +1759,10 @@ class RTKPlotApp:
             self.segment_status.configure(text=f"已添加子图 [{mode_name}] 到 Dashboard，当前共 {len(self.dashboard_modes)} 个。")
             self.redraw()
         else:
-            if mode != "Custom Analysis":
-                self.mode.set("Custom Analysis")
-            current_modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+            current_modes = self._get_active_layout_modes()
             if mode_name in current_modes:
-                self.selected_custom_panel = current_modes.index(mode_name)
+                if mode == "Custom Analysis":
+                    self.selected_custom_panel = current_modes.index(mode_name)
                 disp = MODE_BILINGUAL.get(mode_name, mode_name)
                 self.segment_status.configure(text=f"提示: 子图 [{disp}] 已存在于当前排版中，已直接聚焦。")
                 self.redraw()
@@ -1760,6 +1773,7 @@ class RTKPlotApp:
             else:
                 current_modes.append(mode_name)
                 new_sel = len(current_modes) - 1
+            self.mode.set("Custom Analysis")
             self.custom_modes = current_modes
             self.custom_panels = self._initial_custom_panels(current_modes, self.custom_preset.get())
             self.selected_custom_panel = new_sel
@@ -2753,7 +2767,7 @@ class RTKPlotApp:
             s_sub = s_valid.iloc[::max(1, len(s_valid) // 12000)]
             theta = np.deg2rad(s_sub.az)
             r = 90.0 - s_sub.el
-            sc1 = ax_sky.scatter(theta, r, c=np.clip(s_sub.resp.abs(), 0, 8), cmap="turbo", s=8, alpha=0.6, edgecolors="none")
+            sc1 = ax_sky.scatter(theta, r, c=np.clip(s_sub.resp.abs(), 0, 15.0), cmap="turbo", vmin=0.0, vmax=15.0, s=9, alpha=0.65, edgecolors="none")
             cb1 = self.fig.colorbar(sc1, ax=ax_sky, orientation="vertical", fraction=0.045, pad=0.08)
             cb1.set_label("伪距残差 |resp| (m)", fontsize=9, weight="bold")
             cb1.ax.tick_params(labelsize=8)
@@ -2766,12 +2780,19 @@ class RTKPlotApp:
         ax_sky.tick_params(labelsize=9)
         ax_sky.set_title('(a) 空间多路径与建筑物遮挡星空图', fontsize=11, weight='bold', pad=10)
 
+        # Dynamic satellite artists for active epoch
+        sky_curr = ax_sky.scatter([], [], s=100, marker="o", facecolors="none", edgecolors=[], linewidths=2.2, zorder=12)
+        sky_labels = [ax_sky.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
+                                  bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#d90429", lw=1.2, alpha=0.92), zorder=14) for _ in range(35)]
+        self.sky_plots.append((ax_sky, sky_curr, sky_labels))
+
         # 2. Left-Bottom: El vs SNR & Resp
         ax_el = self.fig.add_subplot(gs_left[1])
-        s_snr = sat[(sat.freq == 1) & (sat.snr > 0)]
+        s_snr = sat[(sat.freq == 1) & (sat.snr > 0) & (sat.el > 0)]
         if not s_snr.empty:
             s_sub2 = s_snr.iloc[::max(1, len(s_snr) // 15000)]
-            sc2 = ax_el.scatter(s_sub2.el, s_sub2.snr, c=np.clip(s_sub2.resp.abs(), 0, 8), cmap="turbo", s=6, alpha=0.45, edgecolors="none")
+            resp_clip = np.clip(s_sub2.resp.fillna(0).abs(), 0, 15.0) if "resp" in s_sub2.columns else np.zeros(len(s_sub2))
+            sc2 = ax_el.scatter(s_sub2.el, s_sub2.snr, c=resp_clip, cmap="turbo", s=14, vmin=0.0, vmax=15.0, alpha=0.88, edgecolors="none")
             el_grid = np.linspace(5, 90, 100)
             ax_el.plot(el_grid, 28.0 + 22.0 * np.sin(np.deg2rad(el_grid)), 'k--', lw=1.5, label='标称信噪比包络')
             ax_el.legend(loc='lower right', fontsize=8.5)
@@ -2804,10 +2825,13 @@ class RTKPlotApp:
         ax_dop = self.fig.add_subplot(gs_right[1], sharex=ax_sat)
         dop_df = diag.compute_directional_dop(self.data)
         if not dop_df.empty:
-            ax_dop.plot(dop_df.time, dop_df.EDOP, color='#2878B5', lw=1.1, label='EDOP (东向跨街)')
-            ax_dop.plot(dop_df.time, dop_df.NDOP, color='#E07A2D', lw=1.1, label='NDOP (北向沿街)')
-            ax_dop.plot(dop_df.time, dop_df.VDOP, color='#36965A', lw=1.1, label='VDOP (天向高程)')
-            ax_dop.plot(dop_df.time, dop_df.PDOP, color='#111111', lw=1.2, ls=':', label='PDOP (空间几何)')
+            t_gap, edop_g, ndop_g, vdop_g, pdop_g = insert_time_gaps(
+                dop_df.time, dop_df.EDOP, dop_df.NDOP, dop_df.VDOP, dop_df.PDOP
+            )
+            ax_dop.plot(t_gap, edop_g, color='#2878B5', lw=1.1, label='EDOP (东向跨街)')
+            ax_dop.plot(t_gap, ndop_g, color='#E07A2D', lw=1.1, label='NDOP (北向沿街)')
+            ax_dop.plot(t_gap, vdop_g, color='#36965A', lw=1.1, label='VDOP (天向高程)')
+            ax_dop.plot(t_gap, pdop_g, color='#111111', lw=1.2, ls=':', label='PDOP (空间几何)')
             ax_dop.axhline(6.0, color='gray', ls='--', lw=0.9, alpha=0.7, label='良好门限 6.0')
             ax_dop.set_ylim(0, min(float(dop_df[['EDOP', 'NDOP', 'VDOP']].quantile(0.99).max()) * 1.5, 25.0))
             ax_dop.legend(loc='upper right', fontsize=8, ncol=5)
@@ -2820,9 +2844,12 @@ class RTKPlotApp:
         ax_tri = self.fig.add_subplot(gs_right[2], sharex=ax_sat)
         triad = diag.compute_residual_triad(self.data)
         if not triad.empty:
-            ax_tri.plot(triad.time, triad.max_resp, color='#d90429', lw=1.1, label='第一大残差 (Max |resp|)')
-            ax_tri.plot(triad.time, triad.sec_resp, color='#00b4d8', lw=0.95, label='第二大残差 (2nd Max)')
-            ax_tri.plot(triad.time, triad.rms_resp, color='#0B2B52', lw=1.2, ls='--', label='历元均方根 (RMS)')
+            t_gap, max_g, sec_g, rms_g = insert_time_gaps(
+                triad.time, triad.max_resp, triad.sec_resp, triad.rms_resp
+            )
+            ax_tri.plot(t_gap, max_g, color='#d90429', lw=1.1, label='第一大残差 (Max |resp|)')
+            ax_tri.plot(t_gap, sec_g, color='#00b4d8', lw=0.95, label='第二大残差 (2nd Max)')
+            ax_tri.plot(t_gap, rms_g, color='#0B2B52', lw=1.2, ls='--', label='历元均方根 (RMS)')
             ax_tri.axhline(3.0, color='gray', ls=':', lw=0.9, label='粗差门限 3.0 m')
             ax_tri.legend(loc='upper right', fontsize=8, ncol=4)
         ax_tri.set_ylabel('伪距残差 (m)', fontsize=10, weight='bold')
@@ -2838,6 +2865,9 @@ class RTKPlotApp:
         for p_ax in (ax_sat, ax_dop, ax_tri):
             self.time_cursors.append(p_ax.axvline(0, color="#333", ls="--", lw=0.8, alpha=0.7, zorder=10))
             self._set_datetime_axis(p_ax)
+        for p_ax in (ax_sat, ax_dop):
+            p_ax.set_xlabel("")
+            p_ax.tick_params(labelbottom=False)
 
     def _draw_custom_grid(self):
         modes=self.custom_modes
@@ -4993,6 +5023,77 @@ class RTKPlotApp:
         except Exception as e:
             print(f"Basemap notice: {e}")
 
+    def _get_ground_truth_df(self) -> pd.DataFrame | None:
+        """Extract or reconstruct aligned ground-truth dataframe with (week, tow, lat, lon, h)."""
+        if self.data is None or not self.data.get("has_truth"):
+            return None
+        ref = self.data.get("reference")
+        pos = self.data.get("pos")
+        if pos is None or pos.empty:
+            return None
+
+        # 1. Primary: If reference dataframe loaded
+        if isinstance(ref, pd.DataFrame) and not ref.empty:
+            tow_col = "GPS TOW (s)" if "GPS TOW (s)" in ref.columns else ("tow" if "tow" in ref.columns else None)
+            if tow_col:
+                t_min = float(pos.tow.min()) - 15.0
+                t_max = float(pos.tow.max()) + 15.0
+                sub = ref[(ref[tow_col] >= t_min) & (ref[tow_col] <= t_max)].copy()
+                if sub.empty:
+                    sub = ref.copy()
+            else:
+                sub = ref.copy()
+
+            lat_col = "Latitude (deg)" if "Latitude (deg)" in sub.columns else ("lat" if "lat" in sub.columns else None)
+            lon_col = "Longitude (deg)" if "Longitude (deg)" in sub.columns else ("lon" if "lon" in sub.columns else None)
+            if lat_col and lon_col:
+                lat = sub[lat_col].to_numpy(dtype=float)
+                lon = sub[lon_col].to_numpy(dtype=float)
+                if "Ellipsoid Height (m)" in sub.columns:
+                    h = sub["Ellipsoid Height (m)"].to_numpy(dtype=float)
+                elif "h" in sub.columns:
+                    h = sub["h"].to_numpy(dtype=float)
+                elif all(c in sub.columns for c in ["ECEF X (m)", "ECEF Y (m)", "ECEF Z (m)"]):
+                    _, _, h = diag._ecef_to_geodetic(
+                        sub["ECEF X (m)"].to_numpy(dtype=float),
+                        sub["ECEF Y (m)"].to_numpy(dtype=float),
+                        sub["ECEF Z (m)"].to_numpy(dtype=float)
+                    )
+                else:
+                    h = np.zeros(len(sub), dtype=float)
+
+                week = sub["GPS Week"].to_numpy() if "GPS Week" in sub.columns else np.full(len(sub), int(pos.iloc[0].get("week", 2000)))
+                tow = sub[tow_col].to_numpy(dtype=float) if tow_col else np.arange(len(sub), dtype=float)
+                df = pd.DataFrame({"week": week, "tow": tow, "lat": lat, "lon": lon, "h": h, "q": np.zeros(len(sub), dtype=int)})
+                return df.dropna(subset=["lat", "lon"])
+
+        # 2. Fallback from pos ENU gt_E, gt_N, gt_U
+        if "gt_E" in pos.columns and "gt_N" in pos.columns:
+            valid_gt = pos.dropna(subset=["gt_E", "gt_N"]).copy()
+            if not valid_gt.empty:
+                x0, y0, z0 = pos.iloc[0].x, pos.iloc[0].y, pos.iloc[0].z
+                lat0 = float(pos.iloc[0]["lat"]) if np.isfinite(pos.iloc[0]["lat"]) else 0.0
+                lon0 = float(pos.iloc[0]["lon"]) if np.isfinite(pos.iloc[0]["lon"]) else 0.0
+                p_rad, l_rad = np.deg2rad([lat0, lon0])
+                rot = np.array([[-np.sin(l_rad), np.cos(l_rad), 0],
+                                [-np.sin(p_rad)*np.cos(l_rad), -np.sin(p_rad)*np.sin(l_rad), np.cos(p_rad)],
+                                [np.cos(p_rad)*np.cos(l_rad), np.cos(p_rad)*np.sin(l_rad), np.sin(p_rad)]])
+                enu = np.column_stack([valid_gt.gt_E, valid_gt.gt_N, valid_gt.get("gt_U", np.zeros(len(valid_gt)))])
+                d_xyz = enu @ rot
+                gt_xyz = d_xyz + np.array([x0, y0, z0])
+                gt_lat, gt_lon, gt_h = diag._ecef_to_geodetic(gt_xyz[:, 0], gt_xyz[:, 1], gt_xyz[:, 2])
+                df = pd.DataFrame({
+                    "week": valid_gt.week.to_numpy(),
+                    "tow": valid_gt.tow.to_numpy(),
+                    "lat": gt_lat,
+                    "lon": gt_lon,
+                    "h": gt_h,
+                    "q": np.zeros(len(valid_gt), dtype=int)
+                })
+                return df.dropna(subset=["lat", "lon"])
+
+        return None
+
     def export_kml(self):
         if self.data is None:
             messagebox.showwarning("Warning", "请先打开 .pos 解算文件。")
@@ -5008,19 +5109,46 @@ class RTKPlotApp:
             return
         try:
             mt.export_kml_3d(self.data["pos"], path, segments=self.segments, pos_name=self.pos_path.name if self.pos_path else base)
-            msg = (
-                f"Google Earth 3D KML 文件已成功导出至：\n{path}\n\n"
-                f"【提示】：此文件包含 3D 高程拉伸与时间轴，专用于「Google Earth (谷歌地球)」！\n"
-                f"若在网页版「Google 我的地图 (My Maps)」中使用，请选择【My Maps 2D…】以防导入报错。\n\n"
-                f"是否立即在 Google Earth 中打开？"
-            )
-            if messagebox.askyesno("导出成功", msg):
-                self._open_in_google_earth(path)
+            truth_df = self._get_ground_truth_df()
+            truth_path = None
+            if truth_df is not None and not truth_df.empty:
+                p_obj = Path(path)
+                stem = p_obj.stem
+                truth_stem = stem[:-3] + "_truth_3d" if stem.endswith("_3d") else f"{stem}_truth_3d"
+                truth_path = p_obj.with_name(f"{truth_stem}.kml")
+                mt.export_truth_kml_3d(truth_df, truth_path, truth_name=f"{base} (Ground Truth Reference)")
+
+            if truth_path and truth_path.exists():
+                msg = (
+                    f"Google Earth 3D KML 文件已成功导出（含独立真值文件）：\n"
+                    f"1. 解算轨迹: {path}\n"
+                    f"2. 真值轨迹: {truth_path}\n\n"
+                    f"【提示】：真值文件采用白色高亮 3D 幕墙与同步时间轴，在 Google Earth 中同时加载即可并排对比真实轨迹与解算轨迹！\n\n"
+                    f"是否立即在 Google Earth 中同时打开？"
+                )
+                if messagebox.askyesno("导出成功", msg):
+                    self._open_in_google_earth([path, truth_path])
+            else:
+                msg = (
+                    f"Google Earth 3D KML 文件已成功导出至：\n{path}\n\n"
+                    f"【提示】：此文件包含 3D 高程拉伸与时间轴，专用于「Google Earth (谷歌地球)」！\n"
+                    f"若在网页版「Google 我的地图 (My Maps)」中使用，请选择【My Maps 2D…】以防导入报错。\n\n"
+                    f"是否立即在 Google Earth 中打开？"
+                )
+                if messagebox.askyesno("导出成功", msg):
+                    self._open_in_google_earth([path])
         except Exception as exc:
             messagebox.showerror("导出 KML 失败", str(exc))
 
-    def _open_in_google_earth(self, path):
+    def _open_in_google_earth(self, paths):
         import shutil, subprocess
+        if isinstance(paths, (str, Path)):
+            path_list = [Path(paths)]
+        else:
+            path_list = [Path(p) for p in paths]
+        if not path_list:
+            return False
+
         candidates = [
             r"C:\Program Files\Google\Google Earth Pro\client\googleearth.exe",
             r"C:\Program Files (x86)\Google\Google Earth Pro\client\googleearth.exe",
@@ -5036,23 +5164,25 @@ class RTKPlotApp:
                     break
         if ge_exe:
             try:
-                subprocess.Popen([ge_exe, str(path)])
+                cmd = [ge_exe] + [str(p) for p in path_list]
+                subprocess.Popen(cmd)
                 return True
             except Exception:
                 pass
         try:
-            os.startfile(str(path))
+            for p in path_list:
+                os.startfile(str(p))
             return True
         except Exception:
             open_folder = messagebox.askyesno(
                 "未检测到 Google Earth 客户端",
                 f"系统未检测到「Google Earth (谷歌地球)」客户端安装路径，且 Windows 尚未为 .kml 文件关联默认打开程序。\n\n"
-                f"已生成 3D KML 文件：\n{path}\n\n"
+                f"已生成 KML 文件：\n" + "\n".join(str(p) for p in path_list) + "\n\n"
                 f"是否立即在文件管理器中打开该文件所在文件夹？\n(可直接拖拽至 Google Earth Pro 或浏览器 Google Earth Web)"
             )
             if open_folder:
                 try:
-                    subprocess.run(["explorer", f"/select,{str(path)}"])
+                    subprocess.run(["explorer", f"/select,{str(path_list[0])}"])
                 except Exception:
                     pass
             return False
@@ -5072,14 +5202,31 @@ class RTKPlotApp:
             return
         try:
             mt.export_kml_2d_mymaps(self.data["pos"], path, pos_name=self.pos_path.name if self.pos_path else base)
-            msg = (
-                f"Google My Maps 2D 兼容 KML 文件已成功导出至：\n{path}\n\n"
-                f"该文件已做如下优化：\n"
-                f"1. 移除了 My Maps 不支持的 3D 拉伸与时序标签；\n"
-                f"2. 顶点数量自动抽稀控制在 8,000 点内（规避 My Maps 10,000 点上限）；\n"
-                f"3. 保持 FIX/FLOAT/SINGLE 状态彩色分段与起止点。\n\n"
-                f"现在上传到「Google 我的地图 (maps.google.com/d)」即可 100% 成功解析！"
-            )
+            truth_df = self._get_ground_truth_df()
+            truth_path = None
+            if truth_df is not None and not truth_df.empty:
+                p_obj = Path(path)
+                stem = p_obj.stem
+                truth_stem = stem[:-10] + "_truth_2d" if stem.endswith("_2d_mymaps") else f"{stem}_truth_2d"
+                truth_path = p_obj.with_name(f"{truth_stem}.kml")
+                mt.export_truth_kml_2d_mymaps(truth_df, truth_path, truth_name=f"{base} (Ground Truth Reference)")
+
+            if truth_path and truth_path.exists():
+                msg = (
+                    f"Google My Maps 2D 兼容 KML 文件已成功导出（含独立真值文件）：\n"
+                    f"1. 解算轨迹: {path}\n"
+                    f"2. 真值轨迹: {truth_path}\n\n"
+                    f"顶点数量均已控制在 8,000 点以内，现在上传到「Google 我的地图 (maps.google.com/d)」即可 100% 成功解析！"
+                )
+            else:
+                msg = (
+                    f"Google My Maps 2D 兼容 KML 文件已成功导出至：\n{path}\n\n"
+                    f"该文件已做如下优化：\n"
+                    f"1. 移除了 My Maps 不支持的 3D 拉伸与时序标签；\n"
+                    f"2. 顶点数量自动抽稀控制在 8,000 点内（规避 My Maps 10,000 点上限）；\n"
+                    f"3. 保持 FIX/FLOAT/SINGLE 状态彩色分段与起止点。\n\n"
+                    f"现在上传到「Google 我的地图 (maps.google.com/d)」即可 100% 成功解析！"
+                )
             messagebox.showinfo("导出成功", msg)
         except Exception as exc:
             messagebox.showerror("导出 2D KML 失败", str(exc))

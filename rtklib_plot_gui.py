@@ -1788,10 +1788,9 @@ class RTKPlotApp:
             if self.data["has_truth"]:
                 t_gt_gap, gt_u_gap = insert_time_gaps(p.time, p.gt_U)
                 ax.plot(t_gt_gap,gt_u_gap,label="Ground truth U",color="#252525",lw=.8,ls="--",marker=".",ms=2,markevery=me)
-            ax.set(xlabel="Time from start (s)",ylabel="Up (m)",title="Height / Up Component");ax.legend()
         elif mode=="ENU Error":self._draw_errors(self.plot_axes,p)
         elif mode=="Solution Status":ax.step(p.time,p.q,where="post",lw=.8,marker=".",ms=2,markevery=max(1,len(p)//120));ax.set(xlabel="Time from start (s)",ylabel="Q",yticks=sorted(full.q.unique()),title="Solution Status")
-        elif mode=="AR Ratio":ax.plot(p.time,p.ratio,lw=.75,marker=".",ms=3,markevery=max(1,len(p)//120));ax.axhline(3,color="red",ls="--",label="Reference threshold 3");ax.set(xlabel="Time from start (s)",ylabel="Ratio",title="Ambiguity Resolution Ratio");ax.legend()
+        elif mode=="AR Ratio":self._draw_ar_ratio(ax,p);ax.set_xlabel("时间 (s)")
         elif mode=="Differential Age":self._draw_differential_age(ax,p)
         elif mode=="Satellites":self._draw_sats(ax)
         elif mode=="DOP":self._draw_dop(ax)
@@ -2486,6 +2485,25 @@ class RTKPlotApp:
         ax.legend(fontsize=8, ncol=3, loc="upper right")
         ax.grid(self.grid_on.get(), alpha=0.3)
 
+    def _draw_ar_ratio(self, ax, p):
+        t_gap, ratio_gap = insert_time_gaps(p.time, p.ratio)
+        ax.plot(t_gap, ratio_gap, color="#1f77b4", lw=0.75, label="AR Ratio (模糊度检验值)")
+        ax.axhline(3.0, color="#d90429", ls="--", lw=1.2, alpha=0.85, label="判定门限 (Threshold = 3.0)")
+        if self.data.get("has_truth"):
+            eh = p.eh if "eh" in p.columns else np.hypot(p.de, p.dn)
+            e3d = p.e3d if "e3d" in p.columns else np.sqrt(p.de**2 + p.dn**2 + p.du**2)
+            m_ff = (p.ratio >= 3.0) & ((eh > 1.0) | (e3d > 3.0))
+            if m_ff.any():
+                ff_p = p[m_ff]
+                ax.scatter(ff_p.time, ff_p.ratio, marker="^", s=45, color="#d90429",
+                           edgecolors="white", linewidths=0.9, zorder=6,
+                           label=f"假固定 (Ratio≥3 且 水平>1m 或 3D>3m, n={len(ff_p)})")
+        if hasattr(self, "_apply_robust_ylim"):
+            self._apply_robust_ylim(ax, [p.ratio], non_negative=True, min_span=5.0, default_max=10.0)
+        ax.set(ylabel="Ratio 值", title="模糊度解算 Ratio 时序与假固定检验 (AR Ratio)")
+        ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
+        ax.grid(self.grid_on.get(), alpha=0.3)
+
     def _draw_skyplot_cn0_3in1(self):
         """Draw 3-panel combined Earth-Frame Skyplot, Body-Frame Skyplot, and Elevation vs SNR scatter."""
         sat = self.data.get("sat")
@@ -2552,19 +2570,19 @@ class RTKPlotApp:
         cb.set_label("|Pseudorange Residual| (m, clipped at 15m)", fontsize=9, weight="bold")
 
         # Setup dynamic satellite artists for 1A, 1B, 1C
-        sc_sky1 = ax1.scatter([], [], s=85, facecolors="none", edgecolors="#dc2626", linewidths=1.8, zorder=15)
+        sc_sky1 = ax1.scatter([], [], s=85, facecolors="none", edgecolors=[], linewidths=2.0, zorder=15)
         labels_sky1 = [ax1.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
-                                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#dc2626", alpha=0.9, lw=0.8), zorder=16)
+                                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#dc2626", alpha=0.9, lw=1.1), zorder=16)
                        for _ in range(35)]
 
-        sc_sky2 = ax2.scatter([], [], s=85, facecolors="none", edgecolors="#2563eb", linewidths=1.8, zorder=15)
+        sc_sky2 = ax2.scatter([], [], s=85, facecolors="none", edgecolors=[], linewidths=2.0, zorder=15)
         labels_sky2 = [ax2.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
-                                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#2563eb", alpha=0.9, lw=0.8), zorder=16)
+                                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#2563eb", alpha=0.9, lw=1.1), zorder=16)
                        for _ in range(35)]
 
-        sc_snr = ax3.scatter([], [], s=95, facecolors="none", edgecolors="#dc2626", linewidths=1.8, zorder=15)
+        sc_snr = ax3.scatter([], [], s=95, facecolors="none", edgecolors=[], linewidths=2.0, zorder=15)
         labels_snr = [ax3.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
-                               bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#dc2626", alpha=0.9, lw=0.8), zorder=16)
+                               bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#dc2626", alpha=0.9, lw=1.1), zorder=16)
                       for _ in range(35)]
 
         dyn_artists_3in1 = [sc_sky1] + labels_sky1 + [sc_sky2] + labels_sky2 + [sc_snr] + labels_snr
@@ -2573,6 +2591,8 @@ class RTKPlotApp:
         def update_3in1(i, r, current_sat):
             cur = current_sat[(current_sat.freq == 1) & (current_sat.snr > 0) & (current_sat.el > 0)].drop_duplicates("prn")
             if not cur.empty:
+                import matplotlib.pyplot as _plt
+                turbo = _plt.cm.turbo
                 az = cur.az.to_numpy()
                 el = cur.el.to_numpy()
                 snr = cur.snr.to_numpy()
@@ -2588,19 +2608,35 @@ class RTKPlotApp:
 
                 sc_snr.set_offsets(np.c_[el, snr])
 
-                for k in range(len(cur)):
+                sat_edgecolors = []
+                sat_facecolors = []
+                for k, (_, sat_row) in enumerate(cur.iterrows()):
+                    resp_val = float(sat_row.resp) if ("resp" in sat_row and pd.notna(sat_row.resp)) else 0.0
+                    abs_r = abs(resp_val)
+                    col = turbo(np.clip(abs_r / 15.0, 0.0, 1.0))
+                    sat_edgecolors.append(col)
+                    sat_facecolors.append([col[0], col[1], col[2], 0.22])
+
                     if k < 35:
                         labels_sky1[k].set_position((th1[k], r1_curr[k]))
                         labels_sky1[k].set_text(prn[k])
+                        labels_sky1[k].get_bbox_patch().set_edgecolor(col)
                         labels_sky1[k].set_visible(True)
 
                         labels_sky2[k].set_position((th2[k], r1_curr[k]))
                         labels_sky2[k].set_text(prn[k])
+                        labels_sky2[k].get_bbox_patch().set_edgecolor(col)
                         labels_sky2[k].set_visible(True)
 
                         labels_snr[k].set_position((el[k] + 0.8, snr[k] + 0.5))
                         labels_snr[k].set_text(prn[k])
+                        labels_snr[k].get_bbox_patch().set_edgecolor(col)
                         labels_snr[k].set_visible(True)
+
+                for sc_item in [sc_sky1, sc_sky2, sc_snr]:
+                    sc_item.set_edgecolors(sat_edgecolors)
+                    sc_item.set_facecolors(sat_facecolors)
+
                 for k in range(len(cur), 35):
                     labels_sky1[k].set_visible(False)
                     labels_sky2[k].set_visible(False)
@@ -2784,10 +2820,7 @@ class RTKPlotApp:
                 else:ax.text(.5,.5,"No truth",ha="center",transform=ax.transAxes)
                 ax.set(title=name,ylabel="Error (m)")
             elif name=="Solution Status":ax.step(p.time,p.q,where="post",lw=.65,marker=".",ms=2,markevery=max(1,len(p)//50));ax.set(title=name,ylabel="Q")
-            elif name=="AR Ratio":
-                ax.plot(p.time,p.ratio,lw=.65,marker=".",ms=2,markevery=max(1,len(p)//50));ax.axhline(3,color="r",ls="--")
-                self._apply_robust_ylim(ax, [p.ratio], non_negative=True, min_span=5.0, default_max=10.0)
-                ax.set(title=name,ylabel="Ratio")
+            elif name=="AR Ratio":self._draw_ar_ratio(ax,p)
             elif name=="Differential Age":self._draw_differential_age(ax,p)
             elif name=="Satellites":self._draw_sats(ax)
             elif name=="DOP":self._draw_dop(ax)
@@ -2871,7 +2904,11 @@ class RTKPlotApp:
             if self.data["has_truth"]:artists.append(point("#252525"))
         elif name=="ENU Error" and self.data["has_truth"]:artists=[point(c) for c in ["#2878B5","#E07A2D","#36965A"]]
         elif name=="Solution Status":artists=[point("#333","o",8)]
-        elif name=="AR Ratio":artists=[point("#333","o",8)]
+        elif name=="AR Ratio":
+            p_ratio = point("#1f77b4", "o", 8)
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#1f77b4", alpha=0.9, lw=0.8), zorder=15)
+            artists = [p_ratio, badge]
         elif name=="Differential Age":artists=[point("#dc2626","o",8)]
         elif name=="Satellites":
             p_trk = point("#2878B5", "o", 8)
@@ -2908,7 +2945,7 @@ class RTKPlotApp:
         elif name=="Cycle Slips":artists=[ax.scatter([],[],s=32,marker="x",color="#d00000",zorder=11)]
         elif name=="Satellite Visibility Gantt":
             v_line = ax.axvline(np.nan, color="#e63946", ls="--", lw=1.6, alpha=0.95, zorder=12)
-            sc_active = ax.scatter([], [], s=55, marker="o", facecolors="#ffd166", edgecolors="#d90429", linewidths=1.3, zorder=14)
+            sc_active = ax.scatter([], [], s=65, marker="o", facecolors=[], edgecolors="white", linewidths=1.3, zorder=14)
             badge = ax.text(0.02, 0.95, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
                             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d90429", alpha=0.9, lw=0.8), zorder=15)
             artists = [v_line, sc_active, badge]
@@ -2927,9 +2964,9 @@ class RTKPlotApp:
                             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#333", alpha=0.9, lw=0.8), zorder=15)
             artists = [p_ff, badge]
         elif name=="El vs SNR & Resp":
-            sc_curr = ax.scatter([], [], s=100, facecolors="none", edgecolors="#dc2626", linewidths=1.8, zorder=15)
+            sc_curr = ax.scatter([], [], s=110, facecolors="none", edgecolors=[], linewidths=2.2, zorder=15)
             texts = [ax.text(0, 0, "", fontsize=8, weight="bold", color="#111",
-                             bbox=dict(boxstyle="round,pad=0.15", fc="#ffffff", ec="#dc2626", alpha=0.88, lw=0.8),
+                             bbox=dict(boxstyle="round,pad=0.15", fc="#ffffff", ec="#dc2626", alpha=0.88, lw=1.2),
                              zorder=16) for _ in range(35)]
             artists = [sc_curr] + texts
         elif name=="Innovation / NIS":
@@ -2969,8 +3006,40 @@ class RTKPlotApp:
             elif name=="ENU Error" and self.data["has_truth"]:
                 for art,col in zip(artists,["de","dn","du"]):set_point(art,x,r[col],visible and np.isfinite(r[col]))
             elif name=="Solution Status":set_point(artists[0],x,r.q,visible)
-            elif name=="AR Ratio":set_point(artists[0],x,r.ratio,visible and np.isfinite(r.ratio))
-            elif name=="Differential Age":
+            elif name=="AR Ratio":
+                rat_val = float(getattr(r, "ratio", np.nan))
+                if visible and np.isfinite(rat_val):
+                    set_point(artists[0], x, rat_val, True)
+                    eh_val = float(getattr(r, "eh", np.nan))
+                    e3d_val = float(getattr(r, "e3d", np.nan))
+                    is_false_fix = (rat_val >= 3.0) and (
+                        (np.isfinite(e3d_val) and e3d_val > 3.0) or (np.isfinite(eh_val) and eh_val > 1.0)
+                    )
+                    if is_false_fix:
+                        artists[0].set_color("#d90429")
+                        artists[0].set_marker("^")
+                        artists[0].set_markersize(11)
+                        eh_str = f"水平={eh_val:.2f}m" if np.isfinite(eh_val) else ""
+                        e3_str = f"3D={e3d_val:.2f}m" if np.isfinite(e3d_val) else ""
+                        err_str = f" ({eh_str}, {e3_str})" if (eh_str or e3_str) else ""
+                        artists[1].set_text(f"Ratio: {rat_val:.1f} · ⚠️ 假固定!{err_str}")
+                        artists[1].get_bbox_patch().set_edgecolor("#d90429")
+                    elif rat_val >= 3.0:
+                        artists[0].set_color("#16a34a")
+                        artists[0].set_marker("o")
+                        artists[0].set_markersize(8)
+                        artists[1].set_text(f"Ratio: {rat_val:.1f} · ✅ 正常固定")
+                        artists[1].get_bbox_patch().set_edgecolor("#16a34a")
+                    else:
+                        artists[0].set_color("#1f77b4")
+                        artists[0].set_marker("o")
+                        artists[0].set_markersize(8)
+                        artists[1].set_text(f"Ratio: {rat_val:.1f} · 浮点解 (Float)")
+                        artists[1].get_bbox_patch().set_edgecolor("#1f77b4")
+                    artists[1].set_visible(True)
+                else:
+                    set_point(artists[0], 0, 0, False)
+                    artists[1].set_visible(False)
                 age_val=float(getattr(r,"age",np.nan))
                 set_point(artists[0],x,age_val,visible and np.isfinite(age_val))
             elif name=="Satellites" and sat_epoch is not None and not sat_epoch.empty:
@@ -3042,9 +3111,23 @@ class RTKPlotApp:
             elif name=="Satellite Visibility Gantt":
                 artists[0].set_xdata([x,x]) if visible else artists[0].set_xdata([np.nan,np.nan])
                 prn_map = getattr(ax, "_gantt_prn_to_y", getattr(self, "_gantt_prn_to_y", {}))
-                active_y = [prn_map[p] for p in current_sat.prn.unique() if p in prn_map]
-                if visible and len(active_y) > 0:
+                active_prns = [p for p in current_sat.prn.unique() if p in prn_map]
+                if visible and len(active_prns) > 0:
+                    active_y = [prn_map[p] for p in active_prns]
                     artists[1].set_offsets(np.c_[[x] * len(active_y), active_y])
+                    import matplotlib.pyplot as _plt
+                    turbo = _plt.cm.turbo
+                    sat_colors = []
+                    for p in active_prns:
+                        sub_sat = current_sat[current_sat.prn == p]
+                        sub_l1 = sub_sat[sub_sat.freq == 1]
+                        row = sub_l1.iloc[0] if not sub_l1.empty else sub_sat.iloc[0]
+                        resp_val = float(row.resp) if ("resp" in row and pd.notna(row.resp)) else 0.0
+                        abs_r = abs(resp_val)
+                        sat_colors.append(turbo(np.clip(abs_r / 15.0, 0.0, 1.0)))
+                    artists[1].set_facecolors(sat_colors)
+                    artists[1].set_edgecolors("white")
+                    artists[1].set_linewidths(1.3)
                     artists[2].set_text(f"历元 {i+1} · 跟踪: {len(active_y)} 颗星")
                     artists[2].set_visible(True)
                 else:
@@ -3086,14 +3169,27 @@ class RTKPlotApp:
                 cs=current_sat
                 g=cs[(cs.freq==1)&(cs.snr>0)&(cs.el>0)].drop_duplicates("prn") if (cs is not None and not cs.empty) else pd.DataFrame()
                 if visible and not g.empty:
+                    import matplotlib.pyplot as _plt
+                    turbo = _plt.cm.turbo
                     artists[0].set_offsets(np.c_[g.el, g.snr])
+                    sat_edgecolors = []
+                    sat_facecolors = []
                     for k, (_, sat_row) in enumerate(g.iterrows()):
+                        resp_val = float(sat_row.resp) if ("resp" in sat_row and pd.notna(sat_row.resp)) else 0.0
+                        abs_r = abs(resp_val)
+                        col = turbo(np.clip(abs_r / 15.0, 0.0, 1.0))
+                        sat_edgecolors.append(col)
+                        sat_facecolors.append([col[0], col[1], col[2], 0.22])
                         if k < 35:
                             artists[k + 1].set_position((sat_row.el + 0.8, sat_row.snr + 0.5))
                             is_used = ("resp" in sat_row and sat_row.resp != 0)
                             tag = sat_row.prn if is_used else f"{sat_row.prn} (跟踪)"
                             artists[k + 1].set_text(tag)
+                            artists[k + 1].get_bbox_patch().set_edgecolor(col)
+                            artists[k + 1].get_bbox_patch().set_linewidth(1.3)
                             artists[k + 1].set_visible(True)
+                    artists[0].set_edgecolors(sat_edgecolors)
+                    artists[0].set_facecolors(sat_facecolors)
                     for k in range(len(g), 35):
                         artists[k + 1].set_visible(False)
                 else:
@@ -3866,10 +3962,7 @@ class RTKPlotApp:
             self._set_datetime_axis(ax)
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "AR Ratio":
-            ax.plot(p.time, p.ratio, lw=.5)
-            ax.axhline(3, color="red", ls="--")
-            self._apply_robust_ylim(ax, [p.ratio], non_negative=True, min_span=5.0, default_max=10.0)
-            ax.set(title="AR Ratio", xlabel="Time (s)")
+            self._draw_ar_ratio(ax, p)
             self._set_datetime_axis(ax)
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Differential Age":
@@ -4918,11 +5011,7 @@ class RTKPlotApp:
             ax.set(title="Solution Status (Q: 1=FIX, 2=FLOAT, 5=SINGLE)", xlabel="Date/time", ylabel="Q")
             self._set_datetime_axis(ax)
         elif mode_name == "AR Ratio":
-            kw = self._get_line_kwargs("AR Ratio")
-            ax.plot(p.time, p.ratio, color="#0B2B52", **kw)
-            ax.axhline(3, color="red", ls="--", lw=1.2, label="Threshold = 3.0")
-            ax.set(title="Ambiguity Resolution (AR) Ratio", xlabel="Date/time", ylabel="Ratio")
-            ax.legend(loc="best")
+            self._draw_ar_ratio(ax, p)
             self._set_datetime_axis(ax)
         elif mode_name == "Differential Age":
             self._draw_differential_age(ax, p)

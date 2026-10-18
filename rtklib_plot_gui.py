@@ -44,11 +44,15 @@ def insert_time_gaps(times, *arrays, max_gap_factor=2.5, min_gap_s=0.25):
 
 Q_LABELS = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}
 Q_COLORS = {1: "#07851d", 2: "#dc8a12", 3: "#5b83c4", 4: "#9b59b6", 5: "#777777", 6: "#17a2a4"}
-MODES = ["Gnd Trk", "Trajectory Error Heatmap", "ENU Position", "Height", "ENU Error", "Solution Status",
-         "AR Ratio", "Differential Age", "Satellites", "DOP", "Skyplot & C/N0 (Env)", "Residuals",
-         "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Per-PRN Residuals", "Covariance", "False Fix Analysis", "Innovation / NIS",
-         "Error CDF", "Error Histogram",
-         "Env & Geometry Combined", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Body-Frame Error"]
+MODES = [
+    "Gnd Trk", "Trajectory Error Heatmap", "ENU Position", "Height", "ENU Error", "Solution Status",
+    "AR Ratio", "Differential Age", "Satellites", "DOP", "Directional DOP",
+    "Skyplot & C/N0 (Env)", "Skyplot", "C/N0", "Satellite Elevation",
+    "Residuals", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites",
+    "Multipath Proxy", "Multipath Skyplot", "Cycle Slips", "Satellite Visibility Gantt",
+    "Per-PRN Residuals", "Covariance", "False Fix Analysis", "Innovation / NIS",
+    "Error CDF", "Error Histogram", "Body-Frame Error", "Clock Bias & ISB", "Env & Geometry Combined"
+]
 
 NON_TIME_SERIES_MODES = (
     "Gnd Trk", "Trajectory Error Heatmap", "Skyplot", "Multipath Skyplot", "Multipath Proxy",
@@ -59,56 +63,67 @@ NON_TIME_SERIES_MODES = (
 
 PLOT_CATEGORIES = {
     "核心诊断链路 (Survey Diagnostics)": [
-        "Skyplot & C/N0 (Env)", "Satellite Visibility Gantt", "Top Outlier Satellites",
+        "Env & Geometry Combined", "Skyplot & C/N0 (Env)", "Satellite Visibility Gantt", "Top Outlier Satellites",
         "False Fix Analysis", "Covariance", "Trajectory Error Heatmap",
-        "Residual Triad", "El vs SNR & Resp", "Directional DOP", "Body-Frame Error", "Env & Geometry Combined"
+        "Residual Triad", "El vs SNR & Resp", "Directional DOP", "Body-Frame Error"
     ],
     "轨迹与空间位置 (Trajectory & Position)": [
         "Gnd Trk", "Trajectory Error Heatmap", "ENU Position", "Height", "Body-Frame Error"
     ],
     "定位误差与精度评估 (Accuracy & Errors)": [
-        "ENU Error", "Trajectory Error Heatmap", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad"
+        "ENU Error", "Trajectory Error Heatmap", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad", "Body-Frame Error"
     ],
     "解算状态与可靠性 (Status & Reliability)": [
-        "Solution Status", "AR Ratio", "Differential Age", "Innovation / NIS"
+        "Solution Status", "AR Ratio", "Differential Age", "False Fix Analysis", "Innovation / NIS"
     ],
     "卫星观测与信号质量 (Satellites & Signal Quality)": [
-        "Satellites", "DOP", "Directional DOP", "Skyplot & C/N0 (Env)", "Residuals", "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Per-PRN Residuals", "Top Outlier Satellites", "El vs SNR & Resp"
+        "Satellites", "DOP", "Directional DOP", "Skyplot & C/N0 (Env)", "Skyplot", "C/N0", "Satellite Elevation",
+        "Residuals", "Residual Triad", "Multipath Proxy", "Multipath Skyplot", "Cycle Slips",
+        "Satellite Visibility Gantt", "Per-PRN Residuals", "Top Outlier Satellites", "El vs SNR & Resp", "Clock Bias & ISB"
     ]
 }
 
 MODE_BILINGUAL = {
-    "Env & Geometry Combined": "①+③ 环境与几何综合 (Env & Geometry)",
-    "Skyplot & C/N0 (Env)": "1A/B/C 环境星空与载噪比 (Skyplot & C/N0)",
+    "Custom Analysis": "自定义网格分析 (Custom Analysis)",
+    "Dashboard": "综合六宫格仪表盘 (Dashboard)",
+    "Multi-Compare": "多方案横向对比 (Multi-Compare)",
+    "Env & Geometry Combined": "环境与几何综合 (Env & Geometry)",
+    "Skyplot & C/N0 (Env)": "星空图与载噪比综合 (Skyplot & C/N0)",
+    "Skyplot": "卫星星空图 (Skyplot)",
+    "Multipath Skyplot": "多路径星空图 (Multipath Skyplot)",
+    "C/N0": "载噪比时序 (C/N0)",
+    "Satellite Elevation": "卫星高度角时序 (Elevation)",
     "Gnd Trk": "地面轨迹 (Gnd Trk)",
-    "Trajectory Error Heatmap": "5A 轨迹误差热力图 (Trajectory Error 5A)",
-    "ENU Position": "ENU位置 (ENU Pos)",
+    "Trajectory Error Heatmap": "轨迹误差热力图 (Trajectory Error)",
+    "ENU Position": "ENU位置时序 (ENU Pos)",
     "Height": "大地高程 (Height)",
-    "ENU Error": "ENU误差 (ENU Err)",
-    "Solution Status": "解状态 (Sol Status)",
-    "AR Ratio": "Ratio比值 (AR Ratio)",
+    "ENU Error": "ENU定位误差 (ENU Error)",
+    "Solution Status": "解状态 (Solution Status)",
+    "AR Ratio": "Ratio比值检验 (AR Ratio)",
     "Differential Age": "差分时延与解状态 (Age & Q)",
     "Satellites": "卫星数量 (Satellites)",
     "DOP": "DOP精度因子 (DOP)",
-    "Skyplot": "星空图与载噪比 (Skyplot & C/N0)",
-    "C/N0": "载噪比与星空图 (C/N0 & Skyplot)",
-    "Residuals": "伪距残差 (Residuals)",
+    "Directional DOP": "方向DOP几何因子 (Directional DOP)",
+    "Residuals": "伪距与载波残差 (Residuals)",
+    "Residual Triad": "残差统计三线时序 (Residual Triad)",
+    "El vs SNR & Resp": "高度角-载噪比-残差 (El vs SNR & Resp)",
+    "Top Outlier Satellites": "粗差卫星贡献排行 (Top Outliers)",
     "Multipath Proxy": "多路径效应 (Multipath)",
     "Cycle Slips": "周跳探测 (Cycle Slips)",
-    "Satellite Visibility Gantt": "2A 卫星残差泳道与周跳 (Swimlane 2A)",
-    "Multipath Skyplot": "星空图与载噪比 (Skyplot & C/N0)",
+    "Satellite Visibility Gantt": "残差与周跳泳道图 (Visibility & Slips)",
     "Per-PRN Residuals": "单星残差画像 (Per-PRN Res)",
-    "Covariance": "4B 滤波协方差一致性 (Covariance 4B)",
-    "False Fix Analysis": "4A 假固定与Ratio四象限 (False Fix 4A)",
-    "Innovation / NIS": "新息/NIS (Innovation)",
-    "Error CDF": "误差累计分布 (CDF)",
-    "Error Histogram": "误差直方图 (Histogram)",
-    "Residual Triad": "伪距残差三线时序 (Residual Triad)",
-    "El vs SNR & Resp": "1C 高度角-载噪比-残差 (El vs SNR & Resp)",
-    "Top Outlier Satellites": "2B 粗差卫星贡献箱线图 (Top Outliers 2B)",
-    "Directional DOP": "3A 方向DOP几何因子 (Directional DOP)",
-    "Body-Frame Error": "5B 车体坐标系误差 (Body-Frame Err)",
+    "Covariance": "滤波协方差一致性 (Covariance)",
+    "False Fix Analysis": "假固定检验 (False Fix Analysis)",
+    "Innovation / NIS": "新息与NIS (Innovation / NIS)",
+    "Error CDF": "误差累计分布 (Error CDF)",
+    "Error Histogram": "误差直方图 (Error Histogram)",
+    "Body-Frame Error": "车体坐标系误差 (Body-Frame Error)",
+    "Clock Bias & ISB": "接收机钟差与ISB (Clock Bias & ISB)",
 }
+
+BILINGUAL_TO_MODE = {v: k for k, v in MODE_BILINGUAL.items()}
+for k in list(MODE_BILINGUAL.keys()):
+    BILINGUAL_TO_MODE[k] = k
 
 DIAGNOSTIC_WORKSPACES = [
     {
@@ -379,8 +394,17 @@ class RTKPlotApp:
         row1=ttk.Frame(self.root,padding=(8,3)); row1.pack(side=tk.TOP,fill=tk.X)
         ttk.Button(row1,text="Open…",command=self.open_file).pack(side=tk.LEFT,padx=(0,6))
         ttk.Label(row1,text="Plot:").pack(side=tk.LEFT)
-        self.mode_box=ttk.Combobox(row1,textvariable=self.mode,values=MODES+['Dashboard','Custom Analysis','Multi-Compare'],state="readonly",width=17)
-        self.mode_box.pack(side=tk.LEFT,padx=4); self.mode_box.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
+        combo_modes = ['Custom Analysis', 'Dashboard', 'Multi-Compare'] + [m for m in MODES if m not in ('Custom Analysis', 'Dashboard', 'Multi-Compare')]
+        self._mode_combo_values = [MODE_BILINGUAL.get(m, m) for m in combo_modes]
+        self.mode_box = ttk.Combobox(row1, values=self._mode_combo_values, state="readonly", width=25)
+        init_disp = MODE_BILINGUAL.get(self.mode.get(), self.mode.get())
+        self.mode_box.set(init_disp)
+        self.mode_box.pack(side=tk.LEFT, padx=4)
+        def _on_mode_combo_select(_e=None):
+            sel_text = self.mode_box.get()
+            internal = BILINGUAL_TO_MODE.get(sel_text, sel_text)
+            self.set_mode(internal)
+        self.mode_box.bind("<<ComboboxSelected>>", _on_mode_combo_select)
         ttk.Label(row1,text="Q:").pack(side=tk.LEFT,padx=(6,0))
         self.qbox=ttk.Combobox(row1,textvariable=self.qfilter,values=["All Q"]+[f"Q={q}: {name}" for q,name in Q_LABELS.items()],state="readonly",width=10)
         self.qbox.pack(side=tk.LEFT,padx=3); self.qbox.bind("<<ComboboxSelected>>",lambda _e:self.redraw())
@@ -506,16 +530,18 @@ class RTKPlotApp:
         if not hasattr(self, "plot_list"):
             return
         cat = getattr(self, "_current_category", "全部")
-        if cat in ("全部", "全部 (24)", "全部 (22)", "全部 (20)"):
+        if "全部" in cat:
             listed = list(MODES)
-        elif cat in ("轨迹", "轨迹 (3)"):
-            listed = [m for m in MODES if m in PLOT_CATEGORIES["轨迹与高程 (Trajectory & Position)"]]
-        elif cat in ("精度", "精度 (5)"):
-            listed = [m for m in MODES if m in PLOT_CATEGORIES["定位精度与误差 (Accuracy & Errors)"]]
-        elif cat in ("状态", "状态 (4)", "状态 (3)"):
+        elif "诊断" in cat:
+            listed = [m for m in MODES if m in PLOT_CATEGORIES["核心诊断链路 (Survey Diagnostics)"]]
+        elif "轨迹" in cat:
+            listed = [m for m in MODES if m in PLOT_CATEGORIES["轨迹与空间位置 (Trajectory & Position)"]]
+        elif "精度" in cat:
+            listed = [m for m in MODES if m in PLOT_CATEGORIES["定位误差与精度评估 (Accuracy & Errors)"]]
+        elif "状态" in cat:
             listed = [m for m in MODES if m in PLOT_CATEGORIES["解算状态与可靠性 (Status & Reliability)"]]
-        elif cat in ("卫星", "卫星 (12)", "卫星 (10)", "卫星 (9)"):
-            listed = [m for m in MODES if m in PLOT_CATEGORIES["卫星星历与信号质量 (Satellites & Signal Quality)"]]
+        elif "卫星" in cat:
+            listed = [m for m in MODES if m in PLOT_CATEGORIES["卫星观测与信号质量 (Satellites & Signal Quality)"]]
         else:
             listed = list(MODES)
 
@@ -599,11 +625,12 @@ class RTKPlotApp:
         cat_frame.pack(fill=tk.X, pady=(0, 4))
         self._cat_var = tk.StringVar(value="全部")
         categories = [
-            ("全部", "全部 (24)"),
-            ("轨迹", "轨迹 (3)"),
-            ("精度", "精度 (5)"),
-            ("状态", "状态 (4)"),
-            ("卫星", "卫星 (12)"),
+            ("全部", "全部"),
+            ("诊断", "诊断"),
+            ("轨迹", "轨迹"),
+            ("精度", "精度"),
+            ("状态", "状态"),
+            ("卫星", "卫星"),
         ]
         for key, disp in categories:
             rb = ttk.Radiobutton(
@@ -616,7 +643,7 @@ class RTKPlotApp:
         # 2. Listbox & Scrollbar
         list_frame = ttk.Frame(card1_content)
         list_frame.pack(fill=tk.BOTH, expand=True)
-        self.plot_list = tk.Listbox(list_frame, selectmode=tk.MULTIPLE, exportselection=False, width=28, height=8)
+        self.plot_list = tk.Listbox(list_frame, selectmode=tk.MULTIPLE, exportselection=False, width=28, height=12)
         list_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.plot_list.yview)
         self.plot_list.configure(yscrollcommand=list_scroll.set)
         self.plot_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -749,7 +776,43 @@ class RTKPlotApp:
         self.toolbar=NavigationToolbar2Tk(self.canvas,self.plot_frame,pack_toolbar=False); self.toolbar.update(); self.toolbar.pack(side=tk.BOTTOM,fill=tk.X)
 
     def _build_status(self):
-        self.status=ttk.Label(self.root,text="No solution loaded",anchor="w",relief=tk.SUNKEN); self.status.pack(side=tk.BOTTOM,fill=tk.X)
+        self.status_bar_frame = ttk.Frame(self.root, relief=tk.SUNKEN, padding=(4, 2))
+        self.status_bar_frame.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self.status = ttk.Label(self.status_bar_frame, text="No solution loaded", anchor="w")
+        self.status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        zoom_frame = ttk.Frame(self.status_bar_frame)
+        zoom_frame.pack(side=tk.RIGHT, padx=(6, 2))
+        ttk.Label(zoom_frame, text="🔍 缩放约束:", font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(0, 2))
+
+        ZOOM_MAP = {"Both axes": "双轴 (XY)", "X axis": "X轴 (时间)", "Y axis": "Y轴 (数值)"}
+        ZOOM_REV = {"双轴 (XY)": "Both axes", "X轴 (时间)": "X axis", "Y轴 (数值)": "Y axis"}
+
+        self.zoom_status_combo = ttk.Combobox(
+            zoom_frame,
+            values=["双轴 (XY)", "X轴 (时间)", "Y轴 (数值)"],
+            state="readonly",
+            width=10,
+            font=("Segoe UI", 8)
+        )
+        self.zoom_status_combo.set(ZOOM_MAP.get(self.zoom_axis.get(), "双轴 (XY)"))
+        self.zoom_status_combo.pack(side=tk.LEFT)
+
+        def _on_zoom_combo_changed(_e=None):
+            val = self.zoom_status_combo.get()
+            internal = ZOOM_REV.get(val, "Both axes")
+            self.zoom_axis.set(internal)
+
+        self.zoom_status_combo.bind("<<ComboboxSelected>>", _on_zoom_combo_changed)
+
+        def _sync_zoom_var(*_args):
+            cur = self.zoom_axis.get()
+            disp = ZOOM_MAP.get(cur, "双轴 (XY)")
+            if self.zoom_status_combo.get() != disp:
+                self.zoom_status_combo.set(disp)
+
+        self.zoom_axis.trace_add("write", _sync_zoom_var)
         row=ttk.Frame(self.root,padding=(8,3)); row.pack(side=tk.BOTTOM,fill=tk.X);self.epoch_row=row;self.epoch_row_visible=True
         ttk.Label(row,text="Epoch:").pack(side=tk.LEFT)
         self.epoch=tk.IntVar(value=0); self.slider=ttk.Scale(row,from_=0,to=1,orient=tk.HORIZONTAL,command=self.on_scrub); self.slider.pack(side=tk.LEFT,fill=tk.X,expand=True,padx=8)
@@ -929,7 +992,13 @@ class RTKPlotApp:
             self.segment_status.configure(text="Cleared extra comparison solutions.")
             self.redraw()
 
-    def set_mode(self,name):self.mode.set(name); self.redraw()
+    def set_mode(self, name):
+        internal = BILINGUAL_TO_MODE.get(name, name)
+        self.mode.set(internal)
+        disp = MODE_BILINGUAL.get(internal, internal)
+        if hasattr(self, "mode_box") and self.mode_box.get() != disp:
+            self.mode_box.set(disp)
+        self.redraw()
 
     def _epoch_datetime_label(self,index):
         r=self.data["pos"].iloc[int(index)];dt=gpst_to_local_datetime(r.week,r.tow)
@@ -1756,6 +1825,10 @@ class RTKPlotApp:
         self.sky_current=None;self.sky_labels=[];self.sky_plots=[];self.time_cursors=[];self.custom_updaters=[];self.custom_dynamic_artists=[];self.dop_frames={};self.cov_twin_axes={}
         self.track_axes=[];self.datetime_axes=[];self.segment_track_lines=[];self.segment_sky_artists=[];self.segment_artists=[]
         self.ax.clear(); self.fig.clear(); mode=self.mode.get(); p=self._filtered(); full=self.data["pos"]; s=self.data["sat"]
+        if hasattr(self, "mode_box"):
+            disp = MODE_BILINGUAL.get(mode, mode)
+            if self.mode_box.get() != disp:
+                self.mode_box.set(disp)
         self._refresh_plot_list()
         if mode=="Multi-Compare":
             self._toggle_sidebar_mode("multi_compare")
@@ -1768,8 +1841,14 @@ class RTKPlotApp:
             self._draw_custom_grid();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
         if mode=="Env & Geometry Combined":
             self._draw_env_geometry_combined();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
-        if mode in ("Skyplot & C/N0 (Env)", "Skyplot", "C/N0", "Multipath Skyplot"):
+        if mode in ("Skyplot & C/N0 (Env)",):
             self._draw_skyplot_cn0_3in1();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
+        if mode == "Skyplot":
+            self.ax = self.fig.add_subplot(111, projection="polar"); self.plot_axes = [self.ax]
+            self._draw_sky(self.ax); self._apply_segment_overlays(); self._register_dynamic_artists(); self.canvas.draw_idle(); self._update_cursor(); self.update_analysis(); return
+        if mode == "Multipath Skyplot":
+            self.ax = self.fig.add_subplot(111, projection="polar"); self.plot_axes = [self.ax]
+            self._draw_multipath_skyplot(self.ax); self._apply_segment_overlays(); self._register_dynamic_artists(); self.canvas.draw_idle(); self._update_cursor(); self.update_analysis(); return
         if mode in ("ENU Position","ENU Error","Error Histogram","Body-Frame Error"):
             sharex = (mode != "Error Histogram")
             axes=self.fig.subplots(3,1,sharex=sharex);self.plot_axes=list(axes);self.ax=axes[0]
@@ -1847,10 +1926,16 @@ class RTKPlotApp:
                 self.plot_axes[2].legend(fontsize=8)
             else:
                 self._draw_body_frame_error(ax, p)
+        elif mode in ("Satellite Elevation", "Elevation"):
+            self._draw_elevation(ax)
+        elif mode in ("Clock Bias & ISB", "Clock Bias"):
+            self._draw_clock_bias_isb(ax)
+        elif mode in ("C/N0", "C/N₀"):
+            self._draw_cn0(ax)
         for plot_ax in self.plot_axes:plot_ax.grid(self.grid_on.get(),linestyle="--",alpha=.45)
         if mode not in NON_TIME_SERIES_MODES:
             for plot_ax in self.plot_axes:self.time_cursors.append(plot_ax.axvline(0,color="#333",ls="--",lw=.8,alpha=.7,zorder=10))
-        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","Residuals","Cycle Slips","Satellite Visibility Gantt","Covariance","Residual Triad","Directional DOP","Body-Frame Error"):
+        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","Residuals","Cycle Slips","Satellite Visibility Gantt","Covariance","Residual Triad","Directional DOP","Body-Frame Error","Satellite Elevation","Clock Bias & ISB","C/N0"):
             for plot_ax in self.plot_axes:self._set_datetime_axis(plot_ax)
         if mode in ("El vs SNR & Resp", "False Fix Analysis", "Covariance", "Satellite Visibility Gantt", "Trajectory Error Heatmap"):
             self._register_custom_dynamic(mode, ax, p, full)
@@ -2084,7 +2169,7 @@ class RTKPlotApp:
         if not self.data["has_truth"]:
             ax.text(0.5, 0.5, "需要参考真值轨迹以评估 3D 定位误差与假固定\n(Ground truth is required for False Fix Analysis)",
                     ha="center", va="center", transform=ax.transAxes, fontsize=10, color="#666")
-            ax.set_title("4A. 4-Quadrant AR Ratio vs. 3D Error (Detecting False Fixes)")
+            ax.set_title("假固定与 AR Ratio 检验 (False Fix Analysis)")
             return
         limit = float(self.false_fix_limit.get()) if hasattr(self, "false_fix_limit") else 1.0
         limit = max(0.001, limit)
@@ -2128,7 +2213,7 @@ class RTKPlotApp:
         ax.set_ylim(0.01, max(3000.0, max_err * 1.5))
         ax.set_xlabel("AR Ratio Factor (clipped at 15)")
         ax.set_ylabel("3D Position Error (m, log)")
-        ax.set_title("4A. 4-Quadrant AR Ratio vs. 3D Error (Detecting False Fixes)")
+        ax.set_title("假固定与 AR Ratio 检验 (False Fix Analysis)")
         ax.grid(self.grid_on.get(), which="both", ls=":", alpha=0.35)
         ax.legend(loc="upper right", fontsize=8.5, framealpha=0.9)
 
@@ -2346,7 +2431,7 @@ class RTKPlotApp:
         sat = self.data.get("sat")
         if sat is None or sat.empty:
             ax.text(0.5, 0.5, "无卫星残差统计数据 (需 .stat 文件)", ha="center", va="center", transform=ax.transAxes)
-            ax.set_title("2B. Top 15 Multipath-Contaminated Satellites Ranking")
+            ax.set_title("粗差与多路径污染卫星排行 (Top Outliers)")
             return
 
         s1 = sat[(sat.freq == 1) & (sat.resp != 0)]
@@ -2354,7 +2439,7 @@ class RTKPlotApp:
             s1 = sat[sat.resp != 0]
         if s1.empty:
             ax.text(0.5, 0.5, "无有效伪距残差记录", ha="center", va="center", transform=ax.transAxes)
-            ax.set_title("2B. Top 15 Multipath-Contaminated Satellites Ranking")
+            ax.set_title("粗差与多路径污染卫星排行 (Top Outliers)")
             return
 
         prn_metrics = []
@@ -2372,7 +2457,7 @@ class RTKPlotApp:
             })
         if not prn_metrics:
             ax.text(0.5, 0.5, "样本量不足", ha="center", va="center", transform=ax.transAxes)
-            ax.set_title("2B. Top 15 Multipath-Contaminated Satellites Ranking")
+            ax.set_title("粗差与多路径污染卫星排行 (Top Outliers)")
             return
 
         prn_metrics.sort(key=lambda m: (m["p75"], m["mean"]))
@@ -2398,7 +2483,7 @@ class RTKPlotApp:
         ax.set_yticklabels(top_prns, fontsize=8)
         ax.set_xlabel("|Pseudorange Residual| Distribution (m, outliers hidden for scale)")
         ax.set_ylabel("Satellite PRN")
-        ax.set_title("2B. Top 15 Multipath-Contaminated Satellites Ranking")
+        ax.set_title("粗差与多路径污染卫星排行 (Top Outliers)")
 
         max_disp = max(11.0, max(m["p95"] for m in top_metrics) * 1.25)
         ax.set_xlim(0, max_disp)
@@ -2525,7 +2610,7 @@ class RTKPlotApp:
         ax1.set_yticklabels(["75°", "60°", "45°", "30°", "15°"], fontsize=8, color="#555")
         ax1.set_rlabel_position(45)
         ax1.tick_params(labelsize=8.5)
-        ax1.set_title("1A. Earth-Frame Skyplot\n(Colored by |Resp|)", fontsize=11, weight="bold", pad=10)
+        ax1.set_title("地固系星空图 (Earth Skyplot)", fontsize=11, weight="bold", pad=10)
 
         # 1B. Body-Frame Skyplot (0° = Vehicle Heading)
         ax2 = self.fig.add_subplot(gs[1], projection="polar")
@@ -2543,7 +2628,7 @@ class RTKPlotApp:
         ax2.set_yticklabels(["75°", "60°", "45°", "30°", "15°"], fontsize=8, color="#555")
         ax2.set_rlabel_position(45)
         ax2.set_thetagrids(np.arange(0, 360, 45), labels=["Front\n(0°)", "45°", "Right\n(90°)", "135°", "Rear\n(180°)", "225°", "Left\n(270°)", "315°"], fontsize=8.5)
-        ax2.set_title("1B. Body-Frame Skyplot\n(0° = Vehicle Heading)", fontsize=11, weight="bold", pad=10)
+        ax2.set_title("车体系星空图 (Body-Frame Skyplot)", fontsize=11, weight="bold", pad=10)
 
         # 1C. Elevation vs SNR Joint Scatter
         ax3 = self.fig.add_subplot(gs[2])
@@ -2554,7 +2639,7 @@ class RTKPlotApp:
         ax3.set_ylim(20, 55)
         ax3.set_xlabel("Elevation Angle (deg)", fontsize=10, weight="bold")
         ax3.set_ylabel("SNR / C/N0 (dB-Hz)", fontsize=10, weight="bold")
-        ax3.set_title("1C. Elevation vs. SNR Joint Scatter\n(Color = |Resp|)", fontsize=11, weight="bold")
+        ax3.set_title("高度角与载噪比分布 (Elevation vs SNR)", fontsize=11, weight="bold")
         ax3.legend(loc="lower right", fontsize=8.5)
         ax3.grid(self.grid_on.get(), ls="--", alpha=0.35)
 
@@ -2828,13 +2913,25 @@ class RTKPlotApp:
             elif name=="Differential Age":self._draw_differential_age(ax,p)
             elif name=="Satellites":self._draw_sats(ax)
             elif name=="DOP":self._draw_dop(ax)
-            elif name in ("Skyplot & C/N0 (Env)", "Multipath Skyplot", "Skyplot"):
+            elif name in ("Skyplot & C/N0 (Env)", "Skyplot"):
                 if getattr(ax, "name", "") == "polar":
                     self._draw_sky(ax)
                 else:
                     ax.text(0.5, 0.5, "星空图需要极坐标投影\n(双击放大查看)", ha="center", va="center", transform=ax.transAxes)
                     ax.set_title("Skyplot & C/N0")
-            elif name=="C/N0":self._draw_cn0(ax);ax.set_title(name)
+            elif name == "Multipath Skyplot":
+                if getattr(ax, "name", "") == "polar":
+                    self._draw_multipath_skyplot(ax)
+                else:
+                    ax.text(0.5, 0.5, "多路径星空图需要极坐标投影\n(双击放大查看)", ha="center", va="center", transform=ax.transAxes)
+                    ax.set_title("Multipath Skyplot")
+            elif name in ("C/N0", "C/N₀"):
+                self._draw_cn0(ax)
+                ax.set_title("载噪比与信号强度 (C/N0)")
+            elif name in ("Satellite Elevation", "Elevation"):
+                self._draw_elevation(ax)
+            elif name in ("Clock Bias & ISB", "Clock Bias"):
+                self._draw_clock_bias_isb(ax)
             elif name=="Residuals":self._draw_residuals(ax)
             elif name=="Multipath Proxy":self._draw_multipath(ax)
             elif name=="Cycle Slips":self._draw_slips(ax)
@@ -3466,7 +3563,7 @@ class RTKPlotApp:
         self._track_e = full.E.to_numpy()
         self._track_n = full.N.to_numpy()
         self._apply_basemap(ax, full)
-        ax.set_title("5A. 2D Trajectory Error Heatmap")
+        ax.set_title("二维轨迹误差热力图 (Trajectory Error Heatmap)")
 
         if self.data["has_truth"]:
             gt_t, gt_e, gt_n = insert_time_gaps(full.time, full.gt_E, full.gt_N)
@@ -3760,7 +3857,7 @@ class RTKPlotApp:
         tow0 = float(first_p.tow) if first_p is not None and "tow" in first_p else 0.0
         ax.set_xlabel(f"Elapsed Time since TOW {tow0:.1f}s (s)")
         ax.set_ylabel("Satellite PRN")
-        ax.set_title("2A. Satellite Residual Swimlane & Cycle Slip Map (Color = |Resp|)")
+        ax.set_title("卫星伪距残差与周跳泳道图 (Visibility & Slips)")
 
         fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
         if fig_target is not None:
@@ -3893,7 +3990,7 @@ class RTKPlotApp:
             tow0 = float(first.tow) if "tow" in first else 0.0
             ax.set_xlabel(f"Elapsed Time since TOW {tow0:.1f}s (s)")
             ax.set_ylabel("East Error & ±3σ Bound (m)")
-            ax.set_title("4B. Filter Covariance Consistency (±3σ vs. Actual)\n(Severe Over-Confidence in Urban Canyon)")
+            ax.set_title("滤波协方差一致性检验 (Filter Covariance Consistency)")
             ax.legend(loc="upper right", fontsize=8.5, framealpha=0.9)
             ax.grid(self.grid_on.get(), alpha=0.3, ls=":")
         else:
@@ -3906,7 +4003,7 @@ class RTKPlotApp:
                 ax.plot(t_gap, -3.0 * s_arr, color=col, ls=":", lw=1.0, label=f"-{lbl}")
             ax.set_xlabel("Time from start (s)")
             ax.set_ylabel("±3σ Filter Bound (m)")
-            ax.set_title("4B. Filter Covariance Consistency (±3σ Bounds, Ground Truth not loaded)")
+            ax.set_title("滤波协方差一致性 (±3σ 边界)")
             ax.legend(loc="upper right", fontsize=8.5, framealpha=0.9)
             ax.grid(self.grid_on.get(), alpha=0.3, ls=":")
 
@@ -4918,12 +5015,47 @@ class RTKPlotApp:
                 f"是否立即在 Google Earth 中打开？"
             )
             if messagebox.askyesno("导出成功", msg):
-                try:
-                    os.startfile(path)
-                except Exception:
-                    pass
+                self._open_in_google_earth(path)
         except Exception as exc:
             messagebox.showerror("导出 KML 失败", str(exc))
+
+    def _open_in_google_earth(self, path):
+        import shutil, subprocess
+        candidates = [
+            r"C:\Program Files\Google\Google Earth Pro\client\googleearth.exe",
+            r"C:\Program Files (x86)\Google\Google Earth Pro\client\googleearth.exe",
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Google\Google Earth Pro\client\googleearth.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES", ""), r"Google\Google Earth Pro\client\googleearth.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", ""), r"Google\Google Earth Pro\client\googleearth.exe"),
+        ]
+        ge_exe = shutil.which("googleearth.exe") or shutil.which("googleearth")
+        if not ge_exe:
+            for c in candidates:
+                if c and os.path.exists(c):
+                    ge_exe = c
+                    break
+        if ge_exe:
+            try:
+                subprocess.Popen([ge_exe, str(path)])
+                return True
+            except Exception:
+                pass
+        try:
+            os.startfile(str(path))
+            return True
+        except Exception:
+            open_folder = messagebox.askyesno(
+                "未检测到 Google Earth 客户端",
+                f"系统未检测到「Google Earth (谷歌地球)」客户端安装路径，且 Windows 尚未为 .kml 文件关联默认打开程序。\n\n"
+                f"已生成 3D KML 文件：\n{path}\n\n"
+                f"是否立即在文件管理器中打开该文件所在文件夹？\n(可直接拖拽至 Google Earth Pro 或浏览器 Google Earth Web)"
+            )
+            if open_folder:
+                try:
+                    subprocess.run(["explorer", f"/select,{str(path)}"])
+                except Exception:
+                    pass
+            return False
 
     def export_kml_2d(self):
         if self.data is None:

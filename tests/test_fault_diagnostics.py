@@ -109,7 +109,21 @@ assert app.false_fix_limit.get() == 1.0, f"Expected false_fix_limit=1.0, got {ap
 assert app.robust_view.get() == True, "Expected robust_view to default to True"
 assert app.sync_y_axes.get() == True, "Expected sync_y_axes to default to True"
 assert "ENU Error" in gui.PLOT_UNIT_GROUPS, "ENU Error missing in PLOT_UNIT_GROUPS"
+assert len(app.segments) > 0, "Segments should be auto-loaded or auto-detected on solution load"
 print(f"   False fix limit: {app.false_fix_limit.get()} m | Robust 95%: {app.robust_view.get()} | Sync Y: {app.sync_y_axes.get()}")
+print(f"   Segments active on startup: {len(app.segments)} segments (Auto-persisted)")
+
+# Test segment file persistence
+test_seg_path = ROOT.parent / "test_segments.json"
+app._save_segments_to_file(test_seg_path, silent=True)
+assert test_seg_path.exists() and test_seg_path.stat().st_size > 50, "Segment file should be saved"
+saved_count = len(app.segments)
+app.segments.clear()
+assert len(app.segments) == 0
+success = app._load_segments_from_file(test_seg_path, silent=True)
+assert success and len(app.segments) == saved_count, f"Expected {saved_count} loaded segments, got {len(app.segments)}"
+print(f"   Segments file export & reload test: OK ({saved_count} segments)")
+test_seg_path.unlink(missing_ok=True)
 
 for idx in range(5):
     app.switch_workspace(idx)

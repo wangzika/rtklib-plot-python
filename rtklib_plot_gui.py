@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from datetime import datetime, timedelta
@@ -684,12 +685,21 @@ class RTKPlotApp:
         )
 
         seg_frame = ttk.Frame(card4_content); seg_frame.pack(fill=tk.X, pady=(1, 0))
-        self.segment_box = tk.Listbox(seg_frame, height=3, width=28, exportselection=False)
+        self.segment_box = tk.Listbox(seg_frame, height=4, width=28, exportselection=False)
         self.segment_box.bind("<Double-Button-1>", self.on_segment_double_click)
         seg_scroll = ttk.Scrollbar(seg_frame, orient=tk.VERTICAL, command=self.segment_box.yview); self.segment_box.configure(yscrollcommand=seg_scroll.set)
         self.segment_box.pack(side=tk.LEFT, fill=tk.X, expand=True); seg_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        ttk.Button(card4_content, text="✕ 删除所选区段 (Delete)", command=self.delete_segment).pack(fill=tk.X, pady=(2, 1))
-        ttk.Button(card4_content, text="📷 导出区段多图 (Export)…", command=self.open_batch_export_dialog).pack(fill=tk.X, pady=(1, 1))
+        
+        btn_row1 = ttk.Frame(card4_content); btn_row1.pack(fill=tk.X, pady=(2, 1))
+        ttk.Button(btn_row1, text="⚡ 智能探测", command=self.auto_detect_issues).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(btn_row1, text="✕ 删除", command=self.delete_segment).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(btn_row1, text="清空", command=self.clear_segments).pack(side=tk.RIGHT, padx=1)
+
+        btn_row2 = ttk.Frame(card4_content); btn_row2.pack(fill=tk.X, pady=(1, 1))
+        ttk.Button(btn_row2, text="💾 保存区段", command=self.save_segments_dialog).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(btn_row2, text="📂 导入区段", command=self.load_segments_dialog).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=1)
+
+        ttk.Button(card4_content, text="📷 导出区段多图 (Export)…", command=self.open_batch_export_dialog).pack(fill=tk.X, pady=(2, 1))
 
         # Initial populate plot list
         self._refresh_plot_list()
@@ -779,8 +789,20 @@ class RTKPlotApp:
         try:
             self.data=diag.load_data(pos,reference,stat); self.pos_path=Path(pos); self.ref_path=reference; self.stat_path=Path(stat) if stat else None
         except Exception as exc:
-            messagebox.showerror("Could not read solution",str(exc)); return
-        self.segments.clear();self.segment_start_idx=None;self._refresh_segment_list()
+            messagebox.showerror("Could not read solution", str(exc)); return
+        self.segment_start_idx=None
+        seg_file = self._get_default_segments_path()
+        if seg_file and seg_file.exists():
+            self._load_segments_from_file(seg_file, silent=True)
+        else:
+            self.segments.clear()
+            limit = float(self.false_fix_limit.get()) if hasattr(self, "false_fix_limit") else 1.0
+            detected = diag.detect_problematic_segments(self.data["pos"], error_limit=limit, min_duration=2.0)
+            if detected:
+                self.segments = detected
+                if seg_file:
+                    self._save_segments_to_file(seg_file, silent=True)
+            self._refresh_segment_list()
         p=self.data["pos"]; self.root.title(f"{self.pos_path} - RTKLIB Plot - Python")
         sat=self.data["sat"]
         self._pos_times=p.time.to_numpy(copy=True)
@@ -896,6 +918,7 @@ class RTKPlotApp:
         color=self.segment_palette[(number-1)%len(self.segment_palette)]
         self.segments.append({"start":lo,"end":hi,"name":f"Segment {number}","color":color})
         self.segment_start_idx=None;self._refresh_segment_list()
+        self._auto_save_segments()
         if hasattr(self, "_expand_segments_card") and callable(self._expand_segments_card):
             self._expand_segments_card()
         self.segment_status.configure(text=f"Added Segment {number}: {self._epoch_datetime_label(lo)} — {self._epoch_datetime_label(hi)} CST")
@@ -910,7 +933,7 @@ class RTKPlotApp:
             else:
                 lbl = f"{seg['name']}: Epoch {seg['start']} – {seg['end']}"
             self.segment_box.insert(tk.END, lbl)
-            self.segment_box.itemconfig(i,fg=seg["color"])
+            self.segment_box.itemconfig(i,fg=seg.get("color", "#333"))
         if len(self.segments) > 0 and hasattr(self, "_expand_segments_card") and callable(self._expand_segments_card):
             self._expand_segments_card()
         self._update_sidebar_scroll()
@@ -921,10 +944,12 @@ class RTKPlotApp:
         for i in reversed(selected):del self.segments[i]
         for i,seg in enumerate(self.segments):seg["name"]=f"Segment {i+1}"
         self._refresh_segment_list();self._refresh_segment_overlays()
+        self._auto_save_segments()
 
     def clear_segments(self):
         self.segments.clear();self.segment_start_idx=None;self._refresh_segment_list()
         self.segment_status.configure(text="All marked segments cleared.");self._refresh_segment_overlays()
+        self._auto_save_segments()
 
     def on_segment_double_click(self, event=None):
         if not hasattr(self, "segment_box"): return
@@ -975,10 +1000,111 @@ class RTKPlotApp:
                 new_count += 1
         self._refresh_segment_list()
         self._refresh_segment_overlays()
+        self._auto_save_segments()
         if hasattr(self, "_expand_segments_card") and callable(self._expand_segments_card):
             self._expand_segments_card()
         messagebox.showinfo("智能诊断完成", f"共自动探测出 {len(detected)} 处异常/跳固定时段（新增标记 {new_count} 处）。\n\n提示：双击左侧列表中的任意时段即可快速缩放聚焦！")
         self.segment_status.configure(text=f"已自动标记 {len(detected)} 处异常时段。双击左侧时段列表可自动缩放聚焦。")
+
+    def _get_default_segments_path(self):
+        if not hasattr(self, "pos_path") or not self.pos_path:
+            return None
+        return self.pos_path.with_suffix(".segments.json")
+
+    def _auto_save_segments(self):
+        seg_file = self._get_default_segments_path()
+        if seg_file:
+            self._save_segments_to_file(seg_file, silent=True)
+
+    def _save_segments_to_file(self, path, silent=False):
+        if not self.data or "pos" not in self.data:
+            return
+        p = self.data["pos"]
+        data_to_save = []
+        for seg in self.segments:
+            s_idx = int(seg.get("start", 0))
+            e_idx = int(seg.get("end", 0))
+            s_idx = max(0, min(s_idx, len(p) - 1))
+            e_idx = max(0, min(e_idx, len(p) - 1))
+            item = {
+                "start": s_idx,
+                "end": e_idx,
+                "name": str(seg.get("name", "Segment")),
+                "color": str(seg.get("color", "#b23a48")),
+                "cause": str(seg.get("cause", "")),
+            }
+            if "tow" in p.columns:
+                item["tow_start"] = float(p.iloc[s_idx].tow)
+                item["tow_end"] = float(p.iloc[e_idx].tow)
+            data_to_save.append(item)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+            if not silent:
+                messagebox.showinfo("保存成功", f"时间区段已成功保存至:\n{path}")
+        except Exception as exc:
+            if not silent:
+                messagebox.showerror("保存失败", f"保存区段失败: {exc}")
+
+    def _load_segments_from_file(self, path, silent=False):
+        if not Path(path).exists() or not self.data or "pos" not in self.data:
+            return False
+        p = self.data["pos"]
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw_list = json.load(f)
+            loaded = []
+            for item in raw_list:
+                s_idx = item.get("start", 0)
+                e_idx = item.get("end", 0)
+                if "tow" in p.columns and "tow_start" in item and "tow_end" in item:
+                    tows = p.tow.to_numpy()
+                    if s_idx >= len(p) or abs(p.iloc[min(s_idx, len(p)-1)].tow - item["tow_start"]) > 0.5:
+                        s_idx = int(np.clip(np.searchsorted(tows, item["tow_start"]), 0, len(p) - 1))
+                        e_idx = int(np.clip(np.searchsorted(tows, item["tow_end"]), 0, len(p) - 1))
+                s_idx = max(0, min(int(s_idx), len(p) - 1))
+                e_idx = max(0, min(int(e_idx), len(p) - 1))
+                if e_idx < s_idx:
+                    s_idx, e_idx = e_idx, s_idx
+                loaded.append({
+                    "start": s_idx,
+                    "end": e_idx,
+                    "name": item.get("name", f"Segment {len(loaded)+1}"),
+                    "color": item.get("color", self.segment_palette[len(loaded) % len(self.segment_palette)]),
+                    "cause": item.get("cause", "")
+                })
+            self.segments = loaded
+            self._refresh_segment_list()
+            self._refresh_segment_overlays()
+            if not silent:
+                messagebox.showinfo("导入成功", f"已成功加载 {len(loaded)} 个时间区段！")
+            return True
+        except Exception as exc:
+            if not silent:
+                messagebox.showerror("导入失败", f"加载区段失败: {exc}")
+            return False
+
+    def save_segments_dialog(self):
+        if not self.segments:
+            messagebox.showinfo("提示", "当前没有已标记的时间区段可供保存。")
+            return
+        default_name = f"{self.pos_path.stem}.segments.json" if hasattr(self, "pos_path") and self.pos_path else "segments.json"
+        out_file = filedialog.asksaveasfilename(
+            title="保存时间区段 (JSON)",
+            defaultextension=".json",
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
+            initialfile=default_name
+        )
+        if out_file:
+            self._save_segments_to_file(Path(out_file), silent=False)
+
+    def load_segments_dialog(self):
+        in_file = filedialog.askopenfilename(
+            title="导入时间区段 (JSON)",
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
+        )
+        if in_file:
+            self._load_segments_from_file(Path(in_file), silent=False)
 
     def open_report_dialog(self):
         if self.data is None:
@@ -3594,6 +3720,7 @@ class RTKPlotApp:
                     number=len(self.segments)+1;color=self.segment_palette[(number-1)%len(self.segment_palette)]
                     self.segments.append({"start":idx_lo,"end":idx_hi,"name":f"Segment {number}","color":color})
                     self._refresh_segment_list();self._refresh_segment_overlays()
+                    self._auto_save_segments()
                     st = float(self.data["pos"].iloc[idx_lo].tow)
                     et = float(self.data["pos"].iloc[idx_hi].tow)
                     d_res = diag.diagnose_anomaly_segment(self.data["pos"], self.data["sat"], st, et)

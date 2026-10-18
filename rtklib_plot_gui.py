@@ -2410,13 +2410,14 @@ class RTKPlotApp:
             ax.set_title("伪距残差统计三线时序")
             return
         t_gap, max_g, sec_g, rms_g = insert_time_gaps(triad.time, triad.max_resp, triad.sec_resp, triad.rms_resp)
-        ax.plot(t_gap, max_g, color="#d90429", lw=1.1, label="第一大残差 (Max |resp|)")
-        ax.plot(t_gap, sec_g, color="#00b4d8", lw=1.0, label="第二大残差 (2nd Max)")
-        ax.plot(t_gap, rms_g, color="#0B2B52", lw=1.2, ls="--", label="全场RMS (RMS |resp|)")
+        ax.plot(t_gap, max_g, color="#d90429", lw=1.1, label="第一大残差 (Max)")
+        ax.plot(t_gap, sec_g, color="#00b4d8", lw=1.0, label="第二大残差 (2nd)")
+        ax.plot(t_gap, rms_g, color="#0B2B52", lw=1.2, ls="--", label="全场RMS")
+        ax.axhline(3.0, color="gray", ls=":", lw=0.85, alpha=0.7, label="粗差门限 3.0m")
         if hasattr(self, "_apply_robust_ylim"):
             self._apply_robust_ylim(ax, [triad.max_resp], non_negative=True, min_span=5.0, default_max=15.0)
         ax.set(xlabel="时间 (s)", ylabel="伪距残差 (m)", title="伪距残差统计三线时序 (Max / 2nd Max / RMS)")
-        ax.legend(fontsize=8, loc="upper right")
+        ax.legend(fontsize=7.2, loc="upper right", ncol=2, framealpha=0.88, columnspacing=0.8, handletextpad=0.35)
         ax.grid(self.grid_on.get(), alpha=0.3)
 
     def _draw_el_snr_resp(self, ax):
@@ -2432,14 +2433,18 @@ class RTKPlotApp:
             sc = ax.scatter(s1_sub.el, s1_sub.snr, c=resp_clip, cmap="turbo", s=14, vmin=0, vmax=15.0, alpha=0.88, edgecolors="none")
             fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
             if fig_target is not None:
-                cb = fig_target.colorbar(sc, ax=ax, pad=0.015, fraction=0.046)
-                cb.set_label("|Pseudorange Residual| (m)")
+                cb = fig_target.colorbar(sc, ax=ax, pad=0.02, fraction=0.045)
+                cb.set_label("伪距残差 |resp| (m)", fontsize=8.5, weight="bold")
+                cb.ax.tick_params(labelsize=8)
             el_grid = np.linspace(5, 90, 100)
             ax.plot(el_grid, 28.0 + 22.0 * np.sin(np.deg2rad(el_grid)), "k--", lw=1.5, label="标称信噪比包络")
             ax.legend(loc="lower right", fontsize=8)
         ax.set_xlim(0, 90)
-        ax.set(xlabel="高度角 (°)", ylabel="载噪比 (dB-Hz)", title="高度角 - 载噪比 - 残差联合分布")
-        ax.grid(self.grid_on.get(), alpha=0.3)
+        ax.set_xticks(np.arange(0, 91, 15))
+        ax.set_xticklabels([f'{x}°' for x in range(0, 91, 15)], fontsize=9)
+        ax.tick_params(labelsize=9)
+        ax.set(xlabel="卫星高度角 (°)", ylabel="载噪比 (dB-Hz)", title="高度角 - 载噪比 - 残差联合分布")
+        ax.grid(self.grid_on.get(), ls="--", alpha=0.35)
 
     def _draw_top_outliers(self, ax):
         sat = self.data.get("sat")
@@ -2513,18 +2518,22 @@ class RTKPlotApp:
             ax.set_title("方向 DOP 几何精度因子")
             return
         hdop_col = dop_df.HDOP if "HDOP" in dop_df.columns else np.full(len(dop_df), np.nan)
-        t_gap, edop_g, ndop_g, vdop_g, hdop_g = insert_time_gaps(
-            dop_df.time, dop_df.EDOP, dop_df.NDOP, dop_df.VDOP, hdop_col
+        pdop_col = dop_df.PDOP if "PDOP" in dop_df.columns else np.full(len(dop_df), np.nan)
+        t_gap, edop_g, ndop_g, vdop_g, pdop_g, hdop_g = insert_time_gaps(
+            dop_df.time, dop_df.EDOP, dop_df.NDOP, dop_df.VDOP, pdop_col, hdop_col
         )
-        ax.plot(t_gap, edop_g, color="#2878B5", lw=1.1, label="EDOP (东向)")
-        ax.plot(t_gap, ndop_g, color="#E07A2D", lw=1.1, label="NDOP (北向)")
-        ax.plot(t_gap, vdop_g, color="#36965A", lw=1.1, label="VDOP (天向)")
+        ax.plot(t_gap, edop_g, color="#2878B5", lw=1.1, label="EDOP (东)")
+        ax.plot(t_gap, ndop_g, color="#E07A2D", lw=1.1, label="NDOP (北)")
+        ax.plot(t_gap, vdop_g, color="#36965A", lw=1.1, label="VDOP (天)")
+        if "PDOP" in dop_df.columns:
+            ax.plot(t_gap, pdop_g, color="#111111", lw=1.1, ls=":", label="PDOP (空间)")
         if "HDOP" in dop_df.columns:
             ax.plot(t_gap, hdop_g, color="#666666", lw=0.9, ls="--", label="HDOP (水平)")
+        ax.axhline(6.0, color="gray", ls="--", lw=0.85, alpha=0.7, label="门限 6.0")
         ax.set(xlabel="时间 (s)", ylabel="DOP 值", title="方向 DOP 几何精度因子 (EDOP / NDOP / VDOP)")
         lim_y = min(float(dop_df[["EDOP", "NDOP", "VDOP"]].quantile(0.99).max()) * 1.5, 30.0)
-        ax.set_ylim(0, max(5.0, lim_y))
-        ax.legend(fontsize=8, ncol=4, loc="upper right")
+        ax.set_ylim(0, max(6.5, lim_y * 1.15))
+        ax.legend(fontsize=7.2, ncol=3, loc="upper right", framealpha=0.88, columnspacing=0.8, handletextpad=0.35)
         ax.grid(self.grid_on.get(), alpha=0.3)
 
     def _draw_clock_bias_isb(self, ax):
@@ -2756,6 +2765,9 @@ class RTKPlotApp:
             self.plot_axes = [ax]; self.ax = ax
             return
 
+        p = self._filtered()
+        full = self.data["pos"]
+
         gs_main = GridSpec(1, 2, figure=self.fig, width_ratios=[1.1, 1.4], wspace=0.22)
         gs_left = GridSpecFromSubplotSpec(2, 1, subplot_spec=gs_main[0], hspace=0.45)
         gs_right = GridSpecFromSubplotSpec(3, 1, subplot_spec=gs_main[1], hspace=0.32)
@@ -2779,6 +2791,7 @@ class RTKPlotApp:
         ax_sky.set_rlabel_position(135)
         ax_sky.tick_params(labelsize=9)
         ax_sky.set_title('(a) 空间多路径与建筑物遮挡星空图', fontsize=11, weight='bold', pad=10)
+        ax_sky._base_title = '(a) 空间多路径与建筑物遮挡星空图'
 
         # Dynamic satellite artists for active epoch
         sky_curr = ax_sky.scatter([], [], s=100, marker="o", facecolors="none", edgecolors=[], linewidths=2.2, zorder=12)
@@ -2786,26 +2799,13 @@ class RTKPlotApp:
                                   bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#d90429", lw=1.2, alpha=0.92), zorder=14) for _ in range(35)]
         self.sky_plots.append((ax_sky, sky_curr, sky_labels))
 
-        # 2. Left-Bottom: El vs SNR & Resp
+        # 2. Left-Bottom: El vs SNR & Resp (采用已有独立子图实现，包含包络、残差Colorbar与动态星标)
         ax_el = self.fig.add_subplot(gs_left[1])
-        s_snr = sat[(sat.freq == 1) & (sat.snr > 0) & (sat.el > 0)]
-        if not s_snr.empty:
-            s_sub2 = s_snr.iloc[::max(1, len(s_snr) // 15000)]
-            resp_clip = np.clip(s_sub2.resp.fillna(0).abs(), 0, 15.0) if "resp" in s_sub2.columns else np.zeros(len(s_sub2))
-            sc2 = ax_el.scatter(s_sub2.el, s_sub2.snr, c=resp_clip, cmap="turbo", s=14, vmin=0.0, vmax=15.0, alpha=0.88, edgecolors="none")
-            el_grid = np.linspace(5, 90, 100)
-            ax_el.plot(el_grid, 28.0 + 22.0 * np.sin(np.deg2rad(el_grid)), 'k--', lw=1.5, label='标称信噪比包络')
-            ax_el.legend(loc='lower right', fontsize=8.5)
-        ax_el.set_xlim(0, 90)
-        ax_el.set_xticks(np.arange(0, 91, 15))
-        ax_el.set_xticklabels([f'{x}°' for x in range(0, 91, 15)], fontsize=9)
-        ax_el.tick_params(labelsize=9)
-        ax_el.set_xlabel('卫星高度角 (°)', fontsize=10, weight='bold')
-        ax_el.set_ylabel('载噪比 (dB-Hz)', fontsize=10, weight='bold')
+        self._draw_el_snr_resp(ax_el)
         ax_el.set_title('(b) 卫星高度角 - 载噪比 - 残差联合分布', fontsize=11, weight='bold', pad=6)
-        ax_el.grid(self.grid_on.get(), ls='--', alpha=0.35)
+        self._register_custom_dynamic("El vs SNR & Resp", ax_el, p, full)
 
-        # 3. Right-Top: Satellites Stack
+        # 3. Right-Top: Satellites Stack (多系统有效星数 + 实时显示各系统卫星数量)
         ax_sat = self.fig.add_subplot(gs_right[0])
         s1_valid = sat[(sat.freq == 1) & (sat.vsat == 1)]
         if not s1_valid.empty:
@@ -2814,49 +2814,68 @@ class RTKPlotApp:
             c_names = [c for c in ['GPS', 'GLONASS', 'Galileo', 'BeiDou', 'QZSS'] if c in con_counts.columns]
             y_stack = [con_counts[c].to_numpy() for c in c_names]
             stack_colors = [diag.COLORS.get(c, '#2878B5') for c in c_names]
-            ax_sat.stackplot(t_con, *y_stack, labels=c_names, colors=stack_colors, alpha=0.85)
-            ax_sat.legend(loc='upper right', fontsize=8, ncol=len(c_names))
+            short_names = {'GPS': 'GPS', 'GLONASS': 'GLO', 'Galileo': 'GAL', 'BeiDou': 'BDS', 'QZSS': 'QZS'}
+            disp_labels = [short_names.get(c, c) for c in c_names]
+            ax_sat.stackplot(t_con, *y_stack, labels=disp_labels, colors=stack_colors, alpha=0.85)
+            ax_sat.legend(loc='upper left', fontsize=7.2, ncol=2, framealpha=0.88, columnspacing=0.8, handletextpad=0.35)
         ax_sat.set_ylabel('可用星数 (颗)', fontsize=10, weight='bold')
         ax_sat.set_title('(c) 多系统跟踪与参与解算有效卫星数时序', fontsize=11, weight='bold')
         ax_sat.grid(self.grid_on.get(), ls='--', alpha=0.35)
         ax_sat.tick_params(labelsize=9, labelbottom=False)
 
-        # 4. Right-Middle: Directional DOP
-        ax_dop = self.fig.add_subplot(gs_right[1], sharex=ax_sat)
-        dop_df = diag.compute_directional_dop(self.data)
-        if not dop_df.empty:
-            t_gap, edop_g, ndop_g, vdop_g, pdop_g = insert_time_gaps(
-                dop_df.time, dop_df.EDOP, dop_df.NDOP, dop_df.VDOP, dop_df.PDOP
-            )
-            ax_dop.plot(t_gap, edop_g, color='#2878B5', lw=1.1, label='EDOP (东向跨街)')
-            ax_dop.plot(t_gap, ndop_g, color='#E07A2D', lw=1.1, label='NDOP (北向沿街)')
-            ax_dop.plot(t_gap, vdop_g, color='#36965A', lw=1.1, label='VDOP (天向高程)')
-            ax_dop.plot(t_gap, pdop_g, color='#111111', lw=1.2, ls=':', label='PDOP (空间几何)')
-            ax_dop.axhline(6.0, color='gray', ls='--', lw=0.9, alpha=0.7, label='良好门限 6.0')
-            ax_dop.set_ylim(0, min(float(dop_df[['EDOP', 'NDOP', 'VDOP']].quantile(0.99).max()) * 1.5, 25.0))
-            ax_dop.legend(loc='upper right', fontsize=8, ncol=5)
-        ax_dop.set_ylabel('DOP 精度因子', fontsize=10, weight='bold')
-        ax_dop.set_title('(d) 方向 DOP 空间几何对称性衰减时序', fontsize=11, weight='bold')
-        ax_dop.grid(self.grid_on.get(), ls='--', alpha=0.35)
-        ax_dop.tick_params(labelsize=9, labelbottom=False)
+        # 实时各系统卫星数量徽章
+        sat_badge = ax_sat.text(
+            0.985, 0.92, "", transform=ax_sat.transAxes,
+            fontsize=8.0, weight="bold", color="#0B2B52",
+            ha="right", va="top",
+            bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="#2878B5", alpha=0.92, lw=1.0),
+            zorder=15
+        )
 
-        # 5. Right-Bottom: Residual Triad
+        def update_sat_counts(i, r, current_sat):
+            if current_sat is None or current_sat.empty:
+                sat_badge.set_text("无实时卫星数据")
+                sat_badge.set_visible(True)
+                return
+            sub_l1 = current_sat[current_sat.freq == 1]
+            if "vsat" in sub_l1.columns and (sub_l1["vsat"] == 1).any():
+                sub_used = sub_l1[sub_l1.vsat == 1].drop_duplicates("prn")
+            elif "resp" in sub_l1.columns and (sub_l1["resp"] != 0).any():
+                sub_used = sub_l1[sub_l1.resp != 0].drop_duplicates("prn")
+            else:
+                sub_used = sub_l1.drop_duplicates("prn")
+            sub_trk = sub_l1.drop_duplicates("prn")
+            c_counts = sub_used["constellation"].value_counts().to_dict()
+            parts = []
+            for full_c, short_c in [("GPS", "GPS"), ("GLONASS", "GLO"), ("Galileo", "GAL"), ("BeiDou", "BDS"), ("QZSS", "QZS")]:
+                cnt = c_counts.get(full_c, 0)
+                if cnt > 0:
+                    parts.append(f"{short_c}: {cnt}")
+            c_str = " · ".join(parts) if parts else "0"
+            trk_info = f" / 跟踪: {len(sub_trk)}" if len(sub_trk) > len(sub_used) else ""
+            sat_badge.set_text(f"{c_str} (有效: {len(sub_used)}{trk_info}颗)")
+            sat_badge.set_visible(True)
+
+        self.custom_dynamic_artists.append(sat_badge)
+        self.custom_updaters.append(update_sat_counts)
+
+        # 4. Right-Middle: Directional DOP (采用已有独立子图实现，包含空间PDOP、水平HDOP、门限与动态徽章)
+        ax_dop = self.fig.add_subplot(gs_right[1], sharex=ax_sat)
+        self._draw_directional_dop(ax_dop)
+        ax_dop.set_title('(d) 方向 DOP 空间几何对称性衰减时序', fontsize=11, weight='bold')
+        ax_dop.set_ylabel('DOP 精度因子', fontsize=10, weight='bold')
+        ax_dop.set_xlabel('')
+        ax_dop.tick_params(labelsize=9, labelbottom=False)
+        self._register_custom_dynamic("Directional DOP", ax_dop, p, full)
+
+        # 5. Right-Bottom: Residual Triad (采用已有独立子图实现，包含三线时序、3.0m粗差门限与动态徽章)
         ax_tri = self.fig.add_subplot(gs_right[2], sharex=ax_sat)
-        triad = diag.compute_residual_triad(self.data)
-        if not triad.empty:
-            t_gap, max_g, sec_g, rms_g = insert_time_gaps(
-                triad.time, triad.max_resp, triad.sec_resp, triad.rms_resp
-            )
-            ax_tri.plot(t_gap, max_g, color='#d90429', lw=1.1, label='第一大残差 (Max |resp|)')
-            ax_tri.plot(t_gap, sec_g, color='#00b4d8', lw=0.95, label='第二大残差 (2nd Max)')
-            ax_tri.plot(t_gap, rms_g, color='#0B2B52', lw=1.2, ls='--', label='历元均方根 (RMS)')
-            ax_tri.axhline(3.0, color='gray', ls=':', lw=0.9, label='粗差门限 3.0 m')
-            ax_tri.legend(loc='upper right', fontsize=8, ncol=4)
+        self._draw_residual_triad(ax_tri)
+        ax_tri.set_title('(e) 伪距残差三线联合响应诊断 (Max vs 2nd Max vs RMS)', fontsize=11, weight='bold')
         ax_tri.set_ylabel('伪距残差 (m)', fontsize=10, weight='bold')
         ax_tri.set_xlabel('观测时间 (s)', fontsize=10, weight='bold')
-        ax_tri.set_title('(e) 伪距残差三线联合响应诊断 (Max vs 2nd Max vs RMS)', fontsize=11, weight='bold')
-        ax_tri.grid(self.grid_on.get(), ls='--', alpha=0.35)
         ax_tri.tick_params(labelsize=9)
+        self._register_custom_dynamic("Residual Triad", ax_tri, p, full)
 
         self.fig.align_ylabels([ax_sat, ax_dop, ax_tri])
         self.plot_axes = [ax_sky, ax_el, ax_sat, ax_dop, ax_tri]
@@ -3096,8 +3115,8 @@ class RTKPlotApp:
             artists = [p_ff, badge]
         elif name=="El vs SNR & Resp":
             sc_curr = ax.scatter([], [], s=110, facecolors="none", edgecolors=[], linewidths=2.2, zorder=15)
-            texts = [ax.text(0, 0, "", fontsize=8, weight="bold", color="#111",
-                             bbox=dict(boxstyle="round,pad=0.15", fc="#ffffff", ec="#dc2626", alpha=0.88, lw=1.2),
+            texts = [ax.text(0, 0, "", fontsize=7.2, weight="bold", color="#111",
+                             bbox=dict(boxstyle="round,pad=0.12", fc="#ffffff", ec="#dc2626", alpha=0.88, lw=1.2),
                              zorder=16) for _ in range(35)]
             artists = [sc_curr] + texts
         elif name=="Innovation / NIS":
@@ -3176,7 +3195,20 @@ class RTKPlotApp:
             elif name=="Satellites" and sat_epoch is not None and not sat_epoch.empty:
                 j=int(np.clip(np.searchsorted(sat_epoch.time.to_numpy(),x),0,len(sat_epoch)-1));row=sat_epoch.iloc[j]
                 set_point(artists[0],x,row.tracked,visible);set_point(artists[1],x,row.used,visible)
-                artists[2].set_text(f"跟踪: {int(row.tracked)}颗 · 参与解算: {int(row.used)}颗")
+                c_str = ""
+                if current_sat is not None and not current_sat.empty:
+                    sub_l1 = current_sat[current_sat.freq == 1]
+                    if "vsat" in sub_l1.columns and (sub_l1["vsat"] == 1).any():
+                        sub_used = sub_l1[sub_l1.vsat == 1].drop_duplicates("prn")
+                    elif "resp" in sub_l1.columns and (sub_l1["resp"] != 0).any():
+                        sub_used = sub_l1[sub_l1.resp != 0].drop_duplicates("prn")
+                    else:
+                        sub_used = sub_l1.drop_duplicates("prn")
+                    c_counts = sub_used["constellation"].value_counts().to_dict()
+                    parts = [f"{short}:{c_counts[full]}" for full, short in [("GPS","GPS"),("GLONASS","GLO"),("Galileo","GAL"),("BeiDou","BDS"),("QZSS","QZS")] if full in c_counts]
+                    if parts:
+                        c_str = " [" + " · ".join(parts) + "]"
+                artists[2].set_text(f"有效: {int(row.used)}颗{c_str} · 跟踪: {int(row.tracked)}颗")
                 artists[2].set_visible(visible)
             elif name=="DOP" and dop is not None and not dop.empty:
                 j=int(np.clip(np.searchsorted(dop.time.to_numpy(),x),0,len(dop)-1));row=dop.iloc[j]
@@ -3312,7 +3344,8 @@ class RTKPlotApp:
                         sat_edgecolors.append(col)
                         sat_facecolors.append([col[0], col[1], col[2], 0.22])
                         if k < 35:
-                            artists[k + 1].set_position((sat_row.el + 0.8, sat_row.snr + 0.5))
+                            dy = 0.5 if (k % 2 == 0) else -1.8
+                            artists[k + 1].set_position((sat_row.el + 0.8, sat_row.snr + dy))
                             is_used = ("resp" in sat_row and sat_row.resp != 0)
                             tag = sat_row.prn if is_used else f"{sat_row.prn} (跟踪)"
                             artists[k + 1].set_text(tag)
@@ -4406,7 +4439,11 @@ class RTKPlotApp:
                         labels[j].set_visible(True)
                     for label in labels[len(cur):]:
                         label.set_visible(False)
-                    ax.set_title(f"卫星天空图 · {dt:%Y-%m-%d %H:%M:%S} CST")
+                    base_t = getattr(ax, "_base_title", None)
+                    if base_t:
+                        ax.set_title(f"{base_t} · {dt:%H:%M:%S}")
+                    else:
+                        ax.set_title(f"卫星天空图 · {dt:%Y-%m-%d %H:%M:%S} CST")
             else:
                 for ax, points, labels in self.sky_plots:
                     points.set_offsets(np.empty((0, 2)))

@@ -25,17 +25,34 @@ if str(HERE) not in sys.path:
 import rtklib_diagnostics as diag
 import rtklib_map_tiles as mt
 
+def insert_time_gaps(times, *arrays, max_gap_factor=2.5, min_gap_s=2.0):
+    """Insert np.nan wherever there is a time outage so matplotlib disconnects lines."""
+    if times is None or len(times) <= 1:
+        return (times,) + tuple(arrays)
+    t = np.asarray(times, dtype=float)
+    dt = np.diff(t)
+    pos_dt = dt[dt > 0]
+    dt0 = float(np.median(pos_dt)) if len(pos_dt) > 0 else 1.0
+    gap_thresh = max(max_gap_factor * dt0, min_gap_s)
+    gap_idx = np.where(dt > gap_thresh)[0]
+    if len(gap_idx) == 0:
+        return (t,) + tuple(np.asarray(a, dtype=float) for a in arrays)
+    insert_pos = gap_idx + 1
+    new_t = np.insert(t, insert_pos, np.nan)
+    new_arrs = [np.insert(np.asarray(a, dtype=float), insert_pos, np.nan) for a in arrays]
+    return (new_t,) + tuple(new_arrs)
+
 Q_LABELS = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}
 Q_COLORS = {1: "#07851d", 2: "#dc8a12", 3: "#5b83c4", 4: "#9b59b6", 5: "#777777", 6: "#17a2a4"}
-MODES = ["Gnd Trk", "ENU Position", "Height", "ENU Error", "Solution Status",
+MODES = ["Gnd Trk", "Trajectory Error Heatmap", "ENU Position", "Height", "ENU Error", "Solution Status",
          "AR Ratio", "Differential Age", "Satellites", "DOP", "Skyplot & C/N0 (Env)", "Residuals",
          "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Per-PRN Residuals", "Covariance", "False Fix Analysis", "Innovation / NIS",
          "Error CDF", "Error Histogram",
          "Env & Geometry Combined", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Body-Frame Error"]
 
 NON_TIME_SERIES_MODES = (
-    "Gnd Trk", "Skyplot", "Multipath Skyplot", "Multipath Proxy",
-    "Per-PRN Residuals", "Innovation / NIS", "Error CDF",
+    "Gnd Trk", "Trajectory Error Heatmap", "Skyplot", "Multipath Skyplot", "Multipath Proxy",
+    "Per-PRN Residuals", "False Fix Analysis", "Innovation / NIS", "Error CDF",
     "Error Histogram",
     "El vs SNR & Resp", "Top Outlier Satellites", "Env & Geometry Combined", "Skyplot & C/N0 (Env)"
 )
@@ -45,10 +62,10 @@ PLOT_CATEGORIES = {
         "Env & Geometry Combined", "Skyplot & C/N0 (Env)", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Body-Frame Error"
     ],
     "轨迹与高程 (Trajectory & Position)": [
-        "Gnd Trk", "ENU Position", "Height", "Body-Frame Error"
+        "Gnd Trk", "Trajectory Error Heatmap", "ENU Position", "Height", "Body-Frame Error"
     ],
     "定位精度与误差 (Accuracy & Errors)": [
-        "ENU Error", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad"
+        "ENU Error", "Trajectory Error Heatmap", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad"
     ],
     "解算状态与可靠性 (Status & Reliability)": [
         "Solution Status", "AR Ratio", "Differential Age", "Innovation / NIS"
@@ -62,6 +79,7 @@ MODE_BILINGUAL = {
     "Env & Geometry Combined": "①+③ 环境与几何综合 (Env & Geometry)",
     "Skyplot & C/N0 (Env)": "星空图与载噪比综合 (Skyplot & C/N0)",
     "Gnd Trk": "地面轨迹 (Gnd Trk)",
+    "Trajectory Error Heatmap": "5A 轨迹误差热力图 (Trajectory Error 5A)",
     "ENU Position": "ENU位置 (ENU Pos)",
     "Height": "大地高程 (Height)",
     "ENU Error": "ENU误差 (ENU Err)",
@@ -75,17 +93,17 @@ MODE_BILINGUAL = {
     "Residuals": "伪距残差 (Residuals)",
     "Multipath Proxy": "多路径效应 (Multipath)",
     "Cycle Slips": "周跳探测 (Cycle Slips)",
-    "Satellite Visibility Gantt": "卫星可见与周跳甘特图 (Gantt)",
+    "Satellite Visibility Gantt": "2A 卫星残差泳道与周跳 (Swimlane 2A)",
     "Multipath Skyplot": "星空图与载噪比 (Skyplot & C/N0)",
     "Per-PRN Residuals": "单星残差画像 (Per-PRN Res)",
-    "Covariance": "方差协方差 (Covariance)",
-    "False Fix Analysis": "假固定分析 (False Fix)",
+    "Covariance": "4B 滤波器协方差 (Covariance 4B)",
+    "False Fix Analysis": "4A 假固定与Ratio (False Fix 4A)",
     "Innovation / NIS": "新息/NIS (Innovation)",
     "Error CDF": "误差累计分布 (CDF)",
     "Error Histogram": "误差直方图 (Histogram)",
     "Residual Triad": "伪距残差三线 (Residual Triad)",
     "El vs SNR & Resp": "高度角-SNR-残差 (El vs SNR & Resp)",
-    "Top Outlier Satellites": "粗差卫星贡献榜 (Top Outliers)",
+    "Top Outlier Satellites": "2B 粗差卫星贡献榜 (Top Outliers 2B)",
     "Directional DOP": "方向DOP与扇区 (Directional DOP)",
     "Body-Frame Error": "车体坐标系误差 (Body-Frame Err)",
 }
@@ -124,13 +142,14 @@ DIAGNOSTIC_WORKSPACES = [
         "name": "⑤ 全局精度与轨迹复盘",
         "desc": "2D航迹着色图、车体坐标系(沿航向/跨航向/垂直)误差分解与误差CDF",
         "preset": "Focus Left (左主右副)",
-        "modes": ["Gnd Trk", "Body-Frame Error", "Error CDF"]
+        "modes": ["Trajectory Error Heatmap", "Body-Frame Error", "Error CDF"]
     }
 ]
 
 PLOT_UNIT_GROUPS = {
     # 距离定位误差 (米) - 以 0 为中心对称
     "ENU Error": "error_m",
+    "Trajectory Error Heatmap": "error_m",
     "Body-Frame Error": "error_m",
     "Compare Error": "error_m",
     "False Fix Analysis": "error_m",
@@ -188,6 +207,7 @@ class RTKPlotApp:
         self.root = root; self.root.title("RTKLIB Plot - Python"); self.root.geometry("1500x920"); self.root.minsize(1100, 700)
         self.data = None; self.pos_path = None; self.ref_path = reference; self.stat_path = None; self.playing = False; self.play_job = None
         self.mode = tk.StringVar(value=initial_plot); self.qfilter = tk.StringVar(value="All Q"); self.grid_on = tk.BooleanVar(value=True)
+        self.track_color_by_error = tk.BooleanVar(value=True)
         self.zoom_axis = tk.StringVar(value="Both axes"); self.equal_scale = tk.BooleanVar(value=False); self.speed = tk.StringVar(value="10x")
         self.follow_mouse = tk.BooleanVar(value=True); self.click_to_maximize = tk.BooleanVar(value=False)
         self.vehicle_marker = None; self.vehicle_trail = None; self.vehicle_label = None
@@ -312,6 +332,7 @@ class RTKPlotApp:
         view.add_cascade(label="Zoom Axis Constraint (缩放轴约束)",menu=zoom_m)
 
         view.add_checkbutton(label="Equal scale (1:1 物理等比)",variable=self.equal_scale,command=self._apply_aspect)
+        view.add_checkbutton(label="Track Error Colorbar / Heatmap (航迹误差指示bar与热力)",variable=self.track_color_by_error,command=self.redraw)
         view.add_checkbutton(label="Robust 95% Y-Scale (95% 稳健主体量程) [Y]",variable=self.robust_view,command=self.redraw)
         view.add_command(label="Toggle Epoch slider (底端滑块显隐)",command=self._toggle_epoch_slider)
         view.add_separator()
@@ -1724,10 +1745,15 @@ class RTKPlotApp:
             self.ax=self.fig.add_subplot(111);self.plot_axes=[self.ax]
         ax=self.ax
         if mode=="Gnd Trk":self._draw_track(ax,p,full)
+        elif mode=="Trajectory Error Heatmap":self._draw_trajectory_error_heatmap(ax,p,full)
         elif mode=="ENU Position":self._draw_enu_positions(self.plot_axes,p)
         elif mode=="Height":
-            me=max(1,len(p)//120);ax.plot(p.time,p.U,label="RTK height U",color="#16853b",marker=".",ms=3,markevery=me)
-            if self.data["has_truth"]:ax.plot(p.time,p.gt_U,label="Ground truth U",color="#252525",lw=.8,ls="--",marker=".",ms=2,markevery=me)
+            me=max(1,len(p)//120)
+            t_gap, u_gap = insert_time_gaps(p.time, p.U)
+            ax.plot(t_gap,u_gap,label="RTK height U",color="#16853b",marker=".",ms=3,markevery=me)
+            if self.data["has_truth"]:
+                t_gt_gap, gt_u_gap = insert_time_gaps(p.time, p.gt_U)
+                ax.plot(t_gt_gap,gt_u_gap,label="Ground truth U",color="#252525",lw=.8,ls="--",marker=".",ms=2,markevery=me)
             ax.set(xlabel="Time from start (s)",ylabel="Up (m)",title="Height / Up Component");ax.legend()
         elif mode=="ENU Error":self._draw_errors(self.plot_axes,p)
         elif mode=="Solution Status":ax.step(p.time,p.q,where="post",lw=.8,marker=".",ms=2,markevery=max(1,len(p)//120));ax.set(xlabel="Time from start (s)",ylabel="Q",yticks=sorted(full.q.unique()),title="Solution Status")
@@ -1773,15 +1799,16 @@ class RTKPlotApp:
                 self._draw_directional_dop(ax)
         elif mode=="Body-Frame Error":
             if self.data.get("has_truth") and "along_err" in p.columns and len(self.plot_axes) >= 3:
-                self.plot_axes[0].plot(p.time, p.along_err, color="#2878B5", lw=0.8, label="Along-track (沿航向/纵向)")
+                t_gap, along_gap, cross_gap, vert_gap = insert_time_gaps(p.time, p.along_err, p.cross_err, p.vert_err)
+                self.plot_axes[0].plot(t_gap, along_gap, color="#2878B5", lw=0.8, label="Along-track (沿航向/纵向)")
                 self.plot_axes[0].axhline(0, color="k", lw=0.5, ls=":")
                 self.plot_axes[0].set(ylabel="沿向误差 (m)", title="车体坐标系误差分解 (Along-track / Cross-track / Vertical)")
                 self.plot_axes[0].legend(fontsize=8)
-                self.plot_axes[1].plot(p.time, p.cross_err, color="#d90429", lw=0.8, label="Cross-track (跨航向/横向)")
+                self.plot_axes[1].plot(t_gap, cross_gap, color="#d90429", lw=0.8, label="Cross-track (跨航向/横向)")
                 self.plot_axes[1].axhline(0, color="k", lw=0.5, ls=":")
                 self.plot_axes[1].set(ylabel="横向误差 (m)")
                 self.plot_axes[1].legend(fontsize=8)
-                self.plot_axes[2].plot(p.time, p.vert_err, color="#36965A", lw=0.8, label="Vertical (垂直高程/天向)")
+                self.plot_axes[2].plot(t_gap, vert_gap, color="#36965A", lw=0.8, label="Vertical (垂直高程/天向)")
                 self.plot_axes[2].axhline(0, color="k", lw=0.5, ls=":")
                 self.plot_axes[2].set(xlabel="相对时间 (s)", ylabel="天向误差 (m)")
                 self.plot_axes[2].legend(fontsize=8)
@@ -1790,8 +1817,10 @@ class RTKPlotApp:
         for plot_ax in self.plot_axes:plot_ax.grid(self.grid_on.get(),linestyle="--",alpha=.45)
         if mode not in NON_TIME_SERIES_MODES:
             for plot_ax in self.plot_axes:self.time_cursors.append(plot_ax.axvline(0,color="#333",ls="--",lw=.8,alpha=.7,zorder=10))
-        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","Residuals","Cycle Slips","Satellite Visibility Gantt","Covariance","False Fix Analysis","Residual Triad","Directional DOP","Body-Frame Error"):
+        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","Residuals","Cycle Slips","Satellite Visibility Gantt","Covariance","Residual Triad","Directional DOP","Body-Frame Error"):
             for plot_ax in self.plot_axes:self._set_datetime_axis(plot_ax)
+        if mode in ("El vs SNR & Resp", "False Fix Analysis", "Covariance", "Satellite Visibility Gantt", "Trajectory Error Heatmap"):
+            self._register_custom_dynamic(mode, ax, p, full)
         self._apply_segment_overlays();self._register_dynamic_artists()
         self.fig.tight_layout();self.canvas.draw_idle();self._update_cursor();self.update_analysis()
 
@@ -2031,22 +2060,57 @@ class RTKPlotApp:
         if hasattr(self, "segment_status"):
             self.segment_status.configure(text=st)
 
-    def _draw_false_fix(self,ax,p):
+    def _draw_false_fix(self, ax, p):
         if not self.data["has_truth"]:
-            ax.text(.5,.5,"Ground truth is required to evaluate false FIX epochs",ha="center",va="center",transform=ax.transAxes);return
-        limit=float(self.false_fix_limit.get());limit=max(0.001,limit)
-        fixed=p[p.q==1];false=fixed[fixed.e3d>limit]
-        colors={1:"#07851d",2:"#e3a008"}
-        for q,g in p.groupby("q"):
-            ax.scatter(g.time,g.e3d,s=13,marker="o",color=colors.get(int(q),"#888888"),alpha=.8,
-                       edgecolors="none",label=f"Q={q} {Q_LABELS.get(int(q),'')}")
-        ax.axhline(limit,color="#c22",ls="--",lw=1.1,label=f"3D error limit {limit:g} m")
-        over=p[p.e3d>limit]
-        if not over.empty:ax.scatter(over.time,over.e3d,s=34,marker="x",linewidths=1.3,color="#d00000",zorder=6,label="3D error above limit")
-        cap=max(limit*1.5,float(p.e3d.quantile(.995))*1.1)
-        clipped=int((p.e3d>cap).sum())
-        if clipped:ax.text(.99,.98,f"{clipped} epochs above display cap",ha="right",va="top",transform=ax.transAxes,fontsize=8,color="#a22")
-        ax.set_ylim(0,cap);ax.set(xlabel="Date/time",ylabel="3D position error (m)",title="3D Error by Solution Status (points; red × exceeds limit)");ax.legend(fontsize=8,ncol=2)
+            ax.text(0.5, 0.5, "需要参考真值轨迹以评估 3D 定位误差与假固定\n(Ground truth is required for False Fix Analysis)",
+                    ha="center", va="center", transform=ax.transAxes, fontsize=10, color="#666")
+            ax.set_title("4A. 4-Quadrant AR Ratio vs. 3D Error (Detecting False Fixes)")
+            return
+        limit = float(self.false_fix_limit.get()) if hasattr(self, "false_fix_limit") else 1.0
+        limit = max(0.001, limit)
+        ratio_thres = 3.0
+
+        ratio_clipped = p.ratio.fillna(1.0).clip(1.0, 15.0)
+        e3d_clipped = p.e3d.fillna(0.01).clip(0.01, 3000.0)
+
+        # 1. Float points (Q != 1)
+        m_float = (p.q != 1)
+        # 2. True Fix (Q == 1 and e3d <= limit)
+        m_true_fix = (p.q == 1) & (p.e3d <= limit)
+        # 3. False Fix (Q == 1 and e3d > limit)
+        m_false_fix = (p.q == 1) & (p.e3d > limit)
+
+        n_float = int(m_float.sum())
+        n_true = int(m_true_fix.sum())
+        n_false = int(m_false_fix.sum())
+
+        if n_float > 0:
+            ax.scatter(ratio_clipped[m_float], e3d_clipped[m_float],
+                       s=14, marker="o", color="#ff9f1c", alpha=0.55, edgecolors="none",
+                       label=f"Float (Q!=1, n={n_float})")
+        if n_true > 0:
+            ax.scatter(ratio_clipped[m_true_fix], e3d_clipped[m_true_fix],
+                       s=16, marker="o", color="#2a9d8f", alpha=0.75, edgecolors="none",
+                       label=f"True Fix (Err<={limit:g}m, n={n_true})")
+        if n_false > 0:
+            ax.scatter(ratio_clipped[m_false_fix], e3d_clipped[m_false_fix],
+                       s=36, marker="^", color="#d90429", alpha=0.92, edgecolors="#660000", linewidths=0.5,
+                       zorder=5, label=f"False Fix! (Err>{limit:g}m, n={n_false})")
+
+        # Ratio threshold vertical dashed line
+        ax.axvline(ratio_thres, color="#222222", ls="--", lw=1.2, label=f"Ratio Thres = {ratio_thres:g}")
+        # Error limit horizontal dotted line
+        ax.axhline(limit, color="#d90429", ls=":", lw=1.3, label=f"{limit:g}m Error Line")
+
+        ax.set_yscale("log")
+        ax.set_xlim(1.0, 15.5)
+        max_err = float(e3d_clipped.max()) if not e3d_clipped.empty else 100.0
+        ax.set_ylim(0.01, max(3000.0, max_err * 1.5))
+        ax.set_xlabel("AR Ratio Factor (clipped at 15)")
+        ax.set_ylabel("3D Position Error (m, log)")
+        ax.set_title("4A. 4-Quadrant AR Ratio vs. 3D Error (Detecting False Fixes)")
+        ax.grid(self.grid_on.get(), which="both", ls=":", alpha=0.35)
+        ax.legend(loc="upper right", fontsize=8.5, framealpha=0.9)
 
     def _draw_error_cdf(self, ax, p):
         if not self.data["has_truth"]:
@@ -2244,8 +2308,12 @@ class RTKPlotApp:
             s1 = sat[(sat.freq == 1) & (sat.snr > 0)]
         if not s1.empty:
             s1_sub = s1.iloc[::max(1, len(s1)//20000)]
-            resp_clip = np.clip(s1_sub.resp.abs(), 0, 8) if "resp" in s1_sub.columns else 0
-            ax.scatter(s1_sub.el, s1_sub.snr, c=resp_clip, cmap="turbo", s=6, alpha=0.45, edgecolors="none")
+            resp_clip = np.clip(s1_sub.resp.abs(), 0, 15.0) if "resp" in s1_sub.columns else 0
+            sc = ax.scatter(s1_sub.el, s1_sub.snr, c=resp_clip, cmap="turbo", s=7, vmin=0, vmax=15.0, alpha=0.48, edgecolors="none")
+            fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
+            if fig_target is not None:
+                cb = fig_target.colorbar(sc, ax=ax, pad=0.015, fraction=0.046)
+                cb.set_label("|Pseudorange Residual| (m)")
             el_grid = np.linspace(5, 90, 100)
             ax.plot(el_grid, 28.0 + 22.0 * np.sin(np.deg2rad(el_grid)), "k--", lw=1.5, label="标称信噪比包络")
             ax.legend(loc="lower right", fontsize=8)
@@ -2254,24 +2322,67 @@ class RTKPlotApp:
         ax.grid(self.grid_on.get(), alpha=0.3)
 
     def _draw_top_outliers(self, ax):
-        df_rank = diag.compute_satellite_health_rankings(self.data)
-        if df_rank.empty:
-            ax.text(0.5, 0.5, "无卫星残差统计数据", ha="center", va="center", transform=ax.transAxes)
-            ax.set_title("粗差卫星贡献度排行榜")
+        sat = self.data.get("sat")
+        if sat is None or sat.empty:
+            ax.text(0.5, 0.5, "无卫星残差统计数据 (需 .stat 文件)", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("2B. Top 15 Multipath-Contaminated Satellites Ranking")
             return
-        top = df_rank.head(10).iloc[::-1]
-        constell_colors = {"G": "#2878B5", "R": "#9b59b6", "E": "#36965A", "C": "#d90429", "J": "#E07A2D"}
-        bar_colors = [constell_colors.get(prn[0], "#777777") for prn in top.prn]
-        bars = ax.barh(top.prn, top.p95_resp, color=bar_colors, height=0.6, alpha=0.85)
-        for b, (_, row) in zip(bars, top.iterrows()):
-            max_c = row.get("max_share_count", row.get("max_resp_count", 0))
-            slips = row.get("total_slips", row.get("slip_count", 0))
-            ax.text(b.get_width() + 0.05, b.get_y() + b.get_height()/2,
-                    f"P95: {row.p95_resp:.2f}m | 最大次: {int(max_c)} | 周跳: {int(slips)}",
-                    va="center", ha="left", fontsize=7.5, color="#333333")
-        ax.set(xlabel="P95 伪距残差 (m)", ylabel="卫星 PRN", title="粗差卫星贡献度排行榜 (Top Outliers)")
-        ax.set_xlim(0, max(float(top.p95_resp.max()) * 1.55, 3.0))
-        ax.grid(self.grid_on.get(), alpha=0.3, axis="x")
+
+        s1 = sat[(sat.freq == 1) & (sat.resp != 0)]
+        if s1.empty:
+            s1 = sat[sat.resp != 0]
+        if s1.empty:
+            ax.text(0.5, 0.5, "无有效伪距残差记录", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("2B. Top 15 Multipath-Contaminated Satellites Ranking")
+            return
+
+        prn_metrics = []
+        for prn, grp in s1.groupby("prn"):
+            arr = grp.resp.abs().dropna().to_numpy(dtype=float)
+            if len(arr) < 5:
+                continue
+            prn_metrics.append({
+                "prn": prn,
+                "data": arr,
+                "mean": float(np.mean(arr)),
+                "p75": float(np.percentile(arr, 75)),
+                "p95": float(np.percentile(arr, 95)),
+                "max": float(np.max(arr))
+            })
+        if not prn_metrics:
+            ax.text(0.5, 0.5, "样本量不足", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("2B. Top 15 Multipath-Contaminated Satellites Ranking")
+            return
+
+        prn_metrics.sort(key=lambda m: (m["p75"], m["mean"]))
+        top_metrics = prn_metrics[-15:]
+
+        top_prns = [m["prn"] for m in top_metrics]
+        box_data = [m["data"] for m in top_metrics]
+        mean_vals = [m["mean"] for m in top_metrics]
+
+        bp = ax.boxplot(
+            box_data, positions=range(len(top_prns)), vert=False, patch_artist=True,
+            showfliers=False, widths=0.55,
+            boxprops=dict(facecolor="#ffccd5", edgecolor="#e63946", linewidth=1.2),
+            medianprops=dict(color="black", linewidth=1.6),
+            whiskerprops=dict(color="#333333", linewidth=1.0),
+            capprops=dict(color="#333333", linewidth=1.0)
+        )
+
+        ax.scatter(mean_vals, range(len(top_prns)), marker="D", color="#0077b6", s=28, zorder=6, label="Mean |Resp|")
+        ax.axvline(5.0, color="#e63946", ls="--", lw=1.2, label="5m Error Line")
+
+        ax.set_yticks(range(len(top_prns)))
+        ax.set_yticklabels(top_prns, fontsize=8)
+        ax.set_xlabel("|Pseudorange Residual| Distribution (m, outliers hidden for scale)")
+        ax.set_ylabel("Satellite PRN")
+        ax.set_title("2B. Top 15 Multipath-Contaminated Satellites Ranking")
+
+        max_disp = max(11.0, max(m["p95"] for m in top_metrics) * 1.25)
+        ax.set_xlim(0, max_disp)
+        ax.legend(loc="lower right", fontsize=8.5, framealpha=0.9)
+        ax.grid(self.grid_on.get(), alpha=0.3, axis="x", ls=":")
 
     def _draw_directional_dop(self, ax):
         dop_df = diag.compute_directional_dop(self.data)
@@ -2328,9 +2439,10 @@ class RTKPlotApp:
         if not has_body:
             ax.text(0.5, 0.5, "缺少航向角数据，无法投影至车体坐标系", ha="center", va="center", transform=ax.transAxes)
             return
-        ax.plot(p.time, p.along_err, label="沿航向误差 (Along-track)", color="#2878B5", lw=0.9)
-        ax.plot(p.time, p.cross_err, label="跨航向误差 (Cross-track)", color="#d90429", lw=0.9)
-        ax.plot(p.time, p.vert_err, label="垂直高程误差 (Vertical)", color="#36965A", lw=0.8, ls="--")
+        t_gap, along_gap, cross_gap, vert_gap = insert_time_gaps(p.time, p.along_err, p.cross_err, p.vert_err)
+        ax.plot(t_gap, along_gap, label="沿航向误差 (Along-track)", color="#2878B5", lw=0.9)
+        ax.plot(t_gap, cross_gap, label="跨航向误差 (Cross-track)", color="#d90429", lw=0.9)
+        ax.plot(t_gap, vert_gap, label="垂直高程误差 (Vertical)", color="#36965A", lw=0.8, ls="--")
         ax.axhline(0, color="k", lw=0.5, ls=":")
         if hasattr(self, "_apply_robust_ylim"):
             self._apply_robust_ylim(ax, [p.along_err, p.cross_err, p.vert_err], is_symmetric=True, min_span=2.0)
@@ -2603,6 +2715,7 @@ class RTKPlotApp:
             elif name=="Top Outlier Satellites":self._draw_top_outliers(ax)
             elif name=="Directional DOP":self._draw_directional_dop(ax)
             elif name=="Body-Frame Error":self._draw_body_frame_error(ax,p)
+            elif name=="Trajectory Error Heatmap":self._draw_trajectory_error_heatmap(ax,p,full)
             ax.grid(self.grid_on.get(),alpha=.28)
             if is_time_series:
                 self._set_datetime_axis(ax);ax.xaxis.set_major_locator(MaxNLocator(3));ax.tick_params(axis="x",labelsize=7,labelrotation=0)
@@ -2620,12 +2733,12 @@ class RTKPlotApp:
         self.fig.suptitle("Custom RTKLIB Analysis",fontsize=13,weight="bold",y=0.985)
 
     def _register_custom_dynamic(self,name,ax,p,full):
-        """Add a current-epoch highlight to every plot in a custom grid."""
+        """Add a current-epoch highlight to every plot in a custom grid or single plot view."""
         def point(color="#111",marker="o",size=7,target=None):
             target=target if target is not None else ax
             return target.plot([],[],linestyle="None",marker=marker,ms=size,mfc=color,mec="white",mew=.7,zorder=12)[0]
         artists=[]
-        if name=="Gnd Trk":
+        if name in ("Gnd Trk", "Trajectory Error Heatmap"):
             trail,=ax.plot([],[],color="#ed3030",lw=1.4,zorder=8);artists=[trail,point("#ed3030","o",9)]
             if self.data["has_truth"]:artists.extend([point("#ffd92f","*",11),ax.plot([],[],color="#d22",ls=":",lw=1,zorder=9)[0]])
         elif name=="ENU Position":artists=[point(c) for c in ["#2878B5","#E07A2D","#36965A"]]
@@ -2649,9 +2762,15 @@ class RTKPlotApp:
         elif name=="Per-PRN Residuals":
             artists=[point("#dc2626","o",7)]
         elif name=="Covariance":
-            artists=[point(c) for c in ["#2878B5","#E07A2D","#36965A"]]
-            if ax in self.cov_twin_axes:artists.append(point("#aa3377",target=self.cov_twin_axes[ax]))
-        elif name=="False Fix Analysis":artists=[point("#07851d","o",9),point("#e3a008","o",9),point("#d00000","x",10)]
+            artists=[point("#1f77b4" if self.data["has_truth"] else "#2878B5","o",8)]
+        elif name=="False Fix Analysis":
+            artists=[point("#ffd92f","*",12)]
+        elif name=="El vs SNR & Resp":
+            sc_curr = ax.scatter([], [], s=100, facecolors="none", edgecolors="#dc2626", linewidths=1.8, zorder=15)
+            texts = [ax.text(0, 0, "", fontsize=8, weight="bold", color="#111",
+                             bbox=dict(boxstyle="round,pad=0.15", fc="#ffffff", ec="#dc2626", alpha=0.88, lw=0.8),
+                             zorder=16) for _ in range(35)]
+            artists = [sc_curr] + texts
         elif name=="Innovation / NIS":
             artists=[ax.text(.5,.12,"",transform=ax.transAxes,ha="center",va="center",fontsize=9,color="#555")]
         if not artists:return
@@ -2669,10 +2788,13 @@ class RTKPlotApp:
         def update(i,r,current_sat):
             visible=self.qfilter.get()=="All Q" or int(r.q)==int(self.qfilter.get().split("=")[1].split(":")[0])
             x=float(r.time);y=None
-            if name=="Gnd Trk":
+            if name in ("Gnd Trk", "Trajectory Error Heatmap"):
                 start=max(0,i-120);stride=max(1,(i-start+1)//300)
-                artists[0].set_data(track_e[start:i+1:stride],track_n[start:i+1:stride])
-                if (i-start)%stride!=0:artists[0].set_data(np.r_[track_e[start:i+1:stride],track_e[i]],np.r_[track_n[start:i+1:stride],track_n[i]])
+                sub_t = full.time.iloc[start:i+1:stride]
+                sub_e = track_e[start:i+1:stride]
+                sub_n = track_n[start:i+1:stride]
+                _t_gap, e_gap, n_gap = insert_time_gaps(sub_t, sub_e, sub_n)
+                artists[0].set_data(e_gap, n_gap)
                 set_point(artists[1],r.E,r.N,visible)
                 if self.data["has_truth"]:
                     set_point(artists[2],r.gt_E,r.gt_N,visible and np.isfinite(r.gt_E) and np.isfinite(r.gt_N))
@@ -2724,14 +2846,28 @@ class RTKPlotApp:
                 else:
                     artists[0].set_offsets(np.empty((0,2)))
             elif name=="Covariance":
-                for art,col in zip(artists[:3],["sigE","sigN","sigU"]):set_point(art,x,r[col],visible and r[col]>0)
-                if self.data["has_truth"] and len(artists)>3:
-                    ratio=abs(r.de)/(1.96*max(float(r.sigE),1e-12));set_point(artists[3],x,ratio,visible and np.isfinite(ratio))
-            elif name=="False Fix Analysis" and self.data["has_truth"]:
-                above=r.e3d>float(self.false_fix_limit.get())
-                set_point(artists[0],x,r.e3d,visible and int(r.q)==1 and not above)
-                set_point(artists[1],x,r.e3d,visible and int(r.q)==2 and not above)
-                set_point(artists[2],x,r.e3d,visible and above)
+                val = float(getattr(r, "de", np.nan)) if self.data["has_truth"] else float(getattr(r, "sigE", np.nan))
+                set_point(artists[0], x, val, visible and np.isfinite(val))
+            elif name=="False Fix Analysis":
+                rat = min(float(getattr(r, "ratio", 1.0)), 15.0)
+                e3 = max(float(getattr(r, "e3d", 0.01)), 0.01) if self.data["has_truth"] else np.nan
+                set_point(artists[0], rat, e3, visible and np.isfinite(rat) and np.isfinite(e3))
+            elif name=="El vs SNR & Resp":
+                cs=current_sat
+                g=cs[(cs.freq==1)&(cs.snr>0)&(cs.el>0)] if (cs is not None and not cs.empty) else pd.DataFrame()
+                if visible and not g.empty:
+                    artists[0].set_offsets(np.c_[g.el, g.snr])
+                    for k, (_, sat_row) in enumerate(g.iterrows()):
+                        if k < 35:
+                            artists[k + 1].set_position((sat_row.el + 0.8, sat_row.snr + 0.5))
+                            artists[k + 1].set_text(sat_row.prn)
+                            artists[k + 1].set_visible(True)
+                    for k in range(len(g), 35):
+                        artists[k + 1].set_visible(False)
+                else:
+                    artists[0].set_offsets(np.empty((0, 2)))
+                    for k in range(35):
+                        artists[k + 1].set_visible(False)
             elif name=="Innovation / NIS":
                 dt=gpst_to_local_datetime(r.week,r.tow);artists[0].set_text(f"当前历元：{dt:%Y-%m-%d %H:%M:%S} CST · Q={int(r.q)}")
 
@@ -2947,8 +3083,9 @@ class RTKPlotApp:
     def _draw_enu_positions(self,axes,p):
         specs=[("E","East (m)","#2878B5"),("N","North (m)","#E07A2D"),("U","Up (m)","#36965A")]
         kw=self._get_line_kwargs("ENU Position",default_ls="-",default_lw=.8)
-        for ax,(col,label,color) in zip(axes,specs):
-            ax.plot(p.time,p[col],color=color,**kw)
+        t_gap, e_gap, n_gap, u_gap = insert_time_gaps(p.time, p.E, p.N, p.U)
+        for ax,(col,label,color),y_arr in zip(axes,specs,[e_gap, n_gap, u_gap]):
+            ax.plot(t_gap,y_arr,color=color,**kw)
             ax.set_ylabel(label);ax.set_title(f"{label.split()[0]} component",loc="left",fontsize=9);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
         axes[0].set_title("ENU Position Components",loc="center",fontsize=12,weight="bold")
         axes[-1].set_xlabel("Time from start (s)")
@@ -2957,21 +3094,90 @@ class RTKPlotApp:
         self.track_axes.append(ax)
         self._track_e=full.E.to_numpy();self._track_n=full.N.to_numpy()
         self._apply_basemap(ax, full)
-        ax.set_title("Ground Track / ENU Position — colored by solution status")
         if self.data["has_truth"]:
-            ax.plot(full.gt_E,full.gt_N,color="#252525",lw=1.05,ls="--",alpha=.72,label="Ground truth")
-        for q,g in p.groupby("q"):
-            label=f"Q={q}: {Q_LABELS.get(q,'Other')}"; ax.plot(g.E,g.N,".",ms=3,color=Q_COLORS.get(q,"#666"),label=label,alpha=.9)
-        ax.set_xlabel("East (m)");ax.set_ylabel("North (m)");ax.set_aspect("equal" if self.equal_scale.get() else "auto",adjustable="box");ax.legend(loc="upper left",fontsize=8)
+            gt_t, gt_e, gt_n = insert_time_gaps(full.time, full.gt_E, full.gt_N)
+            ax.plot(gt_e,gt_n,color="#252525",lw=1.05,ls="--",alpha=.72,label="Ground truth")
+
+        color_by_err = (getattr(self, "track_color_by_error", None) and self.track_color_by_error.get() and self.data["has_truth"])
+        if color_by_err:
+            ax.set_title("Ground Track / ENU Position — colored by 3D Error")
+            err = np.clip(p.e3d.fillna(0).to_numpy(dtype=float), 0, 15.0)
+            sc = ax.scatter(p.E, p.N, c=err, cmap="turbo", s=8, vmin=0, vmax=15.0, alpha=0.9, zorder=4)
+            fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
+            if fig_target is not None:
+                cb = fig_target.colorbar(sc, ax=ax, pad=0.015, fraction=0.046)
+                cb.set_label("3D Error (m, clipped at 15m)")
+            ax.legend(loc="upper right", fontsize=8)
+        else:
+            ax.set_title("Ground Track / ENU Position — colored by solution status")
+            for q,g in p.groupby("q"):
+                label=f"Q={q}: {Q_LABELS.get(q,'Other')}"; ax.plot(g.E,g.N,".",ms=3,color=Q_COLORS.get(q,"#666"),label=label,alpha=.9)
+            ax.legend(loc="upper left",fontsize=8)
+
+        ax.set_xlabel("East (m)");ax.set_ylabel("North (m)");ax.set_aspect("equal" if self.equal_scale.get() else "auto",adjustable="box")
         idx=min(int(self.slider.get()),len(full)-1); cur=full.iloc[idx]
         stride=max(1,(idx+1)//2500)
-        self.vehicle_trail,=ax.plot(self._track_e[:idx+1:stride],self._track_n[:idx+1:stride],color="#ed3030",lw=1.8,alpha=.9,zorder=5)
+        sub_t = full.time.iloc[:idx+1:stride]
+        sub_e = self._track_e[:idx+1:stride]
+        sub_n = self._track_n[:idx+1:stride]
+        _t_gap, e_gap, n_gap = insert_time_gaps(sub_t, sub_e, sub_n)
+        self.vehicle_trail,=ax.plot(e_gap, n_gap, color="#ed3030", lw=1.8, alpha=.9, zorder=5)
         self.vehicle_marker,=ax.plot([cur.E],[cur.N],marker=(3,0,0),ms=17,mfc="#ff2727",mec="black",mew=1.0,linestyle="None",zorder=8)
         self.vehicle_label=ax.annotate(f"  {idx+1}/{len(full)}  Q={int(cur.q)}:{Q_LABELS.get(int(cur.q),'?')}",(cur.E,cur.N),xytext=(9,8),textcoords="offset points",fontsize=8,weight="bold",bbox=dict(boxstyle="round,pad=.25",fc="white",ec="#888",alpha=.9),zorder=9)
         if self.data["has_truth"] and np.isfinite(cur.gt_E) and np.isfinite(cur.gt_N):
             self.truth_marker,=ax.plot([cur.gt_E],[cur.gt_N],marker="*",ms=14,mfc="#ffd92f",mec="#222",mew=.8,linestyle="None",zorder=9,label="Current truth")
             self.error_link,=ax.plot([cur.E,cur.gt_E],[cur.N,cur.gt_N],color="#df2525",lw=1.5,ls=":",zorder=7)
         self._draw_stats(ax,full)
+
+    def _draw_trajectory_error_heatmap(self, ax, p, full):
+        self.track_axes.append(ax)
+        self._track_e = full.E.to_numpy()
+        self._track_n = full.N.to_numpy()
+        self._apply_basemap(ax, full)
+        ax.set_title("5A. 2D Trajectory Error Heatmap")
+
+        if self.data["has_truth"]:
+            gt_t, gt_e, gt_n = insert_time_gaps(full.time, full.gt_E, full.gt_N)
+            ax.plot(gt_e, gt_n, color="#444444", lw=1.1, ls="--", alpha=0.75, label="Reference GT")
+            err = np.clip(p.e3d.fillna(0).to_numpy(dtype=float), 0, 15.0)
+            sc = ax.scatter(p.E, p.N, c=err, cmap="turbo", s=8, vmin=0, vmax=15.0, alpha=0.9, zorder=4)
+            fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
+            if fig_target is not None:
+                cb = fig_target.colorbar(sc, ax=ax, pad=0.015, fraction=0.046)
+                cb.set_label("3D Error (m, clipped at 15m)")
+            ax.legend(loc="upper right", fontsize=8.5)
+        else:
+            for q, g in p.groupby("q"):
+                label = f"Q={q}: {Q_LABELS.get(q, 'Other')}"
+                ax.plot(g.E, g.N, ".", ms=3, color=Q_COLORS.get(q, "#666"), label=label, alpha=0.9)
+            ax.text(0.5, 0.5, "未加载参考真值 (Ground Truth is required for Error Heatmap)",
+                    ha="center", va="center", transform=ax.transAxes, fontsize=10, color="#666",
+                    bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+            ax.legend(loc="upper left", fontsize=8)
+
+        ax.set_xlabel("East Offset from Start (m)")
+        ax.set_ylabel("North Offset from Start (m)")
+        equal_val = self.equal_scale.get() if hasattr(self, "equal_scale") else True
+        ax.set_aspect("equal" if equal_val else "auto", adjustable="box")
+        grid_val = self.grid_on.get() if hasattr(self, "grid_on") else True
+        ax.grid(grid_val, alpha=0.3, ls=":")
+
+        if hasattr(self, "slider"):
+            idx = min(int(self.slider.get()), len(full) - 1)
+            cur = full.iloc[idx]
+            stride = max(1, (idx + 1) // 2500)
+            sub_t = full.time.iloc[:idx+1:stride]
+            sub_e = self._track_e[:idx+1:stride]
+            sub_n = self._track_n[:idx+1:stride]
+            _t_gap, e_gap, n_gap = insert_time_gaps(sub_t, sub_e, sub_n)
+            self.vehicle_trail, = ax.plot(e_gap, n_gap, color="#ed3030", lw=1.8, alpha=0.9, zorder=5)
+            self.vehicle_marker, = ax.plot([cur.E], [cur.N], marker=(3, 0, 0), ms=17, mfc="#ff2727", mec="black", mew=1.0, linestyle="None", zorder=8)
+            self.vehicle_label = ax.annotate(f"  {idx+1}/{len(full)}  Q={int(cur.q)}:{Q_LABELS.get(int(cur.q),'?')}", (cur.E, cur.N), xytext=(9, 8), textcoords="offset points", fontsize=8, weight="bold", bbox=dict(boxstyle="round,pad=.25", fc="white", ec="#888", alpha=.9), zorder=9)
+            if self.data["has_truth"] and np.isfinite(cur.gt_E) and np.isfinite(cur.gt_N):
+                self.truth_marker, = ax.plot([cur.gt_E], [cur.gt_N], marker="*", ms=14, mfc="#ffd92f", mec="#222", mew=0.8, linestyle="None", zorder=9, label="Current truth")
+                self.error_link, = ax.plot([cur.E, cur.gt_E], [cur.N, cur.gt_N], color="#df2525", lw=1.5, ls=":", zorder=7)
+        if hasattr(self, "_draw_stats"):
+            self._draw_stats(ax, full)
 
     def _draw_stats(self,ax,p):
         xyz=p[["x","y","z"]].to_numpy(); lat,lon,h=ecef_to_geodetic(*xyz[0]); avlat,avlon,avh=ecef_to_geodetic(*xyz.mean(axis=0))
@@ -2989,8 +3195,9 @@ class RTKPlotApp:
             return
         specs=[("de","ΔE (m)","#2878B5"),("dn","ΔN (m)","#E07A2D"),("du","ΔU (m)","#36965A")]
         kw=self._get_line_kwargs("ENU Error",default_ls="-",default_lw=.75)
-        for ax,(col,label,color) in zip(axes,specs):
-            ax.plot(p.time,p[col],color=color,**kw);ax.axhline(0,color="#222",lw=.6);ax.set_ylabel(label);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
+        t_gap, de_gap, dn_gap, du_gap = insert_time_gaps(p.time, p.de, p.dn, p.du)
+        for ax,(col,label,color),y_arr in zip(axes,specs,[de_gap, dn_gap, du_gap]):
+            ax.plot(t_gap,y_arr,color=color,**kw);ax.axhline(0,color="#222",lw=.6);ax.set_ylabel(label);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
             if hasattr(self, "_apply_robust_ylim"):
                 self._apply_robust_ylim(ax, [p[col]], is_symmetric=True, min_span=1.0)
         axes[0].set_title("ENU Position Error Components",fontsize=12,weight="bold");axes[-1].set_xlabel("Time from start (s)")
@@ -3156,62 +3363,30 @@ class RTKPlotApp:
             ax.text(0.5, 0.5, "No .stat satellite records", ha="center", va="center", transform=ax.transAxes)
             return
 
-        if "_cached_gantt" not in self.data:
-            s_l1 = s[s.freq == 1].sort_values(["prn", "time"]).copy()
-            if s_l1.empty:
-                s_l1 = s.sort_values(["prn", "time"]).copy()
-            prefix_order = {'G': 1, 'C': 2, 'R': 3, 'E': 4, 'J': 5, 'S': 6}
-            sorted_prns = sorted(
-                s_l1["prn"].unique(),
-                key=lambda p: (prefix_order.get(p[0] if p else "", 99), int(p[1:]) if p[1:].isdigit() else 0, p)
-            )
-            prn_to_y = {prn: i for i, prn in enumerate(sorted_prns)}
+        s_l1 = s[s.freq == 1].sort_values(["prn", "time"]).copy()
+        if s_l1.empty:
+            s_l1 = s.sort_values(["prn", "time"]).copy()
 
-            s_l1["dt"] = s_l1.groupby("prn")["time"].diff()
-            dt_med = s_l1["dt"].median()
-            time_gap = s_l1["dt"] > (dt_med * 2.5 if (dt_med and dt_med > 0) else 2.0)
-            vsat_diff = s_l1.groupby("prn")["vsat"].diff().ne(0)
-            s_l1["seg_id"] = (vsat_diff | time_gap).cumsum()
-            grouped = s_l1.groupby(["prn", "seg_id"]).agg(
-                t_start=("time", "first"),
-                t_end=("time", "last"),
-                vsat=("vsat", "first")
-            ).reset_index()
+        prefix_order = {'C': 1, 'E': 2, 'G': 3, 'J': 4, 'R': 5, 'S': 6}
+        sorted_prns = sorted(
+            s_l1["prn"].unique(),
+            key=lambda p: (prefix_order.get(p[0] if p else "", 99), int(p[1:]) if p[1:].isdigit() else 0, p)
+        )
+        prn_to_y = {prn: i for i, prn in enumerate(sorted_prns)}
 
-            slips = s[s.slipc > 0][["time", "prn", "slipc"]]
-            self.data["_cached_gantt"] = (grouped, sorted_prns, prn_to_y, slips)
-        else:
-            grouped, sorted_prns, prn_to_y, slips = self.data["_cached_gantt"]
+        y_vals = [prn_to_y[p] for p in s_l1.prn]
+        resp_vals = np.clip(s_l1.resp.abs().to_numpy(dtype=float), 0, 15.0) if "resp" in s_l1.columns else np.zeros(len(s_l1))
 
-        constellation_colors = {
-            'G': '#2563eb', # GPS (Blue)
-            'C': '#d97706', # BDS (Amber/Orange)
-            'R': '#059669', # GLONASS (Green)
-            'E': '#7c3aed', # Galileo (Purple)
-            'J': '#db2777', # QZSS (Pink)
-        }
+        # Scatter swimlane colored by |resp|
+        sc = ax.scatter(s_l1.time, y_vals, c=resp_vals, cmap="turbo", s=9, vmin=0, vmax=15.0, alpha=0.85, edgecolors="none")
 
-        v1 = grouped[grouped.vsat == 1]
-        if not v1.empty:
-            y1 = [prn_to_y[p] for p in v1.prn]
-            c1 = [constellation_colors.get(p[0] if p else '', '#334155') for p in v1.prn]
-            x0 = v1.t_start.to_numpy(dtype=float)
-            x1 = np.maximum(v1.t_end.to_numpy(dtype=float), x0 + 0.1)
-            ax.hlines(y1, x0, x1, colors=c1, lw=3.8, alpha=0.88, zorder=2)
-
-        v0 = grouped[grouped.vsat == 0]
-        if not v0.empty:
-            y0 = [prn_to_y[p] for p in v0.prn]
-            x0 = v0.t_start.to_numpy(dtype=float)
-            x1 = np.maximum(v0.t_end.to_numpy(dtype=float), x0 + 0.1)
-            ax.hlines(y0, x0, x1, colors='#cbd5e1', lw=1.8, alpha=0.65, zorder=1)
-
+        # Overlay cycle slips
+        slips = s[(s.slipc > 0) & (s.prn.isin(prn_to_y))] if "slipc" in s.columns else pd.DataFrame()
         if not slips.empty:
-            valid_slips = slips[slips.prn.isin(prn_to_y)]
-            if not valid_slips.empty:
-                slip_y = [prn_to_y[p] for p in valid_slips.prn]
-                ax.scatter(valid_slips.time, slip_y, marker="|", color="#dc2626", s=50, lw=1.4, zorder=5)
+            slip_y = [prn_to_y[p] for p in slips.prn]
+            ax.scatter(slips.time, slip_y, marker="x", color="black", s=18, lw=1.0, zorder=5, label=f"Cycle Slip (n={len(slips)})")
 
+        # Constellation dividing dashed lines
         for i in range(1, len(sorted_prns)):
             if sorted_prns[i][0] != sorted_prns[i-1][0]:
                 ax.axhline(i - 0.5, color="#cbd5e1", ls="--", lw=0.75, alpha=0.8)
@@ -3219,15 +3394,20 @@ class RTKPlotApp:
         ax.set_yticks(range(len(sorted_prns)))
         ax.set_yticklabels(sorted_prns, fontsize=7 if len(sorted_prns) > 25 else 8)
         ax.set_ylim(-0.8, len(sorted_prns) - 0.2)
-        ax.set(xlabel="Date/time", ylabel="Satellite PRN", title=f"Satellite Visibility & Cycle Slip Gantt ({len(sorted_prns)} Sats, {len(slips)} Slips)")
 
-        from matplotlib.lines import Line2D
-        legend_elements = [
-            Line2D([0], [0], color="#2563eb", lw=3.5, label="Tracked & Used (vsat=1)"),
-            Line2D([0], [0], color="#cbd5e1", lw=2, label="Tracked Only (vsat=0)"),
-            Line2D([0], [0], marker="|", color="#dc2626", ls="None", markersize=10, markeredgewidth=1.6, label="Cycle Slip (周跳)")
-        ]
-        ax.legend(handles=legend_elements, loc="upper right", fontsize=8, framealpha=0.88)
+        first_p = self.data["pos"].iloc[0] if ("pos" in self.data and not self.data["pos"].empty) else None
+        tow0 = float(first_p.tow) if first_p is not None and "tow" in first_p else 0.0
+        ax.set_xlabel(f"Elapsed Time since TOW {tow0:.1f}s (s)")
+        ax.set_ylabel("Satellite PRN")
+        ax.set_title("2A. Satellite Residual Swimlane & Cycle Slip Map (Color = |Resp|)")
+
+        fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
+        if fig_target is not None:
+            cb = fig_target.colorbar(sc, ax=ax, pad=0.015, fraction=0.046)
+            cb.set_label("|Pseudorange Residual| (m)")
+        if not slips.empty:
+            ax.legend(loc="upper right", fontsize=8.5, framealpha=0.9)
+        ax.grid(self.grid_on.get(), alpha=0.25, ls=":")
 
     def _draw_multipath_skyplot(self, ax):
         s = self.data["sat"]
@@ -3331,13 +3511,43 @@ class RTKPlotApp:
         lines2, labels2 = twin.get_legend_handles_labels()
         ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=7.5, ncol=3, framealpha=0.85)
 
-    def _draw_covariance(self,ax,p):
-        for c,col in [("sigE","#2878B5"),("sigN","#E07A2D"),("sigU","#36965A")]:
-            ax.plot(p.time,p[c],label=f"σ{c[-1]}",lw=1.0,color=col)
-        ax.set_yscale("log")
-        ax.set(xlabel="Time from start (s)",ylabel="1σ uncertainty (m)",title="Position uncertainty (RTK covariance)")
-        ax.legend(loc="upper right",fontsize=8.5)
-        ax.grid(self.grid_on.get(), alpha=0.3)
+    def _draw_covariance(self, ax, p):
+        if self.data["has_truth"]:
+            sde = p.sigE if "sigE" in p.columns else (p.sde if "sde" in p.columns else pd.Series(0, index=p.index))
+            t_gap, de_gap, sde_gap = insert_time_gaps(p.time, p.de, sde)
+
+            bound_pos = 3.0 * sde_gap
+            bound_neg = -3.0 * sde_gap
+
+            ax.plot(t_gap, de_gap, color="#1f77b4", lw=1.1, label="Actual East Error (m)")
+            ax.plot(t_gap, bound_pos, color="#d62728", ls="--", lw=1.0, label="+3σ Filter Bound (3*sde)")
+            ax.plot(t_gap, bound_neg, color="#d62728", ls="--", lw=1.0, label="-3σ Filter Bound (-3*sde)")
+
+            if hasattr(self, "_apply_robust_ylim"):
+                self._apply_robust_ylim(ax, [p.de, 3.0 * sde, -3.0 * sde], is_symmetric=True, min_span=2.0)
+            else:
+                ax.set_ylim(-15.0, 15.0)
+
+            first = p.iloc[0]
+            tow0 = float(first.tow) if "tow" in first else 0.0
+            ax.set_xlabel(f"Elapsed Time since TOW {tow0:.1f}s (s)")
+            ax.set_ylabel("East Error & ±3σ Bound (m)")
+            ax.set_title("4B. Filter Covariance Consistency (±3σ vs. Actual)\n(Severe Over-Confidence in Urban Canyon)")
+            ax.legend(loc="upper right", fontsize=8.5, framealpha=0.9)
+            ax.grid(self.grid_on.get(), alpha=0.3, ls=":")
+        else:
+            sde = p.sigE if "sigE" in p.columns else p.sde
+            sdn = p.sigN if "sigN" in p.columns else p.sdn
+            sdu = p.sigU if "sigU" in p.columns else p.sdu
+            t_gap, sde_gap, sdn_gap, sdu_gap = insert_time_gaps(p.time, sde, sdn, sdu)
+            for s_arr, col, lbl in [(sde_gap, "#1f77b4", "3σ East"), (sdn_gap, "#ff7f0e", "3σ North"), (sdu_gap, "#2ca02c", "3σ Up")]:
+                ax.plot(t_gap, 3.0 * s_arr, color=col, ls="--", lw=1.0, label=f"+{lbl}")
+                ax.plot(t_gap, -3.0 * s_arr, color=col, ls=":", lw=1.0, label=f"-{lbl}")
+            ax.set_xlabel("Time from start (s)")
+            ax.set_ylabel("±3σ Filter Bound (m)")
+            ax.set_title("4B. Filter Covariance Consistency (±3σ Bounds, Ground Truth not loaded)")
+            ax.legend(loc="upper right", fontsize=8.5, framealpha=0.9)
+            ax.grid(self.grid_on.get(), alpha=0.3, ls=":")
 
     def _draw_nis(self,ax):
         ax.set_axis_off()
@@ -3400,10 +3610,14 @@ class RTKPlotApp:
         if name == "Gnd Trk":
             self.track_axes.append(ax)
             self._draw_track(ax, self._filtered(), full)
+        elif name == "Trajectory Error Heatmap":
+            self.track_axes.append(ax)
+            self._draw_trajectory_error_heatmap(ax, p, full)
         elif name == "Position Error":
             if self.data["has_truth"]:
-                ax.plot(p.time, p.eh, lw=.6, label="Horizontal")
-                ax.plot(p.time, p.e3d, lw=.6, label="3D")
+                t_gap, eh_gap, e3d_gap = insert_time_gaps(p.time, p.eh, p.e3d)
+                ax.plot(t_gap, eh_gap, lw=.6, label="Horizontal")
+                ax.plot(t_gap, e3d_gap, lw=.6, label="3D")
                 self._apply_robust_ylim(ax, [p.eh, p.e3d], non_negative=True, min_span=2.0)
                 ax.legend(fontsize=7 if not is_single else 9)
                 ax.set(title="Position Error", xlabel="Time (s)", ylabel="m")
@@ -3438,8 +3652,11 @@ class RTKPlotApp:
                 ax.scatter(ss.el, ss.snr, s=2, alpha=.15)
             ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
         elif name == "Height":
-            ax.plot(p.time, p.U, lw=.7, label="RTK U")
-            if self.data["has_truth"]: ax.plot(p.time, p.gt_U, lw=.7, ls="--", label="Truth U")
+            t_gap, u_gap = insert_time_gaps(p.time, p.U)
+            ax.plot(t_gap, u_gap, lw=.7, label="RTK U")
+            if self.data["has_truth"]:
+                t_gt_gap, gt_u_gap = insert_time_gaps(p.time, p.gt_U)
+                ax.plot(t_gt_gap, gt_u_gap, lw=.7, ls="--", label="Truth U")
             ax.set(title=name, ylabel="Up (m)"); ax.legend(fontsize=7)
             self._set_datetime_axis(ax)
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
@@ -3469,19 +3686,19 @@ class RTKPlotApp:
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "False Fix Analysis":
             self._draw_false_fix(ax, p)
-            self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "ENU Position":
-            for c, col in zip(["E", "N", "U"], ["#2878B5", "#E07A2D", "#36965A"]):
-                ax.plot(p.time, p[c], lw=.65, label=c, color=col)
+            t_gap, e_gap, n_gap, u_gap = insert_time_gaps(p.time, p["E"], p["N"], p["U"])
+            for c_val, col, c_name in zip([e_gap, n_gap, u_gap], ["#2878B5", "#E07A2D", "#36965A"], ["E", "N", "U"]):
+                ax.plot(t_gap, c_val, lw=.65, label=c_name, color=col)
             ax.set(title=name, ylabel="Position (m)")
             ax.legend(fontsize=6 if not is_single else 8, ncol=3)
             self._set_datetime_axis(ax)
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "ENU Error":
             if self.data["has_truth"]:
-                for c, col in zip(["de", "dn", "du"], ["#2878B5", "#E07A2D", "#36965A"]):
-                    ax.plot(p.time, p[c], lw=.65, label=c.upper(), color=col)
+                t_gap, de_gap, dn_gap, du_gap = insert_time_gaps(p.time, p["de"], p["dn"], p["du"])
+                for c_val, col, c_name in zip([de_gap, dn_gap, du_gap], ["#2878B5", "#E07A2D", "#36965A"], ["DE", "DN", "DU"]):
+                    ax.plot(t_gap, c_val, lw=.65, label=c_name, color=col)
                 ax.axhline(0, color="k", lw=.5)
                 ax.legend(fontsize=6 if not is_single else 8, ncol=3)
             else:
@@ -4450,11 +4667,15 @@ class RTKPlotApp:
         ax = fig.add_subplot(111)
         if mode_name == "Gnd Trk":
             self._draw_track_export(ax, p, full)
+        elif mode_name == "Trajectory Error Heatmap":
+            self._draw_trajectory_error_heatmap(ax, p, full)
         elif mode_name == "Height":
             kw = self._get_line_kwargs("Height")
-            ax.plot(p.time, p.U, label="RTK U", **kw)
+            t_gap, u_gap = insert_time_gaps(p.time, p.U)
+            ax.plot(t_gap, u_gap, label="RTK U", **kw)
             if self.data["has_truth"]:
-                ax.plot(p.time, p.gt_U, ls="--", color="#cf4b43", lw=kw.get("lw", 1.2), label="Truth U")
+                t_gt_gap, gt_u_gap = insert_time_gaps(p.time, p.gt_U)
+                ax.plot(t_gt_gap, gt_u_gap, ls="--", color="#cf4b43", lw=kw.get("lw", 1.2), label="Truth U")
             ax.set(title="Height (Up component)", xlabel="Date/time", ylabel="Up (m)")
             ax.legend(loc="best")
             self._set_datetime_axis(ax)
@@ -4517,7 +4738,6 @@ class RTKPlotApp:
             self._set_datetime_axis(ax)
         elif mode_name == "False Fix Analysis":
             self._draw_false_fix(ax, p)
-            self._set_datetime_axis(ax)
         elif mode_name == "Error CDF":
             self._draw_error_cdf(ax, p)
         elif mode_name == "Error Histogram":
@@ -4538,13 +4758,30 @@ class RTKPlotApp:
             ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
         elif mode_name in ("Position Error", "Position error"):
             if self.data["has_truth"]:
-                ax.plot(p.time, p.eh, lw=.8, label="Horizontal")
-                ax.plot(p.time, p.e3d, lw=.8, label="3D")
+                t_gap, eh_gap, e3d_gap = insert_time_gaps(p.time, p.eh, p.e3d)
+                ax.plot(t_gap, eh_gap, lw=.8, label="Horizontal")
+                ax.plot(t_gap, e3d_gap, lw=.8, label="3D")
                 ax.legend(fontsize=8)
                 ax.set(title="Position Error", xlabel="Time (s)", ylabel="Error (m)")
             else:
                 ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
                 ax.set(title="Position Error")
+            self._set_datetime_axis(ax)
+        elif mode_name == "Residual Triad":
+            self._draw_residual_triad(ax)
+            self._set_datetime_axis(ax)
+        elif mode_name == "El vs SNR & Resp":
+            self._draw_el_snr_resp(ax)
+        elif mode_name == "Top Outlier Satellites":
+            self._draw_top_outliers(ax)
+        elif mode_name == "Directional DOP":
+            self._draw_directional_dop(ax)
+            self._set_datetime_axis(ax)
+        elif mode_name == "Body-Frame Error":
+            self._draw_body_frame_error(ax, p)
+            self._set_datetime_axis(ax)
+        elif mode_name == "Clock Bias & ISB":
+            self._draw_clock_bias_isb(ax)
             self._set_datetime_axis(ax)
         elif mode_name == "Constellation Summary":
             fig.set_size_inches(13, 4.5)

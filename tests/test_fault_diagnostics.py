@@ -99,6 +99,34 @@ ax.clear()
 gui.RTKPlotApp._draw_body_frame_error(mock, ax, data['pos'])
 print("   _draw_body_frame_error: OK")
 
+# Test 6b: False Fix Analysis (Plot 4A)
+ax.clear()
+mock.false_fix_limit = type("Var", (), {"get": lambda s: 1.0})()
+gui.RTKPlotApp._draw_false_fix(mock, ax, data['pos'])
+assert ax.get_yscale() == "log", "False fix analysis must use log scale on Y"
+print("   _draw_false_fix: OK (Plot 4A logarithmic AR Ratio vs 3D Error)")
+
+# Test 6c: Satellite Visibility Gantt / Swimlane (Plot 2A)
+ax.clear()
+gui.RTKPlotApp._draw_satellite_visibility_gantt(mock, ax, data['sat'])
+print("   _draw_satellite_visibility_gantt: OK (Plot 2A Residual Swimlane & Cycle Slip Map)")
+
+# Test 6d: Trajectory Error Heatmap (Plot 5A)
+ax.clear()
+mock.track_axes = []
+mock._apply_basemap = lambda *args, **kwargs: None
+gui.RTKPlotApp._draw_trajectory_error_heatmap(mock, ax, data['pos'], data['pos'])
+print("   _draw_trajectory_error_heatmap: OK (Plot 5A 2D Trajectory Error Heatmap)")
+
+# Test 6e: insert_time_gaps outage disconnection utility
+import numpy as np
+t_test = np.array([0.0, 1.0, 2.0, 10.0, 11.0, 12.0])  # gap between 2.0 and 10.0 (>2.5s)
+val_test = np.array([10.0, 11.0, 12.0, 20.0, 21.0, 22.0])
+t_out, val_out = gui.insert_time_gaps(t_test, val_test)
+assert len(t_out) == len(t_test) + 1, "Should insert one NaN gap point"
+assert np.isnan(t_out[3]) and np.isnan(val_out[3]), "Gap point at index 3 must be NaN"
+print("   insert_time_gaps: OK (Cleanly breaks continuous lines at data outages)")
+
 # Test 7: _apply_robust_ylim functionality
 ax.clear()
 import numpy as np
@@ -152,6 +180,24 @@ print("   Skyplot & C/N0 (Env) in GUI: OK (1A, 1B, 1C rendered)")
 app.set_mode("Env & Geometry Combined")
 assert len(app.plot_axes) == 5, f"Expected 5 plot axes in combined mode, got {len(app.plot_axes)}"
 print("   Env & Geometry Combined in GUI: OK (5 subplots rendered)")
+
+print("6b. Testing export_render_mode for new and updated diagnostic modes...")
+export_fig = plt.figure(figsize=(10, 6))
+metrics = diag.compute_segment_metrics(data["pos"], data["sat"])
+test_modes = [
+    "Trajectory Error Heatmap",
+    "False Fix Analysis",
+    "Satellite Visibility Gantt",
+    "Top Outlier Satellites",
+    "El vs SNR & Resp",
+    "Covariance",
+    "Body-Frame Error"
+]
+for tm in test_modes:
+    app.export_render_mode(export_fig, tm, data["pos"], data["sat"], metrics, with_hud=True)
+    assert len(export_fig.axes) > 0, f"Export figure should have axes for mode {tm}"
+    print(f"   export_render_mode [{tm}]: OK")
+plt.close(export_fig)
 
 root.destroy()
 

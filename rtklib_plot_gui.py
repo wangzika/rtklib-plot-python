@@ -58,26 +58,28 @@ NON_TIME_SERIES_MODES = (
 )
 
 PLOT_CATEGORIES = {
-    "故障诊断链路 (Fault Diagnostics)": [
-        "Env & Geometry Combined", "Skyplot & C/N0 (Env)", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Body-Frame Error"
+    "核心诊断链路 (Survey Diagnostics)": [
+        "Skyplot & C/N0 (Env)", "Satellite Visibility Gantt", "Top Outlier Satellites",
+        "False Fix Analysis", "Covariance", "Trajectory Error Heatmap",
+        "Residual Triad", "El vs SNR & Resp", "Directional DOP", "Body-Frame Error", "Env & Geometry Combined"
     ],
-    "轨迹与高程 (Trajectory & Position)": [
+    "轨迹与空间位置 (Trajectory & Position)": [
         "Gnd Trk", "Trajectory Error Heatmap", "ENU Position", "Height", "Body-Frame Error"
     ],
-    "定位精度与误差 (Accuracy & Errors)": [
+    "定位误差与精度评估 (Accuracy & Errors)": [
         "ENU Error", "Trajectory Error Heatmap", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad"
     ],
     "解算状态与可靠性 (Status & Reliability)": [
         "Solution Status", "AR Ratio", "Differential Age", "Innovation / NIS"
     ],
-    "卫星星历与信号质量 (Satellites & Signal Quality)": [
+    "卫星观测与信号质量 (Satellites & Signal Quality)": [
         "Satellites", "DOP", "Directional DOP", "Skyplot & C/N0 (Env)", "Residuals", "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Per-PRN Residuals", "Top Outlier Satellites", "El vs SNR & Resp"
     ]
 }
 
 MODE_BILINGUAL = {
     "Env & Geometry Combined": "①+③ 环境与几何综合 (Env & Geometry)",
-    "Skyplot & C/N0 (Env)": "星空图与载噪比综合 (Skyplot & C/N0)",
+    "Skyplot & C/N0 (Env)": "1A/B/C 环境星空与载噪比 (Skyplot & C/N0)",
     "Gnd Trk": "地面轨迹 (Gnd Trk)",
     "Trajectory Error Heatmap": "5A 轨迹误差热力图 (Trajectory Error 5A)",
     "ENU Position": "ENU位置 (ENU Pos)",
@@ -96,16 +98,16 @@ MODE_BILINGUAL = {
     "Satellite Visibility Gantt": "2A 卫星残差泳道与周跳 (Swimlane 2A)",
     "Multipath Skyplot": "星空图与载噪比 (Skyplot & C/N0)",
     "Per-PRN Residuals": "单星残差画像 (Per-PRN Res)",
-    "Covariance": "4B 滤波器协方差 (Covariance 4B)",
-    "False Fix Analysis": "4A 假固定与Ratio (False Fix 4A)",
+    "Covariance": "4B 滤波协方差一致性 (Covariance 4B)",
+    "False Fix Analysis": "4A 假固定与Ratio四象限 (False Fix 4A)",
     "Innovation / NIS": "新息/NIS (Innovation)",
     "Error CDF": "误差累计分布 (CDF)",
     "Error Histogram": "误差直方图 (Histogram)",
-    "Residual Triad": "伪距残差三线 (Residual Triad)",
-    "El vs SNR & Resp": "高度角-SNR-残差 (El vs SNR & Resp)",
-    "Top Outlier Satellites": "2B 粗差卫星贡献榜 (Top Outliers 2B)",
-    "Directional DOP": "方向DOP与扇区 (Directional DOP)",
-    "Body-Frame Error": "车体坐标系误差 (Body-Frame Err)",
+    "Residual Triad": "伪距残差三线时序 (Residual Triad)",
+    "El vs SNR & Resp": "1C 高度角-载噪比-残差 (El vs SNR & Resp)",
+    "Top Outlier Satellites": "2B 粗差卫星贡献箱线图 (Top Outliers 2B)",
+    "Directional DOP": "3A 方向DOP几何因子 (Directional DOP)",
+    "Body-Frame Error": "5B 车体坐标系误差 (Body-Frame Err)",
 }
 
 DIAGNOSTIC_WORKSPACES = [
@@ -1270,8 +1272,8 @@ class RTKPlotApp:
                     sub_idx = page_idx - 1
                     sub_total = page_total - 1
                     if sub_total <= 3:
-                        gap_y = 0.055
-                        top, bottom, right_x, right_w = 0.92, 0.09, 0.67, 0.295
+                        gap_y = 0.065
+                        top, bottom, right_x, right_w = 0.92, 0.08, 0.67, 0.295
                         h = (top - bottom - (sub_total - 1) * gap_y) / sub_total
                         y = top - (sub_idx + 1) * h - sub_idx * gap_y
                         panels.append({"mode": name, "rect": (right_x, y, right_w, h)})
@@ -1279,8 +1281,8 @@ class RTKPlotApp:
                         r_cols = 2
                         r_rows = (sub_total + 1) // 2
                         r_row, r_col = divmod(sub_idx, r_cols)
-                        gap_x, gap_y = 0.035, 0.045
-                        top, bottom, right_x = 0.92, 0.09, 0.64
+                        gap_x, gap_y = 0.035, 0.055
+                        top, bottom, right_x = 0.92, 0.08, 0.64
                         total_w = 0.33
                         sub_w = (total_w - gap_x) / 2
                         h = (top - bottom - (r_rows - 1) * gap_y) / r_rows
@@ -1295,43 +1297,43 @@ class RTKPlotApp:
                 page_total = min(page_size, n - (i // page_size) * page_size)
                 if page_idx == 0 or page_total == 1:
                     if page_total == 1:
-                        panels.append({"mode": name, "rect": (0.075, 0.09, 0.89, 0.83)})
+                        panels.append({"mode": name, "rect": (0.075, 0.08, 0.89, 0.84)})
                     else:
-                        panels.append({"mode": name, "rect": (0.075, 0.53, 0.89, 0.39)})
+                        panels.append({"mode": name, "rect": (0.075, 0.53, 0.89, 0.38)})
                 else:
                     sub_idx = page_idx - 1
                     sub_total = page_total - 1
                     gap_x = 0.045
-                    left, right, bottom, h = 0.075, 0.965, 0.09, 0.36
+                    left, right, bottom, h = 0.075, 0.965, 0.08, 0.36
                     sub_w = (right - left - (sub_total - 1) * gap_x) / sub_total
                     x = left + sub_idx * (sub_w + gap_x)
                     panels.append({"mode": name, "rect": (x, bottom, sub_w, h)})
 
         else: # auto_grid
             if n == 1:
-                panels.append({"mode": modes[0], "rect": (0.075, 0.09, 0.89, 0.83)})
+                panels.append({"mode": modes[0], "rect": (0.075, 0.08, 0.89, 0.84)})
             elif n == 2:
                 w = 0.425; gap_x = 0.06; left = 0.075
-                panels.append({"mode": modes[0], "rect": (left, 0.09, w, 0.82)})
-                panels.append({"mode": modes[1], "rect": (left + w + gap_x, 0.09, w, 0.82)})
+                panels.append({"mode": modes[0], "rect": (left, 0.08, w, 0.83)})
+                panels.append({"mode": modes[1], "rect": (left + w + gap_x, 0.08, w, 0.83)})
             elif n == 3:
                 w_top = 0.425; gap_x = 0.06; left = 0.075
-                panels.append({"mode": modes[0], "rect": (left, 0.51, w_top, 0.37)})
-                panels.append({"mode": modes[1], "rect": (left + w_top + gap_x, 0.51, w_top, 0.37)})
-                panels.append({"mode": modes[2], "rect": (left, 0.09, 0.89, 0.37)})
+                panels.append({"mode": modes[0], "rect": (left, 0.525, w_top, 0.375)})
+                panels.append({"mode": modes[1], "rect": (left + w_top + gap_x, 0.525, w_top, 0.375)})
+                panels.append({"mode": modes[2], "rect": (left, 0.08, 0.89, 0.375)})
             elif n == 4:
                 w = 0.425; gap_x = 0.06; left = 0.075
-                h = 0.37; gap_y = 0.05
-                panels.append({"mode": modes[0], "rect": (left, 0.51, w, h)})
-                panels.append({"mode": modes[1], "rect": (left + w + gap_x, 0.51, w, h)})
-                panels.append({"mode": modes[2], "rect": (left, 0.09, w, h)})
-                panels.append({"mode": modes[3], "rect": (left + w + gap_x, 0.09, w, h)})
+                h = 0.375; gap_y = 0.075
+                panels.append({"mode": modes[0], "rect": (left, 0.53, w, h)})
+                panels.append({"mode": modes[1], "rect": (left + w + gap_x, 0.53, w, h)})
+                panels.append({"mode": modes[2], "rect": (left, 0.08, w, h)})
+                panels.append({"mode": modes[3], "rect": (left + w + gap_x, 0.08, w, h)})
             else:
                 page_size = 6
                 cols = 3
                 rows = 2
-                left, right, bottom, top = 0.065, 0.985, 0.09, 0.895
-                gap_x, gap_y = 0.045, 0.065
+                left, right, bottom, top = 0.065, 0.985, 0.08, 0.91
+                gap_x, gap_y = 0.045, 0.075
                 width = (right - left - gap_x * (cols - 1)) / cols
                 height = (top - bottom - gap_y * (rows - 1)) / rows
                 for i, name in enumerate(modes):
@@ -1597,23 +1599,43 @@ class RTKPlotApp:
 
         mode = self.mode.get()
         if mode == "Dashboard":
-            for m in modes_to_add:
+            to_add = [m for m in modes_to_add if m not in self.dashboard_modes]
+            if not to_add:
+                for idx, m in enumerate(self.dashboard_modes):
+                    if m in modes_to_add:
+                        self.selected_dashboard_index = idx
+                        break
+                self.segment_status.configure(text=f"提示: 所选图表已存在于 Dashboard 中，已直接聚焦。")
+                self.redraw()
+                return
+            for m in to_add:
                 self.dashboard_modes.append(m)
             self.selected_dashboard_index = len(self.dashboard_modes) - 1
             self.focused_dashboard_subplot = None
-            self.segment_status.configure(text=f"已向 Dashboard 追加 {len(modes_to_add)} 个子图，当前共 {len(self.dashboard_modes)} 个。")
+            self.segment_status.configure(text=f"已向 Dashboard 追加 {len(to_add)} 个新子图，当前共 {len(self.dashboard_modes)} 个。")
             self.redraw()
         else:
             if mode != "Custom Analysis":
                 self.mode.set("Custom Analysis")
             current_modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
-            for m in modes_to_add:
+            to_add = [m for m in modes_to_add if m not in current_modes]
+            if not to_add:
+                # Find and focus the existing panel
+                for idx, p in enumerate(self.custom_panels):
+                    if p.get("mode") in modes_to_add:
+                        self.selected_custom_panel = idx
+                        break
+                disp_name = MODE_BILINGUAL.get(modes_to_add[0], modes_to_add[0])
+                self.segment_status.configure(text=f"提示: 图表 [{disp_name}] 已存在于当前排版中，已直接聚焦定位，未重复追加。")
+                self.redraw()
+                return
+            for m in to_add:
                 current_modes.append(m)
             self.custom_modes = current_modes
             self.custom_panels = self._initial_custom_panels(current_modes, self.custom_preset.get())
             self.selected_custom_panel = len(self.custom_panels) - 1
             self.focused_custom_panel = None
-            self.segment_status.configure(text=f"已追加 {len(modes_to_add)} 个子图，当前共 {len(self.custom_panels)} 个。")
+            self.segment_status.configure(text=f"已追加 {len(to_add)} 个新子图，当前共 {len(self.custom_panels)} 个。")
             self.redraw()
 
     def _popup_add_subplot_picker(self, insert_idx=None):
@@ -1639,6 +1661,11 @@ class RTKPlotApp:
             return
         mode = self.mode.get()
         if mode == "Dashboard":
+            if mode_name in self.dashboard_modes:
+                self.selected_dashboard_index = self.dashboard_modes.index(mode_name)
+                self.segment_status.configure(text=f"提示: 子图 [{mode_name}] 已存在于 Dashboard 中，已直接聚焦。")
+                self.redraw()
+                return
             if insert_idx is not None and 0 <= insert_idx < len(self.dashboard_modes):
                 self.dashboard_modes.insert(insert_idx + 1, mode_name)
                 self.selected_dashboard_index = insert_idx + 1
@@ -1652,6 +1679,12 @@ class RTKPlotApp:
             if mode != "Custom Analysis":
                 self.mode.set("Custom Analysis")
             current_modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
+            if mode_name in current_modes:
+                self.selected_custom_panel = current_modes.index(mode_name)
+                disp = MODE_BILINGUAL.get(mode_name, mode_name)
+                self.segment_status.configure(text=f"提示: 子图 [{disp}] 已存在于当前排版中，已直接聚焦。")
+                self.redraw()
+                return
             if insert_idx is not None and 0 <= insert_idx < len(current_modes):
                 current_modes.insert(insert_idx + 1, mode_name)
                 new_sel = insert_idx + 1
@@ -1662,7 +1695,8 @@ class RTKPlotApp:
             self.custom_panels = self._initial_custom_panels(current_modes, self.custom_preset.get())
             self.selected_custom_panel = new_sel
             self.focused_custom_panel = None
-            self.segment_status.configure(text=f"已添加子图 [{mode_name}]，当前共 {len(self.custom_panels)} 个。")
+            disp = MODE_BILINGUAL.get(mode_name, mode_name)
+            self.segment_status.configure(text=f"已添加子图 [{disp}]，当前共 {len(self.custom_panels)} 个。")
             self.redraw()
 
     def delete_selected_subplot(self):
@@ -2283,7 +2317,9 @@ class RTKPlotApp:
             messagebox.showerror("导出失败", f"生成 HTML 发生异常:\n{exc}")
 
     def _draw_residual_triad(self, ax):
-        triad = diag.compute_residual_triad(self.data)
+        if "_cached_triad" not in self.data:
+            self.data["_cached_triad"] = diag.compute_residual_triad(self.data)
+        triad = self.data["_cached_triad"]
         if triad.empty:
             ax.text(0.5, 0.5, "无有效伪距残差数据 (需 .stat 文件)", ha="center", va="center", transform=ax.transAxes)
             ax.set_title("伪距残差统计三线时序")
@@ -2303,12 +2339,10 @@ class RTKPlotApp:
             ax.text(0.5, 0.5, "无卫星观测数据 (需 .stat 文件)", ha="center", va="center", transform=ax.transAxes)
             ax.set_title("高度角-载噪比-残差联合分布")
             return
-        s1 = sat[(sat.freq == 1) & (sat.snr > 0) & (sat.resp != 0)]
-        if s1.empty:
-            s1 = sat[(sat.freq == 1) & (sat.snr > 0)]
+        s1 = sat[(sat.freq == 1) & (sat.snr > 0) & (sat.el > 0)].copy()
         if not s1.empty:
-            s1_sub = s1.iloc[::max(1, len(s1)//20000)]
-            resp_clip = np.clip(s1_sub.resp.abs(), 0, 15.0) if "resp" in s1_sub.columns else 0
+            s1_sub = s1.iloc[::max(1, len(s1)//25000)]
+            resp_clip = np.clip(s1_sub.resp.fillna(0).abs(), 0, 15.0) if "resp" in s1_sub.columns else np.zeros(len(s1_sub))
             sc = ax.scatter(s1_sub.el, s1_sub.snr, c=resp_clip, cmap="turbo", s=7, vmin=0, vmax=15.0, alpha=0.48, edgecolors="none")
             fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
             if fig_target is not None:
@@ -2385,7 +2419,9 @@ class RTKPlotApp:
         ax.grid(self.grid_on.get(), alpha=0.3, axis="x", ls=":")
 
     def _draw_directional_dop(self, ax):
-        dop_df = diag.compute_directional_dop(self.data)
+        if "_cached_directional_dop" not in self.data:
+            self.data["_cached_directional_dop"] = diag.compute_directional_dop(self.data)
+        dop_df = self.data["_cached_directional_dop"]
         if dop_df.empty:
             ax.text(0.5, 0.5, "无法计算方向 DOP (需 .stat 卫星仰角方位角)", ha="center", va="center", transform=ax.transAxes)
             ax.set_title("方向 DOP 几何精度因子")
@@ -2463,11 +2499,9 @@ class RTKPlotApp:
         from matplotlib.gridspec import GridSpec
         gs = GridSpec(1, 3, figure=self.fig, width_ratios=[1, 1, 1.25], wspace=0.28, left=0.05, right=0.96, top=0.90, bottom=0.12)
 
-        s_valid = sat[(sat.freq == 1) & (sat.snr > 0) & (sat.resp != 0)].copy()
-        if s_valid.empty:
-            s_valid = sat[(sat.freq == 1) & (sat.snr > 0)].copy()
+        s_valid = sat[(sat.freq == 1) & (sat.snr > 0) & (sat.el > 0)].copy()
         s_sub = s_valid.iloc[::max(1, len(s_valid) // 18000)].copy()
-        c_vals = np.clip(s_sub.resp.abs(), 0, 15) if "resp" in s_sub.columns else np.zeros(len(s_sub))
+        c_vals = np.clip(s_sub.resp.fillna(0).abs(), 0, 15) if "resp" in s_sub.columns else np.zeros(len(s_sub))
 
         # 1A. Earth-Frame Skyplot
         ax1 = self.fig.add_subplot(gs[0], projection="polar")
@@ -2516,6 +2550,71 @@ class RTKPlotApp:
 
         cb = self.fig.colorbar(sc, ax=ax3, fraction=0.046, pad=0.04)
         cb.set_label("|Pseudorange Residual| (m, clipped at 15m)", fontsize=9, weight="bold")
+
+        # Setup dynamic satellite artists for 1A, 1B, 1C
+        sc_sky1 = ax1.scatter([], [], s=85, facecolors="none", edgecolors="#dc2626", linewidths=1.8, zorder=15)
+        labels_sky1 = [ax1.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#dc2626", alpha=0.9, lw=0.8), zorder=16)
+                       for _ in range(35)]
+
+        sc_sky2 = ax2.scatter([], [], s=85, facecolors="none", edgecolors="#2563eb", linewidths=1.8, zorder=15)
+        labels_sky2 = [ax2.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#2563eb", alpha=0.9, lw=0.8), zorder=16)
+                       for _ in range(35)]
+
+        sc_snr = ax3.scatter([], [], s=95, facecolors="none", edgecolors="#dc2626", linewidths=1.8, zorder=15)
+        labels_snr = [ax3.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
+                               bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#dc2626", alpha=0.9, lw=0.8), zorder=16)
+                      for _ in range(35)]
+
+        dyn_artists_3in1 = [sc_sky1] + labels_sky1 + [sc_sky2] + labels_sky2 + [sc_snr] + labels_snr
+        self.custom_dynamic_artists.extend(dyn_artists_3in1)
+
+        def update_3in1(i, r, current_sat):
+            cur = current_sat[(current_sat.freq == 1) & (current_sat.snr > 0) & (current_sat.el > 0)].drop_duplicates("prn")
+            if not cur.empty:
+                az = cur.az.to_numpy()
+                el = cur.el.to_numpy()
+                snr = cur.snr.to_numpy()
+                prn = cur.prn.to_numpy()
+                th1 = np.deg2rad(az)
+                r1_curr = 90.0 - el
+                sc_sky1.set_offsets(np.c_[th1, r1_curr])
+
+                hd = float(getattr(r, "heading", 0.0)) if ("heading" in r and np.isfinite(r.heading)) else 0.0
+                az_body = (az - hd) % 360.0
+                th2 = np.deg2rad(az_body)
+                sc_sky2.set_offsets(np.c_[th2, r1_curr])
+
+                sc_snr.set_offsets(np.c_[el, snr])
+
+                for k in range(len(cur)):
+                    if k < 35:
+                        labels_sky1[k].set_position((th1[k], r1_curr[k]))
+                        labels_sky1[k].set_text(prn[k])
+                        labels_sky1[k].set_visible(True)
+
+                        labels_sky2[k].set_position((th2[k], r1_curr[k]))
+                        labels_sky2[k].set_text(prn[k])
+                        labels_sky2[k].set_visible(True)
+
+                        labels_snr[k].set_position((el[k] + 0.8, snr[k] + 0.5))
+                        labels_snr[k].set_text(prn[k])
+                        labels_snr[k].set_visible(True)
+                for k in range(len(cur), 35):
+                    labels_sky1[k].set_visible(False)
+                    labels_sky2[k].set_visible(False)
+                    labels_snr[k].set_visible(False)
+            else:
+                sc_sky1.set_offsets(np.empty((0, 2)))
+                sc_sky2.set_offsets(np.empty((0, 2)))
+                sc_snr.set_offsets(np.empty((0, 2)))
+                for k in range(35):
+                    labels_sky1[k].set_visible(False)
+                    labels_sky2[k].set_visible(False)
+                    labels_snr[k].set_visible(False)
+
+        self.custom_updaters.append(update_3in1)
 
         self.plot_axes = [ax1, ax2, ax3]
         self.ax = ax1
@@ -2722,14 +2821,39 @@ class RTKPlotApp:
                 self.time_cursors.append(ax.axvline(0,color="#333",ls="--",lw=.7,alpha=.65))
             self._register_custom_dynamic(name,ax,p,full)
         for ax in self.plot_axes:
-            box=ax.get_position()
-            p_mode=getattr(ax, "_panel_mode", "")
-            is_ts=p_mode not in NON_TIME_SERIES_MODES
-            has_ts_panel_below=any(other is not ax and getattr(other, "_panel_mode", "") not in NON_TIME_SERIES_MODES
-                and other.get_position().y1<box.y0-.005
-                and min(box.x1,other.get_position().x1)-max(box.x0,other.get_position().x0)>.2*min(box.width,other.get_position().width)
-                for other in self.plot_axes)
-            if has_ts_panel_below and is_ts and self.sync_time_axes.get():ax.tick_params(axis="x",labelbottom=False);ax.set_xlabel("")
+            box = ax.get_position()
+            p_mode = getattr(ax, "_panel_mode", "")
+            is_ts = p_mode not in NON_TIME_SERIES_MODES
+            has_panel_below = any(
+                other is not ax
+                and other.get_position().y1 < box.y0 - .005
+                and min(box.x1, other.get_position().x1) - max(box.x0, other.get_position().x0) > .2 * min(box.width, other.get_position().width)
+                for other in self.plot_axes
+            )
+            has_ts_panel_below = any(
+                other is not ax and getattr(other, "_panel_mode", "") not in NON_TIME_SERIES_MODES
+                and other.get_position().y1 < box.y0 - .005
+                and min(box.x1, other.get_position().x1) - max(box.x0, other.get_position().x0) > .2 * min(box.width, other.get_position().width)
+                for other in self.plot_axes
+            )
+            if has_panel_below:
+                # Unconditionally clear the bulky date-time xlabel whenever another subplot is underneath
+                ax.set_xlabel("")
+                if is_ts:
+                    if has_ts_panel_below and self.sync_time_axes.get():
+                        ax.tick_params(axis="x", labelbottom=False)
+                    elif self.sync_time_axes.get():
+                        has_bottom_ts = any(
+                            getattr(o, "_panel_mode", "") not in NON_TIME_SERIES_MODES
+                            and not any(b is not o and b.get_position().y1 < o.get_position().y0 - .005 for b in self.plot_axes)
+                            for o in self.plot_axes
+                        )
+                        if has_bottom_ts:
+                            ax.tick_params(axis="x", labelbottom=False)
+                        else:
+                            ax.tick_params(axis="x", labelsize=6.5, pad=1)
+                    else:
+                        ax.tick_params(axis="x", labelsize=6.5, pad=1)
         self.fig.suptitle("Custom RTKLIB Analysis",fontsize=13,weight="bold",y=0.985)
 
     def _register_custom_dynamic(self,name,ax,p,full):
@@ -2749,22 +2873,59 @@ class RTKPlotApp:
         elif name=="Solution Status":artists=[point("#333","o",8)]
         elif name=="AR Ratio":artists=[point("#333","o",8)]
         elif name=="Differential Age":artists=[point("#dc2626","o",8)]
-        elif name=="Satellites":artists=[point("#2878B5"),point("#E07A2D")]
-        elif name=="DOP":artists=[point(c) for c in ["#2878B5","#E07A2D","#36965A"]]
+        elif name=="Satellites":
+            p_trk = point("#2878B5", "o", 8)
+            p_usd = point("#E07A2D", "o", 8)
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#2878B5", alpha=0.9, lw=0.8), zorder=15)
+            artists = [p_trk, p_usd, badge]
+        elif name=="DOP":
+            pts = [point(c, "o", 7) for c in ["#2878B5","#E07A2D","#36965A"]]
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888", alpha=0.9, lw=0.8), zorder=15)
+            artists = pts + [badge]
+        elif name=="Directional DOP":
+            pts = [point(c, "o", 7) for c in ["#2878B5", "#E07A2D", "#36965A"]]
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#2878B5", alpha=0.9, lw=0.8), zorder=15)
+            artists = pts + [badge]
+        elif name=="Residual Triad":
+            p_max = point("#d90429", "o", 8)
+            p_2nd = point("#0077b6", "o", 7)
+            p_rms = point("#0B2B52", "o", 7)
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d90429", alpha=0.9, lw=0.8), zorder=15)
+            artists = [p_max, p_2nd, p_rms, badge]
+        elif name=="Body-Frame Error":
+            pts = [point(c, "o", 7) for c in ["#2878B5", "#E07A2D", "#36965A"]]
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d90429", alpha=0.9, lw=0.8), zorder=15)
+            artists = pts + [badge]
         elif name=="C/N0":artists=[ax.scatter([],[],s=24,edgecolors="#222",linewidths=.5,zorder=11) for _ in range(2)]
         elif name=="Elevation":artists=[ax.scatter([],[],s=18,marker="o",facecolors="none",edgecolors="#222",zorder=11)]
         elif name=="Residuals":artists=[ax.scatter([],[],s=24,marker="o",facecolors="none",edgecolors=c,zorder=11) for c in ["#2878B5","#E07A2D"]]
         elif name=="Multipath Proxy":artists=[ax.scatter([],[],s=24,marker="o",facecolors="none",edgecolors="#222",zorder=11)]
         elif name=="Cycle Slips":artists=[ax.scatter([],[],s=32,marker="x",color="#d00000",zorder=11)]
-        elif name=="Satellite Visibility Gantt":artists=[ax.axvline(np.nan,color="#dc2626",ls="--",lw=1.0,alpha=.8,zorder=10)]
+        elif name=="Satellite Visibility Gantt":
+            v_line = ax.axvline(np.nan, color="#e63946", ls="--", lw=1.6, alpha=0.95, zorder=12)
+            sc_active = ax.scatter([], [], s=55, marker="o", facecolors="#ffd166", edgecolors="#d90429", linewidths=1.3, zorder=14)
+            badge = ax.text(0.02, 0.95, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d90429", alpha=0.9, lw=0.8), zorder=15)
+            artists = [v_line, sc_active, badge]
         elif name=="Multipath Skyplot":
             artists=[ax.scatter([],[],s=60,marker="*",edgecolors="#fff",linewidths=0.8,color="#dc2626",zorder=12)]
         elif name=="Per-PRN Residuals":
             artists=[point("#dc2626","o",7)]
         elif name=="Covariance":
-            artists=[point("#1f77b4" if self.data["has_truth"] else "#2878B5","o",8)]
+            p_cov = point("#1f77b4" if self.data["has_truth"] else "#2878B5","o",8)
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#1f77b4", alpha=0.9, lw=0.8), zorder=15)
+            artists = [p_cov, badge]
         elif name=="False Fix Analysis":
-            artists=[point("#ffd92f","*",12)]
+            p_ff = point("#ffd92f","*",14)
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#333", alpha=0.9, lw=0.8), zorder=15)
+            artists = [p_ff, badge]
         elif name=="El vs SNR & Resp":
             sc_curr = ax.scatter([], [], s=100, facecolors="none", edgecolors="#dc2626", linewidths=1.8, zorder=15)
             texts = [ax.text(0, 0, "", fontsize=8, weight="bold", color="#111",
@@ -2788,6 +2949,7 @@ class RTKPlotApp:
         def update(i,r,current_sat):
             visible=self.qfilter.get()=="All Q" or int(r.q)==int(self.qfilter.get().split("=")[1].split(":")[0])
             x=float(r.time);y=None
+            dt=gpst_to_local_datetime(r.week,r.tow)
             if name in ("Gnd Trk", "Trajectory Error Heatmap"):
                 start=max(0,i-120);stride=max(1,(i-start+1)//300)
                 sub_t = full.time.iloc[start:i+1:stride]
@@ -2814,9 +2976,52 @@ class RTKPlotApp:
             elif name=="Satellites" and sat_epoch is not None and not sat_epoch.empty:
                 j=int(np.clip(np.searchsorted(sat_epoch.time.to_numpy(),x),0,len(sat_epoch)-1));row=sat_epoch.iloc[j]
                 set_point(artists[0],x,row.tracked,visible);set_point(artists[1],x,row.used,visible)
+                artists[2].set_text(f"跟踪: {int(row.tracked)}颗 · 参与解算: {int(row.used)}颗")
+                artists[2].set_visible(visible)
             elif name=="DOP" and dop is not None and not dop.empty:
                 j=int(np.clip(np.searchsorted(dop.time.to_numpy(),x),0,len(dop)-1));row=dop.iloc[j]
-                for art,col in zip(artists,["PDOP","HDOP","VDOP"]):set_point(art,x,row[col],visible and np.isfinite(row[col]))
+                for art,col in zip(artists[:3],["PDOP","HDOP","VDOP"]):set_point(art,x,row[col],visible and np.isfinite(row[col]))
+                artists[3].set_text(f"PDOP: {row.PDOP:.2f} · HDOP: {row.HDOP:.2f} · VDOP: {row.VDOP:.2f}")
+                artists[3].set_visible(visible)
+            elif name=="Directional DOP":
+                dop_df = self.data.get("_cached_directional_dop")
+                if visible and dop_df is not None and not dop_df.empty:
+                    j = int(np.clip(np.searchsorted(dop_df.time.to_numpy(), x), 0, len(dop_df) - 1))
+                    row = dop_df.iloc[j]
+                    set_point(artists[0], x, row.EDOP, True)
+                    set_point(artists[1], x, row.NDOP, True)
+                    set_point(artists[2], x, row.VDOP, True)
+                    artists[3].set_text(f"EDOP: {row.EDOP:.2f} · NDOP: {row.NDOP:.2f} · VDOP: {row.VDOP:.2f}")
+                    artists[3].set_visible(True)
+                else:
+                    for art in artists[:3]: set_point(art, 0, 0, False)
+                    artists[3].set_visible(False)
+            elif name=="Residual Triad":
+                triad = self.data.get("_cached_triad")
+                if visible and triad is not None and not triad.empty:
+                    j = int(np.clip(np.searchsorted(triad.time.to_numpy(), x), 0, len(triad) - 1))
+                    row = triad.iloc[j]
+                    set_point(artists[0], x, row.max_resp, True)
+                    set_point(artists[1], x, row.sec_resp, True)
+                    set_point(artists[2], x, row.rms_resp, True)
+                    artists[3].set_text(f"残差: Max={row.max_resp:.2f}m · 2nd={row.sec_resp:.2f}m · RMS={row.rms_resp:.2f}m")
+                    artists[3].set_visible(True)
+                else:
+                    for art in artists[:3]: set_point(art, 0, 0, False)
+                    artists[3].set_visible(False)
+            elif name=="Body-Frame Error":
+                along = float(getattr(r, "along_err", np.nan))
+                cross = float(getattr(r, "cross_err", np.nan))
+                vert = float(getattr(r, "vert_err", np.nan))
+                if visible and np.isfinite(along):
+                    set_point(artists[0], x, along, True)
+                    set_point(artists[1], x, cross, True)
+                    set_point(artists[2], x, vert, True)
+                    artists[3].set_text(f"沿迹: {along:+.2f}m · 横向: {cross:+.2f}m · 垂向: {vert:+.2f}m")
+                    artists[3].set_visible(True)
+                else:
+                    for art in artists[:3]: set_point(art, 0, 0, False)
+                    artists[3].set_visible(False)
             elif name in ("C/N0","Elevation","Residuals","Multipath Proxy","Cycle Slips"):
                 cs=current_sat
                 if name=="C/N0":
@@ -2836,6 +3041,15 @@ class RTKPlotApp:
                     artists[0].set_offsets(offsets)
             elif name=="Satellite Visibility Gantt":
                 artists[0].set_xdata([x,x]) if visible else artists[0].set_xdata([np.nan,np.nan])
+                prn_map = getattr(ax, "_gantt_prn_to_y", getattr(self, "_gantt_prn_to_y", {}))
+                active_y = [prn_map[p] for p in current_sat.prn.unique() if p in prn_map]
+                if visible and len(active_y) > 0:
+                    artists[1].set_offsets(np.c_[[x] * len(active_y), active_y])
+                    artists[2].set_text(f"历元 {i+1} · 跟踪: {len(active_y)} 颗星")
+                    artists[2].set_visible(True)
+                else:
+                    artists[1].set_offsets(np.empty((0, 2)))
+                    artists[2].set_visible(False)
             elif name=="Multipath Skyplot":
                 cs=current_sat
                 g=cs[(cs.freq==1)&(cs.resp!=0)]
@@ -2847,20 +3061,38 @@ class RTKPlotApp:
                     artists[0].set_offsets(np.empty((0,2)))
             elif name=="Covariance":
                 val = float(getattr(r, "de", np.nan)) if self.data["has_truth"] else float(getattr(r, "sigE", np.nan))
-                set_point(artists[0], x, val, visible and np.isfinite(val))
+                if visible and np.isfinite(val):
+                    set_point(artists[0], x, val, True)
+                    sde_val = float(getattr(r, "sde", np.nan))
+                    b_str = f" · 3σ: ±{3*sde_val:.2f}m" if np.isfinite(sde_val) else ""
+                    artists[1].set_text(f"东向误差: {val:+.2f}m{b_str}")
+                    artists[1].set_visible(True)
+                else:
+                    set_point(artists[0], 0, 0, False)
+                    artists[1].set_visible(False)
             elif name=="False Fix Analysis":
                 rat = min(float(getattr(r, "ratio", 1.0)), 15.0)
                 e3 = max(float(getattr(r, "e3d", 0.01)), 0.01) if self.data["has_truth"] else np.nan
-                set_point(artists[0], rat, e3, visible and np.isfinite(rat) and np.isfinite(e3))
+                if visible and np.isfinite(rat) and np.isfinite(e3):
+                    set_point(artists[0], rat, e3, True)
+                    is_false = (int(r.q) == 1 and e3 > 1.0)
+                    status_desc = "⚠️ 假固定 (False Fix!)" if is_false else ("✅ 正常固定" if int(r.q)==1 else "浮点解 (Float)")
+                    artists[1].set_text(f"Ratio: {rat:.1f} · 3D误差: {e3:.2f}m · {status_desc}")
+                    artists[1].set_visible(True)
+                else:
+                    set_point(artists[0], 0, 0, False)
+                    artists[1].set_visible(False)
             elif name=="El vs SNR & Resp":
                 cs=current_sat
-                g=cs[(cs.freq==1)&(cs.snr>0)&(cs.el>0)] if (cs is not None and not cs.empty) else pd.DataFrame()
+                g=cs[(cs.freq==1)&(cs.snr>0)&(cs.el>0)].drop_duplicates("prn") if (cs is not None and not cs.empty) else pd.DataFrame()
                 if visible and not g.empty:
                     artists[0].set_offsets(np.c_[g.el, g.snr])
                     for k, (_, sat_row) in enumerate(g.iterrows()):
                         if k < 35:
                             artists[k + 1].set_position((sat_row.el + 0.8, sat_row.snr + 0.5))
-                            artists[k + 1].set_text(sat_row.prn)
+                            is_used = ("resp" in sat_row and sat_row.resp != 0)
+                            tag = sat_row.prn if is_used else f"{sat_row.prn} (跟踪)"
+                            artists[k + 1].set_text(tag)
                             artists[k + 1].set_visible(True)
                     for k in range(len(g), 35):
                         artists[k + 1].set_visible(False)
@@ -2869,7 +3101,7 @@ class RTKPlotApp:
                     for k in range(35):
                         artists[k + 1].set_visible(False)
             elif name=="Innovation / NIS":
-                dt=gpst_to_local_datetime(r.week,r.tow);artists[0].set_text(f"当前历元：{dt:%Y-%m-%d %H:%M:%S} CST · Q={int(r.q)}")
+                artists[0].set_text(f"当前历元：{dt:%Y-%m-%d %H:%M:%S} CST · Q={int(r.q)}")
 
         self.custom_updaters.append(update)
 
@@ -3373,6 +3605,8 @@ class RTKPlotApp:
             key=lambda p: (prefix_order.get(p[0] if p else "", 99), int(p[1:]) if p[1:].isdigit() else 0, p)
         )
         prn_to_y = {prn: i for i, prn in enumerate(sorted_prns)}
+        self._gantt_prn_to_y = prn_to_y
+        ax._gantt_prn_to_y = prn_to_y
 
         y_vals = [prn_to_y[p] for p in s_l1.prn]
         resp_vals = np.clip(s_l1.resp.abs().to_numpy(dtype=float), 0, 15.0) if "resp" in s_l1.columns else np.zeros(len(s_l1))

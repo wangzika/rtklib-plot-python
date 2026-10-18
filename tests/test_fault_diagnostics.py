@@ -71,10 +71,11 @@ ax.clear()
 gui.RTKPlotApp._draw_directional_dop(mock, ax)
 print("   _draw_directional_dop: OK")
 
-# Test 5: Clock Bias & ISB
+# Test 5: Covariance (without pink twinx line)
 ax.clear()
-gui.RTKPlotApp._draw_clock_bias_isb(mock, ax)
-print("   _draw_clock_bias_isb: OK")
+gui.RTKPlotApp._draw_covariance(mock, ax, data['pos'])
+assert ax not in mock.__dict__.get("cov_twin_axes", {}), "Covariance should not have twinx"
+print("   _draw_covariance: OK (clean 1-sigma uncertainty)")
 
 # Test 6: Body-Frame Error
 ax.clear()
@@ -89,20 +90,32 @@ root = tk.Tk()
 root.withdraw()  # headless
 app = gui.RTKPlotApp(root, pos=pos_file, reference=ref_file)
 print("   App initialized with solution:", app.pos_path.name)
+assert app.false_fix_limit.get() == 1.0, f"Expected false_fix_limit=1.0, got {app.false_fix_limit.get()}"
+print(f"   False fix limit confirmed: {app.false_fix_limit.get()} m")
 
 for idx in range(5):
     app.switch_workspace(idx)
     ws = gui.DIAGNOSTIC_WORKSPACES[idx]
     print(f"   Switched to Workspace {idx+1} [{ws['name']}]: OK (mode={app.mode.get()}, panels={len(app.custom_panels)})")
 
-print("6. Testing Env & Geometry Combined mode in GUI...")
+print("6. Testing 3-in-1 Skyplot & C/N0 and Env & Geometry in GUI...")
+app.set_mode("Skyplot & C/N0 (Env)")
+assert len(app.plot_axes) == 3, f"Expected 3 subplots in Skyplot & C/N0, got {len(app.plot_axes)}"
+print("   Skyplot & C/N0 (Env) in GUI: OK (1A, 1B, 1C rendered)")
+
 app.set_mode("Env & Geometry Combined")
 assert len(app.plot_axes) == 5, f"Expected 5 plot axes in combined mode, got {len(app.plot_axes)}"
 print("   Env & Geometry Combined in GUI: OK (5 subplots rendered)")
 
 root.destroy()
 
-print("7. Testing plot_combined_environment_and_geometry...")
+print("7. Testing plot_skyplot_cn0_combined and plot_combined_environment_and_geometry...")
+test_3in1 = ROOT.parent / "test_3in1_verify.png"
+fig_3in1 = rep.plot_skyplot_cn0_combined(data, test_3in1)
+assert test_3in1.exists() and test_3in1.stat().st_size > 10000, "3-in-1 image generation failed"
+print(f"   plot_skyplot_cn0_combined: OK ({test_3in1.stat().st_size:,} bytes)")
+test_3in1.unlink(missing_ok=True)
+
 test_img = ROOT.parent / "test_combined_verify.png"
 fig_comb = rep.plot_combined_environment_and_geometry(data, test_img)
 assert test_img.exists() and test_img.stat().st_size > 10000, "Combined image generation failed"

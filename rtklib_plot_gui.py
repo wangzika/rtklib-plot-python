@@ -27,21 +27,21 @@ import rtklib_map_tiles as mt
 Q_LABELS = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}
 Q_COLORS = {1: "#07851d", 2: "#dc8a12", 3: "#5b83c4", 4: "#9b59b6", 5: "#777777", 6: "#17a2a4"}
 MODES = ["Gnd Trk", "ENU Position", "Height", "ENU Error", "Solution Status",
-         "AR Ratio", "Differential Age", "Satellites", "DOP", "Skyplot", "C/N0", "Elevation", "Residuals",
-         "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Multipath Skyplot", "Per-PRN Residuals", "Covariance", "False Fix Analysis", "Innovation / NIS",
-         "Error CDF", "Error Histogram", "Constellation Summary",
-         "Env & Geometry Combined", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Clock Bias & ISB", "Body-Frame Error"]
+         "AR Ratio", "Differential Age", "Satellites", "DOP", "Skyplot & C/N0 (Env)", "Residuals",
+         "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Per-PRN Residuals", "Covariance", "False Fix Analysis", "Innovation / NIS",
+         "Error CDF", "Error Histogram",
+         "Env & Geometry Combined", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Body-Frame Error"]
 
 NON_TIME_SERIES_MODES = (
     "Gnd Trk", "Skyplot", "Multipath Skyplot", "Multipath Proxy",
     "Per-PRN Residuals", "Innovation / NIS", "Error CDF",
-    "Error Histogram", "Constellation Summary",
-    "El vs SNR & Resp", "Top Outlier Satellites", "Env & Geometry Combined"
+    "Error Histogram",
+    "El vs SNR & Resp", "Top Outlier Satellites", "Env & Geometry Combined", "Skyplot & C/N0 (Env)"
 )
 
 PLOT_CATEGORIES = {
     "故障诊断链路 (Fault Diagnostics)": [
-        "Env & Geometry Combined", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Clock Bias & ISB", "Body-Frame Error"
+        "Env & Geometry Combined", "Skyplot & C/N0 (Env)", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites", "Directional DOP", "Body-Frame Error"
     ],
     "轨迹与高程 (Trajectory & Position)": [
         "Gnd Trk", "ENU Position", "Height", "Body-Frame Error"
@@ -50,15 +50,16 @@ PLOT_CATEGORIES = {
         "ENU Error", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad"
     ],
     "解算状态与可靠性 (Status & Reliability)": [
-        "Solution Status", "AR Ratio", "Differential Age", "Innovation / NIS", "Clock Bias & ISB"
+        "Solution Status", "AR Ratio", "Differential Age", "Innovation / NIS"
     ],
     "卫星星历与信号质量 (Satellites & Signal Quality)": [
-        "Satellites", "DOP", "Directional DOP", "Skyplot", "C/N0", "Elevation", "Residuals", "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Multipath Skyplot", "Per-PRN Residuals", "Top Outlier Satellites", "El vs SNR & Resp", "Constellation Summary"
+        "Satellites", "DOP", "Directional DOP", "Skyplot & C/N0 (Env)", "Residuals", "Multipath Proxy", "Cycle Slips", "Satellite Visibility Gantt", "Per-PRN Residuals", "Top Outlier Satellites", "El vs SNR & Resp"
     ]
 }
 
 MODE_BILINGUAL = {
     "Env & Geometry Combined": "①+③ 环境与几何综合 (Env & Geometry)",
+    "Skyplot & C/N0 (Env)": "星空图与载噪比综合 (Skyplot & C/N0)",
     "Gnd Trk": "地面轨迹 (Gnd Trk)",
     "ENU Position": "ENU位置 (ENU Pos)",
     "Height": "大地高程 (Height)",
@@ -68,26 +69,23 @@ MODE_BILINGUAL = {
     "Differential Age": "差分时延与解状态 (Age & Q)",
     "Satellites": "卫星数量 (Satellites)",
     "DOP": "DOP精度因子 (DOP)",
-    "Skyplot": "星空图 (Skyplot)",
-    "C/N0": "载噪比 (C/N0)",
-    "Elevation": "卫星高度角 (Elevation)",
+    "Skyplot": "星空图与载噪比 (Skyplot & C/N0)",
+    "C/N0": "载噪比与星空图 (C/N0 & Skyplot)",
     "Residuals": "伪距残差 (Residuals)",
     "Multipath Proxy": "多路径效应 (Multipath)",
     "Cycle Slips": "周跳探测 (Cycle Slips)",
     "Satellite Visibility Gantt": "卫星可见与周跳甘特图 (Gantt)",
-    "Multipath Skyplot": "多路径星空热力图 (MP Skyplot)",
+    "Multipath Skyplot": "星空图与载噪比 (Skyplot & C/N0)",
     "Per-PRN Residuals": "单星残差画像 (Per-PRN Res)",
     "Covariance": "方差协方差 (Covariance)",
     "False Fix Analysis": "假固定分析 (False Fix)",
     "Innovation / NIS": "新息/NIS (Innovation)",
     "Error CDF": "误差累计分布 (CDF)",
     "Error Histogram": "误差直方图 (Histogram)",
-    "Constellation Summary": "各星座汇总 (Constellation)",
     "Residual Triad": "伪距残差三线 (Residual Triad)",
     "El vs SNR & Resp": "高度角-SNR-残差 (El vs SNR & Resp)",
     "Top Outlier Satellites": "粗差卫星贡献榜 (Top Outliers)",
     "Directional DOP": "方向DOP与扇区 (Directional DOP)",
-    "Clock Bias & ISB": "接收机钟差与ISB (Clock & ISB)",
     "Body-Frame Error": "车体坐标系误差 (Body-Frame Err)",
 }
 
@@ -95,16 +93,16 @@ DIAGNOSTIC_WORKSPACES = [
     {
         "id": 1,
         "name": "① 外部环境与多路径",
-        "desc": "星空多路径热力图、高度角-信噪比-残差联合分布与伪距残差三线时序",
+        "desc": "星空图与载噪比综合(地固+车体+联合散点)、高度角残差分布与残差三线",
         "preset": "Focus Left (左主右副)",
-        "modes": ["Multipath Skyplot", "El vs SNR & Resp", "Residual Triad"]
+        "modes": ["Skyplot & C/N0 (Env)", "El vs SNR & Resp", "Residual Triad"]
     },
     {
         "id": 2,
         "name": "② 单星污染与健康度",
-        "desc": "全星座可见性/周跳泳道图、粗差卫星贡献度排行榜与载噪比时序",
+        "desc": "全星座可见性/周跳泳道图、粗差卫星贡献度排行榜与伪距残差",
         "preset": "Focus Top (上主下副)",
-        "modes": ["Satellite Visibility Gantt", "Top Outlier Satellites", "C/N0"]
+        "modes": ["Satellite Visibility Gantt", "Top Outlier Satellites", "Residuals"]
     },
     {
         "id": 3,
@@ -116,9 +114,9 @@ DIAGNOSTIC_WORKSPACES = [
     {
         "id": 4,
         "name": "④ 模糊度固定与滤波",
-        "desc": "假固定点空间识别、状态协方差 ±3σ 检验与接收机钟差/系统间偏差",
+        "desc": "假固定点空间识别 (1m门限)、状态协方差 ±3σ 检验与残差三线",
         "preset": "Focus Left (左主右副)",
-        "modes": ["False Fix Analysis", "Covariance", "Clock Bias & ISB"]
+        "modes": ["False Fix Analysis", "Covariance", "Residual Triad"]
     },
     {
         "id": 5,
@@ -179,7 +177,7 @@ class RTKPlotApp:
         self.custom_page=0;self.custom_page_size=6
         self.custom_updaters=[];self.custom_dynamic_artists=[];self.dop_frames={};self.cov_twin_axes={}
         self.dynamic_artists=[];self._blit_background=None;self._cursor_job=None;self._last_cursor_index=None;self._press_state=None
-        self.false_fix_limit=tk.DoubleVar(value=0.20)
+        self.false_fix_limit=tk.DoubleVar(value=1.0)
         self.segments=[];self.segment_start_idx=None;self.segment_palette=["#7b61a8","#168aad","#d17b0f","#b23a48","#4f772d","#ae5a9d"]
         self._drag_epoch=False;self.track_axes=[];self.datetime_axes=[];self.segment_track_lines=[];self.segment_sky_artists=[];self.segment_artists=[]
         self._shift_drag_start=None;self._shift_drag_patch=None;self._shift_drag_ax=None
@@ -1472,13 +1470,15 @@ class RTKPlotApp:
             self._draw_custom_grid();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
         if mode=="Env & Geometry Combined":
             self._draw_env_geometry_combined();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
+        if mode in ("Skyplot & C/N0 (Env)", "Skyplot", "C/N0", "Multipath Skyplot"):
+            self._draw_skyplot_cn0_3in1();self._apply_segment_overlays();self._register_dynamic_artists();self.canvas.draw_idle();self._update_cursor();self.update_analysis();return
         if mode in ("ENU Position","ENU Error","Error Histogram","Body-Frame Error"):
             sharex = (mode != "Error Histogram")
             axes=self.fig.subplots(3,1,sharex=sharex);self.plot_axes=list(axes);self.ax=axes[0]
-        elif mode in ("Constellation Summary", "Directional DOP", "Clock Bias & ISB"):
-            axes=self.fig.subplots(2,1,sharex=True if mode != "Constellation Summary" else False);self.plot_axes=list(axes);self.ax=axes[0]
+        elif mode in ("Directional DOP",):
+            axes=self.fig.subplots(2,1,sharex=True);self.plot_axes=list(axes);self.ax=axes[0]
         else:
-            self.ax=self.fig.add_subplot(111,projection="polar" if mode in ("Skyplot", "Multipath Skyplot") else None);self.plot_axes=[self.ax]
+            self.ax=self.fig.add_subplot(111);self.plot_axes=[self.ax]
         ax=self.ax
         if mode=="Gnd Trk":self._draw_track(ax,p,full)
         elif mode=="ENU Position":self._draw_enu_positions(self.plot_axes,p)
@@ -1492,21 +1492,16 @@ class RTKPlotApp:
         elif mode=="Differential Age":self._draw_differential_age(ax,p)
         elif mode=="Satellites":self._draw_sats(ax)
         elif mode=="DOP":self._draw_dop(ax)
-        elif mode=="Skyplot":self._draw_sky(ax)
-        elif mode=="C/N0":self._draw_cn0(ax)
-        elif mode=="Elevation":self._draw_elevation(ax)
         elif mode=="Residuals":self._draw_residuals(ax)
         elif mode=="Multipath Proxy":self._draw_multipath(ax)
         elif mode=="Cycle Slips":self._draw_slips(ax)
         elif mode=="Satellite Visibility Gantt":self._draw_satellite_visibility_gantt(ax,s)
-        elif mode=="Multipath Skyplot":self._draw_multipath_skyplot(ax)
         elif mode=="Per-PRN Residuals":self._draw_per_prn_residuals(ax)
         elif mode=="Covariance":self._draw_covariance(ax,p)
         elif mode=="False Fix Analysis":self._draw_false_fix(ax,p)
         elif mode=="Innovation / NIS":self._draw_nis(ax)
         elif mode=="Error CDF":self._draw_error_cdf(ax,p)
         elif mode=="Error Histogram":self._draw_error_histogram(self.plot_axes,p)
-        elif mode=="Constellation Summary":self._draw_constellation_summary(self.plot_axes,s)
         elif mode=="Residual Triad":self._draw_residual_triad(ax)
         elif mode=="El vs SNR & Resp":self._draw_el_snr_resp(ax)
         elif mode=="Top Outlier Satellites":self._draw_top_outliers(ax)
@@ -1531,34 +1526,8 @@ class RTKPlotApp:
                 self.plot_axes[1].set(xlabel="相对时间 (s)", ylabel="方向 DOP 分量")
                 lim_y = min(float(dop_df[["EDOP", "NDOP", "VDOP"]].quantile(0.99).max()) * 1.5, 30.0)
                 self.plot_axes[1].set_ylim(0, max(5.0, lim_y))
-                self.plot_axes[1].legend(fontsize=8, ncol=3, loc="upper right")
             else:
                 self._draw_directional_dop(ax)
-        elif mode=="Clock Bias & ISB":
-            clk = self.data.get("clk")
-            if clk is not None and not clk.empty and len(self.plot_axes) >= 2:
-                t0 = self.data["pos"].tow.iloc[0]
-                clk_t = clk.tow - t0
-                self.plot_axes[0].plot(clk_t, clk.clk_gps, color="#2878B5", lw=1.1, label="GPS 接收机钟差 (ns)")
-                if "drift" in clk.columns and clk.drift.abs().max() > 0:
-                    ax0_tw = self.plot_axes[0].twinx()
-                    ax0_tw.plot(clk_t, clk.drift, color="#E07A2D", lw=0.9, ls="--", label="钟漂 (ns/s)")
-                    ax0_tw.set_ylabel("钟漂 (ns/s)", color="#E07A2D")
-                    self.cov_twin_axes[id(self.plot_axes[0])] = ax0_tw
-                self.plot_axes[0].set(ylabel="钟差 (ns)", title="接收机钟差漂移与系统间偏差 ($CLK)")
-                self.plot_axes[0].legend(fontsize=8, loc="upper left")
-                if "isb_glo" in clk.columns and clk.isb_glo.abs().max() > 0:
-                    self.plot_axes[1].plot(clk_t, clk.isb_glo, label="ISB GLONASS-GPS", color="#9b59b6", lw=1.0)
-                if "isb_gal" in clk.columns and clk.isb_gal.abs().max() > 0:
-                    self.plot_axes[1].plot(clk_t, clk.isb_gal, label="ISB Galileo-GPS", color="#36965A", lw=1.0)
-                if "isb_bds" in clk.columns and clk.isb_bds.abs().max() > 0:
-                    self.plot_axes[1].plot(clk_t, clk.isb_bds, label="ISB BDS-GPS", color="#d90429", lw=1.0)
-                if "isb_qzs" in clk.columns and clk.isb_qzs.abs().max() > 0:
-                    self.plot_axes[1].plot(clk_t, clk.isb_qzs, label="ISB QZSS-GPS", color="#E07A2D", lw=1.0)
-                self.plot_axes[1].set(xlabel="相对时间 (s)", ylabel="ISB 系统间偏差 (m)")
-                self.plot_axes[1].legend(fontsize=8, ncol=4, loc="upper right")
-            else:
-                self._draw_clock_bias_isb(ax)
         elif mode=="Body-Frame Error":
             if self.data.get("has_truth") and "along_err" in p.columns and len(self.plot_axes) >= 3:
                 self.plot_axes[0].plot(p.time, p.along_err, color="#2878B5", lw=0.8, label="Along-track (沿航向/纵向)")
@@ -1578,7 +1547,7 @@ class RTKPlotApp:
         for plot_ax in self.plot_axes:plot_ax.grid(self.grid_on.get(),linestyle="--",alpha=.45)
         if mode not in NON_TIME_SERIES_MODES:
             for plot_ax in self.plot_axes:self.time_cursors.append(plot_ax.axvline(0,color="#333",ls="--",lw=.8,alpha=.7,zorder=10))
-        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","C/N0","Elevation","Residuals","Cycle Slips","Satellite Visibility Gantt","Covariance","False Fix Analysis","Residual Triad","Directional DOP","Clock Bias & ISB","Body-Frame Error"):
+        if mode in ("ENU Position","ENU Error","Height","Solution Status","AR Ratio","Differential Age","Satellites","DOP","Residuals","Cycle Slips","Satellite Visibility Gantt","Covariance","False Fix Analysis","Residual Triad","Directional DOP","Body-Frame Error"):
             for plot_ax in self.plot_axes:self._set_datetime_axis(plot_ax)
         self._apply_segment_overlays();self._register_dynamic_artists()
         self.fig.tight_layout();self.canvas.draw_idle();self._update_cursor();self.update_analysis()
@@ -2003,6 +1972,76 @@ class RTKPlotApp:
         ax.legend(fontsize=8, ncol=3, loc="upper right")
         ax.grid(self.grid_on.get(), alpha=0.3)
 
+    def _draw_skyplot_cn0_3in1(self):
+        """Draw 3-panel combined Earth-Frame Skyplot, Body-Frame Skyplot, and Elevation vs SNR scatter."""
+        sat = self.data.get("sat")
+        pos = self.data.get("pos")
+        if sat is None or sat.empty:
+            ax = self.fig.add_subplot(111)
+            ax.text(0.5, 0.5, "无卫星观测与残差数据 (需 .stat 文件)", ha="center", va="center", transform=ax.transAxes, fontsize=14)
+            self.plot_axes = [ax]; self.ax = ax
+            return
+
+        from matplotlib.gridspec import GridSpec
+        gs = GridSpec(1, 3, figure=self.fig, width_ratios=[1, 1, 1.25], wspace=0.28, left=0.05, right=0.96, top=0.90, bottom=0.12)
+
+        s_valid = sat[(sat.freq == 1) & (sat.snr > 0) & (sat.resp != 0)].copy()
+        if s_valid.empty:
+            s_valid = sat[(sat.freq == 1) & (sat.snr > 0)].copy()
+        s_sub = s_valid.iloc[::max(1, len(s_valid) // 18000)].copy()
+        c_vals = np.clip(s_sub.resp.abs(), 0, 15) if "resp" in s_sub.columns else np.zeros(len(s_sub))
+
+        # 1A. Earth-Frame Skyplot
+        ax1 = self.fig.add_subplot(gs[0], projection="polar")
+        theta1 = np.deg2rad(s_sub.az.to_numpy())
+        r1 = 90.0 - s_sub.el.to_numpy()
+        ax1.scatter(theta1, r1, c=c_vals, cmap="turbo", s=8, alpha=0.6, edgecolors="none", vmin=0, vmax=15)
+        ax1.set_theta_zero_location("N")
+        ax1.set_theta_direction(-1)
+        ax1.set_ylim(0, 90)
+        ax1.set_yticks([15, 30, 45, 60, 75])
+        ax1.set_yticklabels(["75°", "60°", "45°", "30°", "15°"], fontsize=8, color="#555")
+        ax1.set_rlabel_position(45)
+        ax1.tick_params(labelsize=8.5)
+        ax1.set_title("1A. Earth-Frame Skyplot\n(Colored by |Resp|)", fontsize=11, weight="bold", pad=10)
+
+        # 1B. Body-Frame Skyplot (0° = Vehicle Heading)
+        ax2 = self.fig.add_subplot(gs[1], projection="polar")
+        if pos is not None and not pos.empty and "heading" in pos.columns:
+            hd_interp = np.interp(s_sub.tow, pos.tow, pos.heading)
+            az_body = (s_sub.az - hd_interp) % 360.0
+        else:
+            az_body = s_sub.az
+        theta2 = np.deg2rad(az_body)
+        ax2.scatter(theta2, r1, c=c_vals, cmap="turbo", s=8, alpha=0.6, edgecolors="none", vmin=0, vmax=15)
+        ax2.set_theta_zero_location("N")
+        ax2.set_theta_direction(-1)
+        ax2.set_ylim(0, 90)
+        ax2.set_yticks([15, 30, 45, 60, 75])
+        ax2.set_yticklabels(["75°", "60°", "45°", "30°", "15°"], fontsize=8, color="#555")
+        ax2.set_rlabel_position(45)
+        ax2.set_thetagrids(np.arange(0, 360, 45), labels=["Front\n(0°)", "45°", "Right\n(90°)", "135°", "Rear\n(180°)", "225°", "Left\n(270°)", "315°"], fontsize=8.5)
+        ax2.set_title("1B. Body-Frame Skyplot\n(0° = Vehicle Heading)", fontsize=11, weight="bold", pad=10)
+
+        # 1C. Elevation vs SNR Joint Scatter
+        ax3 = self.fig.add_subplot(gs[2])
+        sc = ax3.scatter(s_sub.el, s_sub.snr, c=c_vals, cmap="turbo", s=8, alpha=0.6, edgecolors="none", vmin=0, vmax=15)
+        ax3.axvline(20, color="k", ls="--", lw=1.2, label="Elev = 20°")
+        ax3.axhline(35, color="r", ls="--", lw=1.2, label="SNR Mask = 35 dB-Hz")
+        ax3.set_xlim(10, 90)
+        ax3.set_ylim(20, 55)
+        ax3.set_xlabel("Elevation Angle (deg)", fontsize=10, weight="bold")
+        ax3.set_ylabel("SNR / C/N0 (dB-Hz)", fontsize=10, weight="bold")
+        ax3.set_title("1C. Elevation vs. SNR Joint Scatter\n(Color = |Resp|)", fontsize=11, weight="bold")
+        ax3.legend(loc="lower right", fontsize=8.5)
+        ax3.grid(self.grid_on.get(), ls="--", alpha=0.35)
+
+        cb = self.fig.colorbar(sc, ax=ax3, fraction=0.046, pad=0.04)
+        cb.set_label("|Pseudorange Residual| (m, clipped at 15m)", fontsize=9, weight="bold")
+
+        self.plot_axes = [ax1, ax2, ax3]
+        self.ax = ax1
+
     def _draw_env_geometry_combined(self):
         """Draw 5-in-1 integrated Module 1 (Environment) & Module 3 (Geometry) figure."""
         from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
@@ -2130,7 +2169,7 @@ class RTKPlotApp:
             rect=(.065,.09,.92,.82) if self.focused_custom_panel is not None else panel["rect"]
             is_time_series = name not in NON_TIME_SERIES_MODES
             share = base_time_ax if (self.sync_time_axes.get() and is_time_series and self.focused_custom_panel is None) else None
-            ax=self.fig.add_axes(rect,projection="polar" if name in ("Skyplot", "Multipath Skyplot") else None, sharex=share)
+            ax=self.fig.add_axes(rect,projection="polar" if name in ("Skyplot", "Multipath Skyplot", "Skyplot & C/N0 (Env)") else None, sharex=share)
             ax._panel_mode = name
             if self.sync_time_axes.get() and is_time_series and base_time_ax is None and self.focused_custom_panel is None:
                 base_time_ax = ax
@@ -2166,27 +2205,28 @@ class RTKPlotApp:
             elif name=="Differential Age":self._draw_differential_age(ax,p)
             elif name=="Satellites":self._draw_sats(ax)
             elif name=="DOP":self._draw_dop(ax)
-            elif name=="Skyplot":self._draw_sky(ax)
+            elif name in ("Skyplot & C/N0 (Env)", "Multipath Skyplot", "Skyplot"):
+                if getattr(ax, "name", "") == "polar":
+                    self._draw_sky(ax)
+                else:
+                    ax.text(0.5, 0.5, "星空图需要极坐标投影\n(双击放大查看)", ha="center", va="center", transform=ax.transAxes)
+                    ax.set_title("Skyplot & C/N0")
             elif name=="C/N0":self._draw_cn0(ax);ax.set_title(name)
-            elif name=="Elevation":self._draw_elevation(ax)
             elif name=="Residuals":self._draw_residuals(ax)
             elif name=="Multipath Proxy":self._draw_multipath(ax)
             elif name=="Cycle Slips":self._draw_slips(ax)
             elif name=="Satellite Visibility Gantt":self._draw_satellite_visibility_gantt(ax,s)
-            elif name=="Multipath Skyplot":self._draw_multipath_skyplot(ax)
             elif name=="Per-PRN Residuals":self._draw_per_prn_residuals(ax)
             elif name=="Covariance":self._draw_covariance(ax,p)
             elif name=="False Fix Analysis":self._draw_false_fix(ax,p)
             elif name=="Innovation / NIS":self._draw_nis(ax)
             elif name=="Error CDF":self._draw_error_cdf(ax,p)
             elif name=="Error Histogram":self._draw_error_histogram([ax],p)
-            elif name=="Constellation Summary":self._draw_constellation_summary([ax],s)
             elif name=="Residual Triad":self._draw_residual_triad(ax)
             elif name=="Env & Geometry Combined":self._draw_residual_triad(ax)
             elif name=="El vs SNR & Resp":self._draw_el_snr_resp(ax)
             elif name=="Top Outlier Satellites":self._draw_top_outliers(ax)
             elif name=="Directional DOP":self._draw_directional_dop(ax)
-            elif name=="Clock Bias & ISB":self._draw_clock_bias_isb(ax)
             elif name=="Body-Frame Error":self._draw_body_frame_error(ax,p)
             ax.grid(self.grid_on.get(),alpha=.28)
             if is_time_series:
@@ -2909,12 +2949,12 @@ class RTKPlotApp:
         ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=7.5, ncol=3, framealpha=0.85)
 
     def _draw_covariance(self,ax,p):
-        for c,col in [("sigE","#2878B5"),("sigN","#E07A2D"),("sigU","#36965A")]:ax.plot(p.time,p[c],label=f"σ{c[-1]}",lw=.75,color=col)
-        # Keep labels short enough for a half-width custom panel.  The full
-        # covariance/coverage definition remains in the chart analysis text.
-        ax.set_yscale("log");ax.set(xlabel="Time from start (s)",ylabel="1σ uncertainty (m)",title="Position uncertainty (RTK covariance)");ax.legend(loc="upper left",fontsize=8)
-        if self.data["has_truth"]:
-            ratio=np.abs(p.de)/np.maximum(1.96*p.sigE,1e-12);cap=max(1.0,float(ratio.quantile(.995)));twin=ax.twinx();self.cov_twin_axes[ax]=twin;twin.plot(p.time,ratio.clip(upper=cap),color="#aa3377",alpha=.55,lw=.65,label="|ΔE| / 1.96σE, capped P99.5");twin.axhline(1,color="#aa3377",ls=":",lw=.8);twin.set_ylim(0,cap*1.05);twin.set_ylabel("Error / 95% bound")
+        for c,col in [("sigE","#2878B5"),("sigN","#E07A2D"),("sigU","#36965A")]:
+            ax.plot(p.time,p[c],label=f"σ{c[-1]}",lw=1.0,color=col)
+        ax.set_yscale("log")
+        ax.set(xlabel="Time from start (s)",ylabel="1σ uncertainty (m)",title="Position uncertainty (RTK covariance)")
+        ax.legend(loc="upper right",fontsize=8.5)
+        ax.grid(self.grid_on.get(), alpha=0.3)
 
     def _draw_nis(self,ax):
         ax.set_axis_off()

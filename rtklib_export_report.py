@@ -107,6 +107,91 @@ def _add_picture_fit_box(slide, image_path, left=927195, top=1600000, width=1033
     slide.shapes.add_picture(str(image_path), final_left, final_top, final_w, final_h)
 
 
+def plot_skyplot_cn0_combined(data: dict, output_path: Path | str | None = None, figsize: tuple[float, float] = (15.0, 4.8)) -> plt.Figure:
+    """
+    Generate 3-in-1 integrated Earth-Frame Skyplot, Body-Frame Skyplot, and Elevation vs SNR scatter.
+    Matches user-specified layout:
+      1A. Earth-Frame Skyplot (Colored by |Resp|)
+      1B. Body-Frame Skyplot (0° = Vehicle Heading)
+      1C. Elevation vs. SNR Joint Scatter (Color = |Resp|)
+    """
+    import matplotlib.gridspec as gridspec
+    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
+    plt.rcParams['axes.unicode_minus'] = False
+
+    fig = plt.figure(figsize=figsize, dpi=200)
+    gs = gridspec.GridSpec(1, 3, figure=fig, width_ratios=[1, 1, 1.25], wspace=0.28, left=0.05, right=0.96, top=0.90, bottom=0.12)
+
+    sat = data.get("sat", pd.DataFrame())
+    pos = data.get("pos", pd.DataFrame())
+
+    if sat.empty:
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, "无有效卫星观测与残差数据", ha="center", va="center")
+        return fig
+
+    s_valid = sat[(sat.freq == 1) & (sat.snr > 0) & (sat.resp != 0)].copy()
+    if s_valid.empty:
+        s_valid = sat[(sat.freq == 1) & (sat.snr > 0)].copy()
+    s_sub = s_valid.iloc[::max(1, len(s_valid) // 18000)].copy()
+    c_vals = np.clip(s_sub.resp.abs(), 0, 15) if "resp" in s_sub.columns else np.zeros(len(s_sub))
+
+    # 1A. Earth-Frame Skyplot
+    ax1 = fig.add_subplot(gs[0], projection='polar')
+    theta1 = np.deg2rad(s_sub.az.to_numpy())
+    r1 = 90.0 - s_sub.el.to_numpy()
+    ax1.scatter(theta1, r1, c=c_vals, cmap='turbo', s=8, alpha=0.6, edgecolors='none', vmin=0, vmax=15)
+    ax1.set_theta_zero_location('N')
+    ax1.set_theta_direction(-1)
+    ax1.set_ylim(0, 90)
+    ax1.set_yticks([15, 30, 45, 60, 75])
+    ax1.set_yticklabels(['75°', '60°', '45°', '30°', '15°'], fontsize=8, color='#555')
+    ax1.set_rlabel_position(45)
+    ax1.tick_params(labelsize=8.5)
+    ax1.set_title('1A. Earth-Frame Skyplot\n(Colored by |Resp|)', fontsize=11, weight='bold', pad=10)
+
+    # 1B. Body-Frame Skyplot (0° = Vehicle Heading)
+    ax2 = fig.add_subplot(gs[1], projection='polar')
+    if pos is not None and not pos.empty and "heading" in pos.columns:
+        hd_interp = np.interp(s_sub.tow, pos.tow, pos.heading)
+        az_body = (s_sub.az - hd_interp) % 360.0
+    else:
+        az_body = s_sub.az
+    theta2 = np.deg2rad(az_body)
+    ax2.scatter(theta2, r1, c=c_vals, cmap='turbo', s=8, alpha=0.6, edgecolors='none', vmin=0, vmax=15)
+    ax2.set_theta_zero_location('N')
+    ax2.set_theta_direction(-1)
+    ax2.set_ylim(0, 90)
+    ax2.set_yticks([15, 30, 45, 60, 75])
+    ax2.set_yticklabels(['75°', '60°', '45°', '30°', '15°'], fontsize=8, color='#555')
+    ax2.set_rlabel_position(45)
+    ax2.set_thetagrids(np.arange(0, 360, 45), labels=['Front\n(0°)', '45°', 'Right\n(90°)', '135°', 'Rear\n(180°)', '225°', 'Left\n(270°)', '315°'], fontsize=8.5)
+    ax2.set_title('1B. Body-Frame Skyplot\n(0° = Vehicle Heading)', fontsize=11, weight='bold', pad=10)
+
+    # 1C. Elevation vs SNR Joint Scatter
+    ax3 = fig.add_subplot(gs[2])
+    sc = ax3.scatter(s_sub.el, s_sub.snr, c=c_vals, cmap='turbo', s=8, alpha=0.6, edgecolors='none', vmin=0, vmax=15)
+    ax3.axvline(20, color='k', ls='--', lw=1.2, label='Elev = 20°')
+    ax3.axhline(35, color='r', ls='--', lw=1.2, label='SNR Mask = 35 dB-Hz')
+    ax3.set_xlim(10, 90)
+    ax3.set_ylim(20, 55)
+    ax3.set_xlabel('Elevation Angle (deg)', fontsize=10, weight='bold')
+    ax3.set_ylabel('SNR / C/N0 (dB-Hz)', fontsize=10, weight='bold')
+    ax3.set_title('1C. Elevation vs. SNR Joint Scatter\n(Color = |Resp|)', fontsize=11, weight='bold')
+    ax3.legend(loc='lower right', fontsize=8.5)
+    ax3.grid(True, ls='--', alpha=0.35)
+
+    cb = fig.colorbar(sc, ax=ax3, fraction=0.046, pad=0.04)
+    cb.set_label('|Pseudorange Residual| (m, clipped at 15m)', fontsize=9, weight='bold')
+
+    if output_path:
+        out_p = Path(output_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_p, dpi=200)
+
+    return fig
+
+
 def plot_combined_environment_and_geometry(data: dict, output_path: Path | str | None = None, figsize=(16.0, 7.2)) -> plt.Figure:
     """
     Generate an integrated 5-in-1 publication-grade figure combining Module 1

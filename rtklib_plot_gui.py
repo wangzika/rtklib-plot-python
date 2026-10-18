@@ -127,6 +127,29 @@ DIAGNOSTIC_WORKSPACES = [
     }
 ]
 
+PLOT_UNIT_GROUPS = {
+    # 距离定位误差 (米) - 以 0 为中心对称
+    "ENU Error": "error_m",
+    "Body-Frame Error": "error_m",
+    "Compare Error": "error_m",
+    "False Fix Analysis": "error_m",
+    # 测量残差 (米) - 以 0 为中心对称
+    "Residuals": "residual_m",
+    "Residual Triad": "triad_m",
+    "Per-PRN Residuals": "prn_residual_m",
+    # 卫星颗数
+    "Satellites": "sat_count",
+    # 几何精度衰减因子 (无量纲)
+    "DOP": "dop_ratio",
+    "Directional DOP": "dop_ratio",
+    # AR 模糊度固定比值 (无量纲)
+    "AR Ratio": "ar_ratio",
+    # 载噪比信号强度 (dB-Hz)
+    "C/N0": "cn0_dbhz",
+    # 解状态
+    "Solution Status": "sol_q",
+}
+
 
 @lru_cache(maxsize=16384)
 def gpst_to_local_datetime(week, tow):
@@ -192,6 +215,8 @@ class RTKPlotApp:
         self.cached_basemap=None
         self.custom_preset=tk.StringVar(value="Auto Grid (自适应等分)")
         self.sync_time_axes=tk.BooleanVar(value=True)
+        self.sync_y_axes=tk.BooleanVar(value=True)
+        self.robust_view=tk.BooleanVar(value=True)
         self.layout_profiles={}
         self.selected_profile_name=tk.StringVar(value="")
         self._load_layout_profiles()
@@ -214,6 +239,8 @@ class RTKPlotApp:
         self.root.bind("<Home>", lambda _e: self.fit_view())
         self.root.bind("<r>", lambda _e: self.redraw())
         self.root.bind("<R>", lambda _e: self.redraw())
+        self.root.bind("<y>", lambda _e: self._toggle_global_robust_view())
+        self.root.bind("<Y>", lambda _e: self._toggle_global_robust_view())
         if pos and Path(pos).exists(): self.load_solution(Path(pos), reference)
         elif diag.DEFAULT_POS.exists(): self.load_solution(diag.DEFAULT_POS, diag.DEFAULT_REF if diag.DEFAULT_REF.exists() else None)
         else: self.draw_empty("打开 RTKLIB .pos 文件开始绘图")
@@ -284,6 +311,7 @@ class RTKPlotApp:
         view.add_cascade(label="Zoom Axis Constraint (缩放轴约束)",menu=zoom_m)
 
         view.add_checkbutton(label="Equal scale (1:1 物理等比)",variable=self.equal_scale,command=self._apply_aspect)
+        view.add_checkbutton(label="Robust 95% Y-Scale (95% 稳健主体量程) [Y]",variable=self.robust_view,command=self.redraw)
         view.add_command(label="Toggle Epoch slider (底端滑块显隐)",command=self._toggle_epoch_slider)
         view.add_separator()
         layout_m=tk.Menu(view,tearoff=False)
@@ -296,6 +324,7 @@ class RTKPlotApp:
             preset_m.add_radiobutton(label=p_name,variable=self.custom_preset,value=p_name,command=self._on_custom_preset_changed)
         layout_m.add_cascade(label="Layout Presets (排版预设)",menu=preset_m)
         layout_m.add_checkbutton(label="Sync Time Axes (多图时间轴联动)",variable=self.sync_time_axes,command=self.redraw)
+        layout_m.add_checkbutton(label="Sync Same-Unit Y Axes (同单位纵轴联动)",variable=self.sync_y_axes,command=self.redraw)
         layout_m.add_separator()
 
         # Profiles
@@ -601,7 +630,9 @@ class RTKPlotApp:
         self.preset_combo.pack(side=tk.RIGHT, fill=tk.X, expand=True)
         self.preset_combo.bind("<<ComboboxSelected>>", self._on_custom_preset_changed)
 
-        ttk.Checkbutton(card2_content, text="⏱ 时间轴联动 (Sync Time)", variable=self.sync_time_axes, command=self.redraw).pack(anchor="w", pady=(1, 2))
+        sync_f = ttk.Frame(card2_content); sync_f.pack(fill=tk.X, pady=(1, 2))
+        ttk.Checkbutton(sync_f, text="⏱ 时间联动 (Sync X)", variable=self.sync_time_axes, command=self.redraw).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Checkbutton(sync_f, text="📏 同单位纵轴联动 (Sync Y)", variable=self.sync_y_axes, command=self.redraw).pack(side=tk.LEFT)
 
         order_f = ttk.Frame(card2_content); order_f.pack(fill=tk.X, pady=(1, 2))
         ttk.Button(order_f, text="➕ 添加", command=self.add_selected_plot).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
@@ -1052,21 +1083,21 @@ class RTKPlotApp:
                 panels.append({"mode": modes[1], "rect": (left + w + gap_x, 0.09, w, 0.82)})
             elif n == 3:
                 w_top = 0.425; gap_x = 0.06; left = 0.075
-                panels.append({"mode": modes[0], "rect": (left, 0.54, w_top, 0.38)})
-                panels.append({"mode": modes[1], "rect": (left + w_top + gap_x, 0.54, w_top, 0.38)})
+                panels.append({"mode": modes[0], "rect": (left, 0.51, w_top, 0.37)})
+                panels.append({"mode": modes[1], "rect": (left + w_top + gap_x, 0.51, w_top, 0.37)})
                 panels.append({"mode": modes[2], "rect": (left, 0.09, 0.89, 0.37)})
             elif n == 4:
                 w = 0.425; gap_x = 0.06; left = 0.075
-                h = 0.38; gap_y = 0.07
-                panels.append({"mode": modes[0], "rect": (left, 0.54, w, h)})
-                panels.append({"mode": modes[1], "rect": (left + w + gap_x, 0.54, w, h)})
+                h = 0.37; gap_y = 0.05
+                panels.append({"mode": modes[0], "rect": (left, 0.51, w, h)})
+                panels.append({"mode": modes[1], "rect": (left + w + gap_x, 0.51, w, h)})
                 panels.append({"mode": modes[2], "rect": (left, 0.09, w, h)})
                 panels.append({"mode": modes[3], "rect": (left + w + gap_x, 0.09, w, h)})
             else:
                 page_size = 6
                 cols = 3
                 rows = 2
-                left, right, bottom, top = 0.065, 0.985, 0.09, 0.93
+                left, right, bottom, top = 0.065, 0.985, 0.09, 0.895
                 gap_x, gap_y = 0.045, 0.065
                 width = (right - left - gap_x * (cols - 1)) / cols
                 height = (top - bottom - gap_y * (rows - 1)) / rows
@@ -1669,6 +1700,93 @@ class RTKPlotApp:
             if ax.get_legend() is None:ax.legend(fontsize=6,ncol=3)
         self.canvas.draw_idle()
 
+    def _apply_robust_ylim(self, ax, series_list, is_symmetric=False, non_negative=False, min_span=1.0, default_max=None):
+        """Apply a robust 95% quantile vertical range to prevent isolated outliers from blowing up the scale."""
+        robust_var = getattr(self, "robust_view", None)
+        default_robust = robust_var.get() if robust_var is not None else True
+        is_robust = getattr(ax, "_robust_mode", default_robust)
+
+        valid_arrays = []
+        for s in series_list:
+            if s is None: continue
+            arr = np.asarray(s)
+            arr = arr[np.isfinite(arr)]
+            if len(arr) > 0: valid_arrays.append(arr)
+        if not valid_arrays: return
+        all_vals = np.concatenate(valid_arrays)
+        if len(all_vals) == 0: return
+
+        full_min = float(np.min(all_vals))
+        full_max = float(np.max(all_vals))
+        ax._full_ylim = (full_min, full_max)
+
+        if not is_robust:
+            if is_symmetric:
+                m = max(abs(full_min), abs(full_max), min_span)
+                margin = m * 0.05
+                ax.set_ylim(-m - margin, m + margin)
+            elif non_negative:
+                ax.set_ylim(0, max(full_max * 1.05, min_span))
+            else:
+                span = max(full_max - full_min, min_span)
+                ax.set_ylim(full_min - 0.05 * span, full_max + 0.05 * span)
+            return
+
+        has_clipped = False
+        if is_symmetric:
+            abs_vals = np.abs(all_vals)
+            q95 = float(np.percentile(abs_vals, 95))
+            span = max(q95 * 1.25, min_span)
+            ax.set_ylim(-span, span)
+            has_clipped = (full_min < -span) or (full_max > span)
+            ax._robust_ylim = (-span, span)
+        elif non_negative:
+            q95 = float(np.percentile(all_vals, 95))
+            high = max(q95 * 1.25, min_span)
+            if default_max is not None:
+                high = max(high, default_max)
+            ax.set_ylim(0, high)
+            has_clipped = full_max > high
+            ax._robust_ylim = (0, high)
+        else:
+            q05 = float(np.percentile(all_vals, 5))
+            q95 = float(np.percentile(all_vals, 95))
+            span = max(q95 - q05, min_span)
+            low = q05 - 0.15 * span
+            high = q95 + 0.15 * span
+            ax.set_ylim(low, high)
+            has_clipped = (full_min < low) or (full_max > high)
+            ax._robust_ylim = (low, high)
+
+        ax._has_outliers = has_clipped
+        if has_clipped:
+            ax.text(0.985, 0.96, "[95%聚焦]", transform=ax.transAxes, ha="right", va="top",
+                    fontsize=7.5, color="#555", weight="bold",
+                    bbox=dict(boxstyle="round,pad=0.2", facecolor="#ffffff", edgecolor="#b0c4de", alpha=0.85, lw=0.6),
+                    zorder=20)
+
+    def _toggle_subplot_robust_view(self, ax):
+        cur = getattr(ax, "_robust_mode", getattr(self, "robust_view", type("V", (), {"get": lambda s: True})()).get())
+        ax._robust_mode = not cur
+        if not ax._robust_mode and hasattr(ax, "_full_ylim"):
+            fmin, fmax = ax._full_ylim
+            span = max(1e-3, fmax - fmin)
+            ax.set_ylim(fmin - 0.05 * span, fmax + 0.05 * span)
+        elif ax._robust_mode and hasattr(ax, "_robust_ylim"):
+            ax.set_ylim(ax._robust_ylim)
+        else:
+            self.redraw()
+            return
+        self.canvas.draw_idle()
+
+    def _toggle_global_robust_view(self):
+        new_val = not self.robust_view.get()
+        self.robust_view.set(new_val)
+        self.redraw()
+        st = "已开启 95% 稳健主体量程聚焦 (已滤除极端飞点)" if new_val else "已恢复全量极值视图"
+        if hasattr(self, "segment_status"):
+            self.segment_status.configure(text=st)
+
     def _draw_false_fix(self,ax,p):
         if not self.data["has_truth"]:
             ax.text(.5,.5,"Ground truth is required to evaluate false FIX epochs",ha="center",va="center",transform=ax.transAxes);return
@@ -1865,6 +1983,8 @@ class RTKPlotApp:
         ax.plot(triad.time, triad.max_resp, color="#d90429", lw=1.1, label="第一大残差 (Max |resp|)")
         ax.plot(triad.time, triad.sec_resp, color="#00b4d8", lw=1.0, label="第二大残差 (2nd Max)")
         ax.plot(triad.time, triad.rms_resp, color="#0B2B52", lw=1.2, ls="--", label="全场RMS (RMS |resp|)")
+        if hasattr(self, "_apply_robust_ylim"):
+            self._apply_robust_ylim(ax, [triad.max_resp], non_negative=True, min_span=5.0, default_max=15.0)
         ax.set(xlabel="时间 (s)", ylabel="伪距残差 (m)", title="伪距残差统计三线时序 (Max / 2nd Max / RMS)")
         ax.legend(fontsize=8, loc="upper right")
         ax.grid(self.grid_on.get(), alpha=0.3)
@@ -1968,6 +2088,8 @@ class RTKPlotApp:
         ax.plot(p.time, p.cross_err, label="跨航向误差 (Cross-track)", color="#d90429", lw=0.9)
         ax.plot(p.time, p.vert_err, label="垂直高程误差 (Vertical)", color="#36965A", lw=0.8, ls="--")
         ax.axhline(0, color="k", lw=0.5, ls=":")
+        if hasattr(self, "_apply_robust_ylim"):
+            self._apply_robust_ylim(ax, [p.along_err, p.cross_err, p.vert_err], is_symmetric=True, min_span=2.0)
         ax.set(xlabel="时间 (s)", ylabel="误差 (m)", title="车体坐标系误差分解 (Along-track / Cross-track / Vertical)")
         ax.legend(fontsize=8, ncol=3, loc="upper right")
         ax.grid(self.grid_on.get(), alpha=0.3)
@@ -2163,16 +2285,21 @@ class RTKPlotApp:
                                     and 0<=self.focused_custom_panel<len(self.custom_panels)
                                     else list(range(page_start,min(page_start+self.custom_page_size,len(self.custom_panels)))))
         base_time_ax = None
+        group_base_ax = {}
         for i in self.visible_panel_indices:
             panel=self.custom_panels[i]
             name=panel["mode"]
             rect=(.065,.09,.92,.82) if self.focused_custom_panel is not None else panel["rect"]
             is_time_series = name not in NON_TIME_SERIES_MODES
             share = base_time_ax if (self.sync_time_axes.get() and is_time_series and self.focused_custom_panel is None) else None
-            ax=self.fig.add_axes(rect,projection="polar" if name in ("Skyplot", "Multipath Skyplot", "Skyplot & C/N0 (Env)") else None, sharex=share)
+            unit_grp = PLOT_UNIT_GROUPS.get(name)
+            sharey = group_base_ax.get(unit_grp) if (self.sync_y_axes.get() and unit_grp and self.focused_custom_panel is None) else None
+            ax=self.fig.add_axes(rect,projection="polar" if name in ("Skyplot", "Multipath Skyplot", "Skyplot & C/N0 (Env)") else None, sharex=share, sharey=sharey)
             ax._panel_mode = name
             if self.sync_time_axes.get() and is_time_series and base_time_ax is None and self.focused_custom_panel is None:
                 base_time_ax = ax
+            if self.sync_y_axes.get() and unit_grp and unit_grp not in group_base_ax and self.focused_custom_panel is None:
+                group_base_ax[unit_grp] = ax
             self.plot_axes.append(ax)
             for spine in ax.spines.values():spine.set_edgecolor("#168aad" if i==self.selected_custom_panel else "#b9c0c8");spine.set_linewidth(1.6 if i==self.selected_custom_panel else .75)
             if not name:
@@ -2198,10 +2325,14 @@ class RTKPlotApp:
                 if self.data["has_truth"]:
                     for c,col in zip(["de","dn","du"],["#2878B5","#E07A2D","#36965A"]):ax.plot(p.time,p[c],lw=.65,label=c.upper(),color=col)
                     ax.axhline(0,color="k",lw=.5);ax.legend(fontsize=6,ncol=3)
+                    self._apply_robust_ylim(ax, [p.de, p.dn, p.du], is_symmetric=True, min_span=2.0)
                 else:ax.text(.5,.5,"No truth",ha="center",transform=ax.transAxes)
                 ax.set(title=name,ylabel="Error (m)")
             elif name=="Solution Status":ax.step(p.time,p.q,where="post",lw=.65,marker=".",ms=2,markevery=max(1,len(p)//50));ax.set(title=name,ylabel="Q")
-            elif name=="AR Ratio":ax.plot(p.time,p.ratio,lw=.65,marker=".",ms=2,markevery=max(1,len(p)//50));ax.axhline(3,color="r",ls="--");ax.set(title=name,ylabel="Ratio")
+            elif name=="AR Ratio":
+                ax.plot(p.time,p.ratio,lw=.65,marker=".",ms=2,markevery=max(1,len(p)//50));ax.axhline(3,color="r",ls="--")
+                self._apply_robust_ylim(ax, [p.ratio], non_negative=True, min_span=5.0, default_max=10.0)
+                ax.set(title=name,ylabel="Ratio")
             elif name=="Differential Age":self._draw_differential_age(ax,p)
             elif name=="Satellites":self._draw_sats(ax)
             elif name=="DOP":self._draw_dop(ax)
@@ -2242,7 +2373,7 @@ class RTKPlotApp:
                 and min(box.x1,other.get_position().x1)-max(box.x0,other.get_position().x0)>.2*min(box.width,other.get_position().width)
                 for other in self.plot_axes)
             if has_ts_panel_below and is_ts and self.sync_time_axes.get():ax.tick_params(axis="x",labelbottom=False);ax.set_xlabel("")
-        self.fig.suptitle("Custom RTKLIB Analysis",fontsize=13,weight="bold")
+        self.fig.suptitle("Custom RTKLIB Analysis",fontsize=13,weight="bold",y=0.985)
 
     def _register_custom_dynamic(self,name,ax,p,full):
         """Add a current-epoch highlight to every plot in a custom grid."""
@@ -2616,6 +2747,8 @@ class RTKPlotApp:
         kw=self._get_line_kwargs("ENU Error",default_ls="-",default_lw=.75)
         for ax,(col,label,color) in zip(axes,specs):
             ax.plot(p.time,p[col],color=color,**kw);ax.axhline(0,color="#222",lw=.6);ax.set_ylabel(label);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
+            if hasattr(self, "_apply_robust_ylim"):
+                self._apply_robust_ylim(ax, [p[col]], is_symmetric=True, min_span=1.0)
         axes[0].set_title("ENU Position Error Components",fontsize=12,weight="bold");axes[-1].set_xlabel("Time from start (s)")
 
     def _draw_sats(self,ax):
@@ -2625,6 +2758,8 @@ class RTKPlotApp:
         if e.empty:return
         kw=self._get_line_kwargs("Satellites",default_ls="-",default_lw=1.0)
         ax.plot(e.time,e.tracked,label="Tracked satellites",color="#2878B5",**kw);ax.plot(e.time,e.used,label="Used satellites",color="#e07a2d",**kw);ax.set(xlabel="Time from start (s)",ylabel="Satellites",title="Tracked and Used Satellites");ax.legend()
+        if hasattr(self, "_apply_robust_ylim"):
+            self._apply_robust_ylim(ax, [e.tracked, e.used], non_negative=True, min_span=5.0, default_max=20.0)
 
     def _draw_dop(self,ax):
         if "_cached_dop" not in self.data:
@@ -2634,6 +2769,8 @@ class RTKPlotApp:
         if d.empty:ax.text(.5,.5,"Not enough satellite geometry for DOP",ha="center",va="center",transform=ax.transAxes);return
         kw=self._get_line_kwargs("DOP",default_ls="-",default_lw=.8)
         for c in ["PDOP","HDOP","VDOP"]:ax.plot(d.time,d[c],label=c,**kw)
+        if hasattr(self, "_apply_robust_ylim"):
+            self._apply_robust_ylim(ax, [d.PDOP, d.HDOP, d.VDOP], non_negative=True, min_span=3.0, default_max=8.0)
         ax.set(xlabel="Time from start (s)",ylabel="DOP",title="DOP from satellite geometry");ax.legend()
 
     def _draw_sky(self,ax):
@@ -2667,6 +2804,8 @@ class RTKPlotApp:
         s=self._display_sample(s,60000)
         g=s[(s.resp!=0)&(s.freq==1)];ax.scatter(g.time,g.resp,s=3,alpha=.16,label="Pseudorange residual")
         h=s[(s.resc!=0)&(s.freq==1)];ax.scatter(h.time,h.resc*100,s=3,alpha=.12,label="Carrier residual (cm)")
+        if hasattr(self, "_apply_robust_ylim"):
+            self._apply_robust_ylim(ax, [g.resp], is_symmetric=True, min_span=2.0)
         ax.set(xlabel="Time from start (s)",ylabel="Residual (m / cm)",title="RTKLIB Post-fit Residuals");ax.legend()
 
     def _draw_multipath(self, ax):
@@ -3021,6 +3160,7 @@ class RTKPlotApp:
             if self.data["has_truth"]:
                 ax.plot(p.time, p.eh, lw=.6, label="Horizontal")
                 ax.plot(p.time, p.e3d, lw=.6, label="3D")
+                self._apply_robust_ylim(ax, [p.eh, p.e3d], non_negative=True, min_span=2.0)
                 ax.legend(fontsize=7 if not is_single else 9)
                 ax.set(title="Position Error", xlabel="Time (s)", ylabel="m")
             else:
@@ -3036,6 +3176,7 @@ class RTKPlotApp:
         elif name == "AR Ratio":
             ax.plot(p.time, p.ratio, lw=.5)
             ax.axhline(3, color="red", ls="--")
+            self._apply_robust_ylim(ax, [p.ratio], non_negative=True, min_span=5.0, default_max=10.0)
             ax.set(title="AR Ratio", xlabel="Time (s)")
             self._set_datetime_axis(ax)
             self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
@@ -3331,9 +3472,23 @@ class RTKPlotApp:
             if getattr(ax,"name","")=="polar":
                 ry=(ylim[1]-ylim[0])*factor;fy=(event.ydata-ylim[0])/(ylim[1]-ylim[0]);ax.set_ylim(event.ydata-ry*fy,event.ydata+ry*(1-fy))
             else:
-                # Keep y=0 fixed while zooming, matching the origin-centered
-                # scaling users expect for signed position/error components.
-                ax.set_ylim(ylim[0]*factor,ylim[1]*factor)
+                p_mode = getattr(ax, "_panel_mode", "")
+                is_non_neg = p_mode in ("AR Ratio", "DOP", "Directional DOP", "Satellites", "Residual Triad", "C/N0")
+                is_zero_sym = p_mode in ("ENU Error", "Body-Frame Error", "Residuals", "Per-PRN Residuals")
+                span = max(1e-9, ylim[1] - ylim[0])
+                if is_zero_sym and abs(ylim[0] + ylim[1]) < 0.2 * span:
+                    new_half = span * factor / 2.0
+                    ax.set_ylim(-new_half, new_half)
+                else:
+                    ry = span * factor
+                    fy = (event.ydata - ylim[0]) / span
+                    new_y0 = event.ydata - ry * fy
+                    new_y1 = event.ydata + ry * (1 - fy)
+                    if is_non_neg:
+                        new_y0 = max(0.0, new_y0)
+                        if new_y1 <= new_y0:
+                            new_y1 = new_y0 + 1.0
+                    ax.set_ylim(new_y0, new_y1)
         self.canvas.draw_idle()
 
     def on_mouse_down(self,event):
@@ -3499,7 +3654,24 @@ class RTKPlotApp:
         if mode in ("Both axes","Y axis"):
             if getattr(ax,"name","")=="polar":
                 height=(yl[1]-yl[0])*factor;fraction=(y-yl[0])/(yl[1]-yl[0]);ax.set_ylim(y-height*fraction,y+height*(1-fraction))
-            else:ax.set_ylim(yl[0]*factor,yl[1]*factor)
+            else:
+                p_mode = getattr(ax, "_panel_mode", "")
+                is_non_neg = p_mode in ("AR Ratio", "DOP", "Directional DOP", "Satellites", "Residual Triad", "C/N0")
+                is_zero_sym = p_mode in ("ENU Error", "Body-Frame Error", "Residuals", "Per-PRN Residuals")
+                span = max(1e-9, yl[1] - yl[0])
+                if is_zero_sym and abs(yl[0] + yl[1]) < 0.2 * span:
+                    new_half = span * factor / 2.0
+                    ax.set_ylim(-new_half, new_half)
+                else:
+                    height = span * factor
+                    fraction = (y - yl[0]) / span
+                    new_y0 = y - height * fraction
+                    new_y1 = y + height * (1 - fraction)
+                    if is_non_neg:
+                        new_y0 = max(0.0, new_y0)
+                        if new_y1 <= new_y0:
+                            new_y1 = new_y0 + 1.0
+                    ax.set_ylim(new_y0, new_y1)
         self.canvas.draw_idle()
 
     def _restore_axis(self,ax):
@@ -3534,6 +3706,10 @@ class RTKPlotApp:
         menu.add_separator()
         menu.add_command(label="单独导出此子图 (300 DPI PNG)…", command=lambda: self._export_single_subplot(ax))
         menu.add_command(label="↺ 重置此子图视野 (Reset Zoom)", command=lambda: self._restore_axis(ax))
+        is_robust = getattr(ax, "_robust_mode", getattr(self, "robust_view", type("V", (), {"get": lambda s: True})()).get())
+        if hasattr(ax, "_robust_ylim") or hasattr(ax, "_full_ylim"):
+            lbl = "🎯 切换为全量极值视图 (Full Range)" if is_robust else "🎯 切换为稳健主体视图 (95% Focus)"
+            menu.add_command(label=lbl, command=lambda a=ax: self._toggle_subplot_robust_view(a))
 
         mode = self.mode.get()
         if mode == "Custom Analysis":

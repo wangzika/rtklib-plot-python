@@ -49,6 +49,9 @@ class MockApp:
     def __init__(self, data):
         self.data = data
         self.grid_on = type("Grid", (), {"get": lambda s: True})()
+        self.robust_view = type("Var", (), {"get": lambda s: True})()
+        self.sync_y_axes = type("Var", (), {"get": lambda s: True})()
+    _apply_robust_ylim = gui.RTKPlotApp._apply_robust_ylim
 
 mock = MockApp(data)
 
@@ -82,16 +85,31 @@ ax.clear()
 gui.RTKPlotApp._draw_body_frame_error(mock, ax, data['pos'])
 print("   _draw_body_frame_error: OK")
 
+# Test 7: _apply_robust_ylim functionality
+ax.clear()
+import numpy as np
+normal_data = np.random.normal(0, 2, 1000)
+outliers = np.array([-150.0, 180.0])  # Extreme spikes
+test_series = np.concatenate([normal_data, outliers])
+mock._apply_robust_ylim(ax, [test_series], is_symmetric=True, min_span=1.0)
+yl = ax.get_ylim()
+assert yl[0] > -20 and yl[1] < 20, f"Expected robust limit within [-20, 20], got {yl}"
+assert getattr(ax, "_has_outliers", False) == True, "Outliers flag should be True"
+print(f"   _apply_robust_ylim: OK (Clamped [-150, 180] down to {yl})")
+
 plt.close(fig)
 
-print("5. Testing GUI instantiation and Workspace switching...")
+print("5. Testing GUI instantiation, Robust Y-scale, and Workspace switching...")
 import tkinter as tk
 root = tk.Tk()
 root.withdraw()  # headless
 app = gui.RTKPlotApp(root, pos=pos_file, reference=ref_file)
 print("   App initialized with solution:", app.pos_path.name)
 assert app.false_fix_limit.get() == 1.0, f"Expected false_fix_limit=1.0, got {app.false_fix_limit.get()}"
-print(f"   False fix limit confirmed: {app.false_fix_limit.get()} m")
+assert app.robust_view.get() == True, "Expected robust_view to default to True"
+assert app.sync_y_axes.get() == True, "Expected sync_y_axes to default to True"
+assert "ENU Error" in gui.PLOT_UNIT_GROUPS, "ENU Error missing in PLOT_UNIT_GROUPS"
+print(f"   False fix limit: {app.false_fix_limit.get()} m | Robust 95%: {app.robust_view.get()} | Sync Y: {app.sync_y_axes.get()}")
 
 for idx in range(5):
     app.switch_workspace(idx)

@@ -593,14 +593,13 @@ class RTKPlotApp:
         # 2. Listbox & Scrollbar
         list_frame = ttk.Frame(card1_content)
         list_frame.pack(fill=tk.BOTH, expand=True)
-        self.plot_list = tk.Listbox(list_frame, selectmode=tk.EXTENDED, exportselection=False, width=28, height=8)
+        self.plot_list = tk.Listbox(list_frame, selectmode=tk.MULTIPLE, exportselection=False, width=28, height=8)
         list_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.plot_list.yview)
         self.plot_list.configure(yscrollcommand=list_scroll.set)
         self.plot_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.plot_list.bind("<ButtonPress-1>", self._begin_plot_drag, add="+")
-        self.plot_list.bind("<B1-Motion>", lambda _e: "break", add="+")
         self.plot_list.bind("<ButtonRelease-1>", self._drop_plot_on_panel, add="+")
         self.root.bind_all("<ButtonRelease-1>", self._drop_plot_on_panel, add="+")
         self.plot_list.bind("<Double-Button-1>", lambda _e: self.add_selected_plot())
@@ -685,14 +684,17 @@ class RTKPlotApp:
         )
 
         seg_frame = ttk.Frame(card4_content); seg_frame.pack(fill=tk.X, pady=(1, 0))
-        self.segment_box = tk.Listbox(seg_frame, height=4, width=28, exportselection=False)
+        self.segment_box = tk.Listbox(seg_frame, height=5, width=28, exportselection=False)
+        self.segment_box.bind("<<ListboxSelect>>", self.on_segment_select)
+        self.segment_box.bind("<ButtonRelease-1>", self.on_segment_select)
         self.segment_box.bind("<Double-Button-1>", self.on_segment_double_click)
         seg_scroll = ttk.Scrollbar(seg_frame, orient=tk.VERTICAL, command=self.segment_box.yview); self.segment_box.configure(yscrollcommand=seg_scroll.set)
         self.segment_box.pack(side=tk.LEFT, fill=tk.X, expand=True); seg_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         
         btn_row1 = ttk.Frame(card4_content); btn_row1.pack(fill=tk.X, pady=(2, 1))
         ttk.Button(btn_row1, text="⚡ 智能探测", command=self.auto_detect_issues).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
-        ttk.Button(btn_row1, text="✕ 删除", command=self.delete_segment).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(btn_row1, text="🌐 复位全图", command=self.reset_segment_focus).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(btn_row1, text="✕ 删除", command=self.delete_segment).pack(side=tk.LEFT, padx=1)
         ttk.Button(btn_row1, text="清空", command=self.clear_segments).pack(side=tk.RIGHT, padx=1)
 
         btn_row2 = ttk.Frame(card4_content); btn_row2.pack(fill=tk.X, pady=(1, 1))
@@ -959,17 +961,44 @@ class RTKPlotApp:
         self.segment_status.configure(text="All marked segments cleared.");self._refresh_segment_overlays()
         self._auto_save_segments()
 
+    def on_segment_select(self, event=None):
+        if not hasattr(self, "segment_box"): return
+        sel = self.segment_box.curselection()
+        if not sel or not self.segments or self.data is None: return
+        idx = sel[0]
+        if idx >= len(self.segments): return
+        self._focus_on_segment(idx)
+
     def on_segment_double_click(self, event=None):
         if not hasattr(self, "segment_box"): return
         sel = self.segment_box.curselection()
         if not sel or not self.segments or self.data is None: return
         idx = sel[0]
         if idx >= len(self.segments): return
+        # Double clicking the currently focused segment toggles back to full view
+        if getattr(self, "_selected_segment_idx", None) == idx:
+            self.reset_segment_focus()
+        else:
+            self._focus_on_segment(idx)
+
+    def reset_segment_focus(self):
+        """Restore full trajectory and timeline view across all subplots."""
+        self._selected_segment_idx = None
+        if hasattr(self, "segment_box"):
+            self.segment_box.selection_clear(0, tk.END)
+        self.fit_view()
+        self._refresh_segment_overlays()
+        self.segment_status.configure(text="已复位全图视图。在左侧区段列表点击任意时段可立即联动聚焦。")
+
+    def _focus_on_segment(self, idx):
+        if self.data is None or not self.segments or idx >= len(self.segments): return
         seg = self.segments[idx]
+        self._selected_segment_idx = idx
         p = self.data["pos"]
         t0 = float(p.iloc[seg["start"]].time)
         t1 = float(p.iloc[seg["end"]].time)
-        pad = max(2.0, (t1 - t0) * 0.08)
+        dur = max(0.1, t1 - t0)
+        pad = max(2.0, dur * 0.12)
 
         # 1. Zoom timeline datetime axes
         for ax in self.datetime_axes:
@@ -980,18 +1009,35 @@ class RTKPlotApp:
         for ax in self.track_axes:
             e_min, e_max = float(g.E.min()), float(g.E.max())
             n_min, n_max = float(g.N.min()), float(g.N.max())
-            de = max(3.0, (e_max - e_min) * 0.12)
-            dn = max(3.0, (n_max - n_min) * 0.12)
-            ax.set_xlim(e_min - de, e_max + de)
-            ax.set_ylim(n_min - dn, n_max + dn)
+            span_e = max(1.0, e_max - e_min)
+            span_n = max(1.0, n_max - n_min)
+            center_e = (e_min + e_max) / 2.0
+            center_n = (n_min + n_max) / 2.0
+            half_span = max(span_e * 0.65, span_n * 0.65, 8.0)
+            ax.set_xlim(center_e - half_span, center_e + half_span)
+            ax.set_ylim(center_n - half_span, center_n + half_span)
+            if getattr(self, "equal_scale", None) and self.equal_scale.get():
+                ax.set_aspect("equal", adjustable="box")
 
-        # 3. Position epoch slider to start of segment
+        # 3. Position epoch slider to start of segment and scrub
         self.slider.set(seg["start"])
-        self.canvas.draw_idle()
+        self.epoch.set(seg["start"])
+        self.on_scrub(seg["start"])
+
+        # 4. Refresh segment overlays with distinct highlight
+        self._refresh_segment_overlays()
+
+        # 5. Fault diagnosis explanation
         st = float(p.iloc[seg["start"]].tow)
         et = float(p.iloc[seg["end"]].tow)
-        d_res = diag.diagnose_anomaly_segment(p, self.data["sat"], st, et)
+        d_res = diag.diagnose_anomaly_segment(p, self.data.get("sat"), st, et)
         self.segment_status.configure(text=f"🔍 聚焦 [{seg['name']}]: 【{d_res['primary_cause']}】{d_res['summary']} | 建议: {d_res['recommendation']}")
+        if hasattr(self, "analysis_info"):
+            self.analysis_info.configure(
+                text=f"当前聚焦时段 [{seg['name']}]: 历元 {seg['start']+1}~{seg['end']+1} · 持续 {dur:.1f}s | "
+                     f"故障诊断: 【{d_res['primary_cause']}】{d_res['summary']} | 优化建议: {d_res['recommendation']}"
+            )
+        self.canvas.draw_idle()
 
     def auto_detect_issues(self):
         if self.data is None:
@@ -1801,22 +1847,54 @@ class RTKPlotApp:
         return self._sat_sorted.iloc[lo:hi]
 
     def _apply_segment_overlays(self):
-        if not self.segments or self.data is None:return
-        p=self.data["pos"]
+        if not self.segments or self.data is None: return
+        p = self.data["pos"]
+        focused_idx = getattr(self, "_selected_segment_idx", None)
+        has_focused = (focused_idx is not None and 0 <= focused_idx < len(self.segments))
+
         for ax in self.datetime_axes:
-            for seg in self.segments:
-                t0=float(p.iloc[seg["start"]].time);t1=float(p.iloc[seg["end"]].time)
-                patch=ax.axvspan(t0,t1,facecolor=seg["color"],alpha=.15,edgecolor=seg["color"],linewidth=.6,zorder=1.5)
+            for i, seg in enumerate(self.segments):
+                t0 = float(p.iloc[seg["start"]].time)
+                t1 = float(p.iloc[seg["end"]].time)
+                is_foc = (has_focused and i == focused_idx)
+                alpha = 0.35 if is_foc else (0.07 if has_focused else 0.15)
+                lw = 1.4 if is_foc else 0.5
+                patch = ax.axvspan(t0, t1, facecolor=seg["color"], alpha=alpha, edgecolor=seg["color"], linewidth=lw, zorder=2.5 if is_foc else 1.5)
                 self.segment_artists.append(patch)
+
         for ax in self.track_axes:
-            for seg in self.segments:
-                g=p.iloc[seg["start"]:seg["end"]+1]
-                line,=ax.plot(g.E,g.N,color=seg["color"],lw=3.0,alpha=.86,zorder=6,label=seg["name"])
-                self.segment_track_lines.append(line);self.segment_artists.append(line)
-                first=ax.scatter([g.E.iloc[0]],[g.N.iloc[0]],s=34,marker="o",facecolors="white",edgecolors=seg["color"],linewidths=1.5,zorder=8)
-                last=ax.scatter([g.E.iloc[-1]],[g.N.iloc[-1]],s=34,marker="s",facecolors=seg["color"],edgecolors="white",linewidths=.7,zorder=8)
-                self.segment_artists.extend((first,last))
-            ax.legend(fontsize=6,ncol=3)
+            # 1. First draw background non-focused segments softly
+            for i, seg in enumerate(self.segments):
+                if has_focused and i == focused_idx:
+                    continue
+                g = p.iloc[seg["start"]:seg["end"]+1]
+                alpha = 0.25 if has_focused else 0.70
+                lw = 1.4 if has_focused else 2.5
+                line, = ax.plot(g.E, g.N, color=seg["color"], lw=lw, alpha=alpha, zorder=6)
+                self.segment_track_lines.append(line); self.segment_artists.append(line)
+                first = ax.scatter([g.E.iloc[0]], [g.N.iloc[0]], s=16, marker="o", facecolors="white", edgecolors=seg["color"], linewidths=0.9, alpha=alpha, zorder=7)
+                last = ax.scatter([g.E.iloc[-1]], [g.N.iloc[-1]], s=16, marker="s", facecolors=seg["color"], edgecolors="white", linewidths=0.6, alpha=alpha, zorder=7)
+                self.segment_artists.extend((first, last))
+
+            # 2. Draw focused segment prominently with high contrast and labels
+            if has_focused:
+                seg = self.segments[focused_idx]
+                g = p.iloc[seg["start"]:seg["end"]+1]
+                halo, = ax.plot(g.E, g.N, color="#ffffff", lw=7.0, alpha=0.95, zorder=8)
+                line, = ax.plot(g.E, g.N, color=seg["color"], lw=4.2, alpha=1.0, zorder=9, label=f"★聚焦: {seg['name']}")
+                self.segment_track_lines.append(line); self.segment_artists.extend((halo, line))
+                s_pt = ax.scatter([g.E.iloc[0]], [g.N.iloc[0]], s=65, marker="o", facecolors="white", edgecolors=seg["color"], linewidths=2.5, zorder=11)
+                e_pt = ax.scatter([g.E.iloc[-1]], [g.N.iloc[-1]], s=65, marker="s", facecolors=seg["color"], edgecolors="white", linewidths=1.8, zorder=11)
+                self.segment_artists.extend((s_pt, e_pt))
+                
+                ann_s = ax.annotate("起点", (g.E.iloc[0], g.N.iloc[0]), xytext=(7, 7), textcoords="offset points", fontsize=8.5, weight="bold", color="#111", bbox=dict(boxstyle="round,pad=0.2", fc="#ffffff", ec=seg["color"], lw=1.2, alpha=0.92), zorder=12)
+                ann_e = ax.annotate("终点", (g.E.iloc[-1], g.N.iloc[-1]), xytext=(7, -12), textcoords="offset points", fontsize=8.5, weight="bold", color="#111", bbox=dict(boxstyle="round,pad=0.2", fc=seg["color"], ec="#ffffff", lw=1.2, alpha=0.92), zorder=12)
+                self.segment_artists.extend((ann_s, ann_e))
+                ax.legend(fontsize=7.5, loc="best")
+            else:
+                dummy, = ax.plot([], [], color="#C00000", lw=2.5, label=f"异常时段标注 (共{len(self.segments)}处)")
+                self.segment_artists.append(dummy)
+                ax.legend(fontsize=7.5, loc="upper left", ncol=2)
         for ax,points,labels in self.sky_plots:
             for seg in self.segments:
                 for endpoint,marker in [(seg["start"],"o"),(seg["end"],"s")]:

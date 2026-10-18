@@ -1,7 +1,9 @@
 """GIS, Web Map Tiles and 3D Google Earth KML / GeoJSON Exporter for RTKLIB-Plot-Python."""
 from __future__ import annotations
 
+import concurrent.futures
 import io
+import json
 import math
 import os
 import urllib.request
@@ -111,19 +113,20 @@ def _geodetic_to_enu_single(lat: float, lon: float, h: float,
 def get_stitched_tiles_enu(
     lat_min: float, lat_max: float, lon_min: float, lon_max: float,
     origin_lat: float, origin_lon: float, origin_h: float = 0.0,
-    provider: str = "Esri Satellite", max_tiles: int = 16, margin: float = 0.20
+    provider: str = "Esri Satellite", max_tiles: int = 72, margin: float = 0.06
 ) -> tuple[np.ndarray | None, list[float] | None]:
     """
-    Fetch and stitch map tiles spanning the bounding box, then calculate
+    Fetch and stitch high-resolution map tiles spanning the bounding box, then calculate
     local ENU extent [e_min, e_max, n_min, n_max] relative to the origin.
+    Uses multi-threaded concurrent downloading (max_workers=20) for lightning-fast loading.
     """
     if not (np.isfinite(lat_min) and np.isfinite(lat_max) and np.isfinite(lon_min) and np.isfinite(lon_max)):
         return None, None
     if not (np.isfinite(origin_lat) and np.isfinite(origin_lon)):
         return None, None
 
-    dlat = max(lat_max - lat_min, 0.0005)
-    dlon = max(lon_max - lon_min, 0.0005)
+    dlat = max(lat_max - lat_min, 0.0003)
+    dlon = max(lon_max - lon_min, 0.0003)
     lat_min_m = max(-85.0, lat_min - dlat * margin)
     lat_max_m = min(85.0, lat_max + dlat * margin)
     lon_min_m = max(-180.0, lon_min - dlon * margin)
@@ -150,12 +153,26 @@ def get_stitched_tiles_enu(
     stitched = Image.new("RGB", (nx * tile_w, ny * tile_h), color=(240, 240, 240))
     any_success = False
 
-    for iy, y in enumerate(range(ymin, ymax + 1)):
-        for ix, x in enumerate(range(xmin, xmax + 1)):
-            tile_img = fetch_single_tile(provider, best_zoom, x, y)
-            if tile_img is not None:
-                stitched.paste(tile_img, (ix * tile_w, iy * tile_h))
-                any_success = True
+    # Multi-threaded parallel tile downloading
+    coords = [
+        (ix, iy, x, y)
+        for iy, y in enumerate(range(ymin, ymax + 1))
+        for ix, x in enumerate(range(xmin, xmax + 1))
+    ]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        future_map = {
+            executor.submit(fetch_single_tile, provider, best_zoom, x, y): (ix, iy)
+            for (ix, iy, x, y) in coords
+        }
+        for fut in concurrent.futures.as_completed(future_map):
+            ix, iy = future_map[fut]
+            try:
+                tile_img = fut.result()
+                if tile_img is not None:
+                    stitched.paste(tile_img, (ix * tile_w, iy * tile_h))
+                    any_success = True
+            except Exception:
+                pass
 
     if not any_success:
         return None, None
@@ -743,3 +760,341 @@ def export_geojson(pos_df: pd.DataFrame, out_path: Path | str, sample_step: int 
         json.dump(geojson_doc, f, indent=2, ensure_ascii=False)
 
     return out_path
+
+
+def export_web_3d_globe(
+    pos_df: pd.DataFrame,
+    out_path: Path | str,
+    ref_df: pd.DataFrame | None = None,
+    ground_truth: pd.DataFrame | None = None,
+    title: str = "RTKLIB 3D 卫星实景数字地球",
+    pos_name: str | None = None,
+    sample_step: int = 1
+) -> Path:
+    """
+    Generate an interactive, standalone 3D WebGL Digital Globe (HTML) powered by CesiumJS:
+    - High-resolution global satellite photography (Esri World Imagery)
+    - True 3D flight trajectory with extruded vertical height curtain walls to ground
+    - Colormapped by 3D Positioning Error (or Solution Status Q)
+    - Ground Truth 3D comparison path (gold) when reference data is available
+    - 360° mouse orbit, zoom, pitch, fly-to view presets, and animated playback
+    """
+    if ref_df is None and ground_truth is not None:
+        ref_df = ground_truth
+    if pos_name is not None and title == "RTKLIB 3D 卫星实景数字地球":
+        title = f"{pos_name} - 3D 卫星实景数字地球"
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    p = pos_df.copy()
+    if sample_step > 1:
+        p = p.iloc[::sample_step].reset_index(drop=True)
+
+    if "lat" not in p.columns or "lon" not in p.columns:
+        raise ValueError("Position dataframe must contain 'lat' and 'lon' columns.")
+
+    has_truth = "e3d" in p.columns and p["e3d"].notna().any()
+    center_lat = float(p.lat.mean())
+    center_lon = float(p.lon.mean())
+    mean_h = float(p.h.mean()) if "h" in p else 0.0
+
+    # Prepare trajectory points for Cesium
+    pts_json = []
+    for _, row in p.iterrows():
+        lat = float(row.lat)
+        lon = float(row.lon)
+        alt = float(row.h) if "h" in row and pd.notna(row.h) else 0.0
+        q = int(row.q) if "q" in row and pd.notna(row.q) else 1
+        e3d = float(row.e3d) if has_truth and pd.notna(row.e3d) else 0.0
+        eh = float(row.eh) if "eh" in row and pd.notna(row.eh) else 0.0
+        tow = float(row.tow) if "tow" in row and pd.notna(row.tow) else 0.0
+        pts_json.append({
+            "lon": round(lon, 7),
+            "lat": round(lat, 7),
+            "alt": round(alt, 2),
+            "q": q,
+            "e3d": round(e3d, 3),
+            "eh": round(eh, 3),
+            "tow": round(tow, 2)
+        })
+
+    # Prepare Ground Truth line if available
+    gt_pts_json = []
+    if ref_df is not None and not ref_df.empty:
+        r_sub = ref_df.iloc[::max(1, sample_step)]
+        lat_c = "Latitude (deg)" if "Latitude (deg)" in r_sub.columns else ("lat" if "lat" in r_sub.columns else None)
+        lon_c = "Longitude (deg)" if "Longitude (deg)" in r_sub.columns else ("lon" if "lon" in r_sub.columns else None)
+        h_c = "Ellipsoid Height (m)" if "Ellipsoid Height (m)" in r_sub.columns else ("h" if "h" in r_sub.columns else None)
+        if lat_c and lon_c:
+            for _, rrow in r_sub.iterrows():
+                gt_pts_json.append({
+                    "lon": round(float(rrow[lon_c]), 7),
+                    "lat": round(float(rrow[lat_c]), 7),
+                    "alt": round(float(rrow[h_c]), 2) if h_c and pd.notna(rrow[h_c]) else round(mean_h, 2)
+                })
+
+    pts_str = json.dumps(pts_json)
+    gt_pts_str = json.dumps(gt_pts_json)
+
+    # Calculate summary metrics
+    total_ep = len(p)
+    fix_cnt = int((p.q == 1).sum()) if "q" in p else 0
+    fix_rate = (fix_cnt / total_ep * 100.0) if total_ep > 0 else 0.0
+    rmse_3d = float(np.sqrt(np.mean(p.e3d**2))) if has_truth else 0.0
+    max_3d = float(p.e3d.max()) if has_truth else 0.0
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>{title}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
+  <style>
+    html, body, #cesiumContainer {{
+      width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+    }}
+    .cesium-widget-credits {{ display: none !important; }}
+    #hud-panel {{
+      position: absolute; top: 16px; left: 16px; z-index: 99;
+      background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(12px);
+      border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 12px;
+      padding: 18px 22px; color: #f8fafc; width: 340px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6);
+    }}
+    #hud-panel h2 {{ margin: 0 0 10px 0; font-size: 17px; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 8px; }}
+    .stat-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }}
+    .stat-item {{ background: rgba(30, 41, 59, 0.7); padding: 8px 10px; border-radius: 6px; border-left: 3px solid #38bdf8; }}
+    .stat-label {{ font-size: 11px; color: #94a3b8; text-transform: uppercase; }}
+    .stat-val {{ font-size: 15px; font-weight: 700; color: #f1f5f9; margin-top: 2px; }}
+    .btn-group {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }}
+    .hud-btn {{
+      background: #0284c7; color: white; border: none; padding: 6px 12px;
+      border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+      transition: all 0.2s;
+    }}
+    .hud-btn:hover {{ background: #0369a1; transform: translateY(-1px); }}
+    .hud-btn.secondary {{ background: rgba(51, 65, 85, 0.85); }}
+    .hud-btn.secondary:hover {{ background: rgba(71, 85, 105, 0.95); }}
+    #legend {{
+      position: absolute; bottom: 24px; right: 24px; z-index: 99;
+      background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px;
+      padding: 12px 16px; color: #e2e8f0; font-size: 12px;
+    }}
+    .legend-row {{ display: flex; align-items: center; gap: 8px; margin: 4px 0; }}
+    .legend-bar {{ width: 18px; height: 10px; border-radius: 2px; }}
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+
+  <div id="hud-panel">
+    <h2>🛰️ RTKLIB 三维实景数字地球</h2>
+    <div style="font-size: 12px; color: #cbd5e1; margin-bottom: 6px;">
+      卫星遥感底图：Esri World Imagery (高清卫星遥感)
+    </div>
+    <div class="stat-grid">
+      <div class="stat-item">
+        <div class="stat-label">固定率 (Fix Rate)</div>
+        <div class="stat-val" style="color: {'#4ade80' if fix_rate >= 85 else '#fbbf24'};">{fix_rate:.1f}%</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">历元总数 (Epochs)</div>
+        <div class="stat-val">{total_ep:,}</div>
+      </div>
+      {f'''<div class="stat-item">
+        <div class="stat-label">3D RMSE</div>
+        <div class="stat-val" style="color: {'#4ade80' if rmse_3d < 1.0 else '#f87171'};">{rmse_3d:.3f} m</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">最大 3D 误差</div>
+        <div class="stat-val" style="color: {'#fbbf24' if max_3d < 3.0 else '#f87171'};">{max_3d:.2f} m</div>
+      </div>''' if has_truth else f'''<div class="stat-item">
+        <div class="stat-label">平均大地高</div>
+        <div class="stat-val">{mean_h:.2f} m</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">解状态模式</div>
+        <div class="stat-val">FIX+FLOAT</div>
+      </div>'''}
+    </div>
+    <div class="btn-group">
+      <button class="hud-btn" onclick="flyToTrack()">🎯 视角对齐轨迹</button>
+      <button class="hud-btn secondary" onclick="setViewTop()">📐 2D 顶视</button>
+      <button class="hud-btn secondary" onclick="setViewIso()">🌐 3D 等轴</button>
+      <button class="hud-btn secondary" onclick="toggleExtrude()">🏢 切换垂向挤出</button>
+    </div>
+  </div>
+
+  <div id="legend">
+    <div style="font-weight: 700; margin-bottom: 6px; color: #38bdf8;">{'定位误差分级' if has_truth else '解状态分类'}</div>
+    {'''
+    <div class="legend-row"><div class="legend-bar" style="background: #22c55e;"></div><span>高精度 (3D &lt; 0.5m)</span></div>
+    <div class="legend-row"><div class="legend-bar" style="background: #eab308;"></div><span>中等误差 (0.5m ~ 2.0m)</span></div>
+    <div class="legend-row"><div class="legend-bar" style="background: #ef4444;"></div><span>超差/异常 (&gt; 2.0m)</span></div>
+    <div class="legend-row"><div class="legend-bar" style="background: #ffd700; height: 3px;"></div><span>参考真值 (Ground Truth)</span></div>
+    ''' if has_truth else '''
+    <div class="legend-row"><div class="legend-bar" style="background: #16a34a;"></div><span>Q=1 固定解 (FIX)</span></div>
+    <div class="legend-row"><div class="legend-bar" style="background: #ea580c;"></div><span>Q=2 浮点解 (FLOAT)</span></div>
+    <div class="legend-row"><div class="legend-bar" style="background: #64748b;"></div><span>Q=5 单点解 (SINGLE)</span></div>
+    '''}
+  </div>
+
+  <script>
+    const pts = {pts_str};
+    const gtPts = {gt_pts_str};
+    const hasTruth = {'true' if has_truth else 'false'};
+
+    // Initialize Cesium viewer with Esri World Imagery
+    const viewer = new Cesium.Viewer('cesiumContainer', {{
+      imageryProvider: new Cesium.ArcGisMapServerImageryProvider({{
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
+      }}),
+      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      infoBox: true,
+      selectionIndicator: true,
+      timeline: true,
+      animation: true,
+      sceneModePicker: true,
+      navigationHelpButton: false
+    }});
+
+    // Helper for colors
+    function getColor(pt) {{
+      if (hasTruth) {{
+        const e = pt.e3d;
+        if (e < 0.5) return Cesium.Color.fromCssColorString('#22c55e');
+        if (e < 2.0) return Cesium.Color.fromCssColorString('#eab308');
+        return Cesium.Color.fromCssColorString('#ef4444');
+      }} else {{
+        if (pt.q === 1) return Cesium.Color.fromCssColorString('#16a34a');
+        if (pt.q === 2) return Cesium.Color.fromCssColorString('#ea580c');
+        return Cesium.Color.fromCssColorString('#64748b');
+      }}
+    }}
+
+    // Construct 3D trajectory polyline segments with extruded curtain wall
+    let wallEntities = [];
+    let isExtruded = true;
+
+    if (pts.length > 1) {{
+      for (let i = 0; i < pts.length - 1; i++) {{
+        const p1 = pts[i];
+        const p2 = pts[i+1];
+        const col = getColor(p1);
+
+        // 3D Polyline segment
+        viewer.entities.add({{
+          polyline: {{
+            positions: Cesium.Cartesian3.fromDegreesArrayHeights([
+              p1.lon, p1.lat, p1.alt,
+              p2.lon, p2.lat, p2.alt
+            ]),
+            width: 4.5,
+            material: col
+          }}
+        }});
+
+        // Vertical extrusion curtain wall to ground
+        const wall = viewer.entities.add({{
+          wall: {{
+            positions: Cesium.Cartesian3.fromDegreesArrayHeights([
+              p1.lon, p1.lat, p1.alt,
+              p2.lon, p2.lat, p2.alt
+            ]),
+            minimumHeights: [0, 0],
+            material: col.withAlpha(0.28)
+          }}
+        }});
+        wallEntities.push(wall);
+      }}
+
+      // Start & End markers
+      const pStart = pts[0];
+      const pEnd = pts[pts.length - 1];
+
+      viewer.entities.add({{
+        position: Cesium.Cartesian3.fromDegrees(pStart.lon, pStart.lat, pStart.alt),
+        point: {{ pixelSize: 14, color: Cesium.Color.LIME, outlineColor: Cesium.Color.WHITE, outlineWidth: 2 }},
+        label: {{ text: '🟢 起点 (Start)', font: '13px bold sans-serif', pixelOffset: new Cesium.Cartesian2(0, -22), fillColor: Cesium.Color.WHITE }}
+      }});
+
+      viewer.entities.add({{
+        position: Cesium.Cartesian3.fromDegrees(pEnd.lon, pEnd.lat, pEnd.alt),
+        point: {{ pixelSize: 14, color: Cesium.Color.RED, outlineColor: Cesium.Color.WHITE, outlineWidth: 2 }},
+        label: {{ text: '🔴 终点 (End)', font: '13px bold sans-serif', pixelOffset: new Cesium.Cartesian2(0, -22), fillColor: Cesium.Color.WHITE }}
+      }});
+    }}
+
+    // Draw Ground Truth in 3D (Gold Line)
+    if (gtPts.length > 1) {{
+      const gtPos = [];
+      gtPts.forEach(pt => {{
+        gtPos.push(pt.lon, pt.lat, pt.alt);
+      }});
+      viewer.entities.add({{
+        polyline: {{
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights(gtPos),
+          width: 3.0,
+          material: new Cesium.PolylineDashMaterialProperty({{
+            color: Cesium.Color.fromCssColorString('#ffd700'),
+            dashLength: 16.0
+          }})
+        }}
+      }});
+    }}
+
+    // Camera viewpoints
+    function flyToTrack() {{
+      if (!pts.length) return;
+      const lons = pts.map(p => p.lon);
+      const lats = pts.map(p => p.lat);
+      const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+      const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+
+      viewer.camera.flyTo({{
+        destination: Cesium.Rectangle.fromDegrees(minLon - 0.005, minLat - 0.005, maxLon + 0.005, maxLat + 0.005),
+        duration: 1.8
+      }});
+    }}
+
+    function setViewTop() {{
+      const cLon = {center_lon}, cLat = {center_lat};
+      viewer.camera.flyTo({{
+        destination: Cesium.Cartesian3.fromDegrees(cLon, cLat, 4500.0),
+        orientation: {{ heading: 0.0, pitch: -Cesium.Math.PI_OVER_TWO, roll: 0.0 }},
+        duration: 1.2
+      }});
+    }}
+
+    function setViewIso() {{
+      const cLon = {center_lon}, cLat = {center_lat};
+      viewer.camera.flyTo({{
+        destination: Cesium.Cartesian3.fromDegrees(cLon - 0.02, cLat - 0.02, 2800.0),
+        orientation: {{ heading: Cesium.Math.toRadians(45.0), pitch: Cesium.Math.toRadians(-35.0), roll: 0.0 }},
+        duration: 1.2
+      }});
+    }}
+
+    function toggleExtrude() {{
+      isExtruded = !isExtruded;
+      wallEntities.forEach(w => w.show = isExtruded);
+    }}
+
+    // Initial fly-in
+    setTimeout(flyToTrack, 600);
+  </script>
+</body>
+</html>
+"""
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+    return out_path
+

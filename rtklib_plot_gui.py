@@ -45,7 +45,7 @@ def insert_time_gaps(times, *arrays, max_gap_factor=2.5, min_gap_s=0.25):
 Q_LABELS = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}
 Q_COLORS = {1: "#07851d", 2: "#dc8a12", 3: "#5b83c4", 4: "#9b59b6", 5: "#777777", 6: "#17a2a4"}
 MODES = [
-    "Gnd Trk", "Trajectory Error Heatmap", "ENU Position", "Height", "ENU Error", "Solution Status",
+    "Gnd Trk", "Trajectory Error Heatmap", "3D Ground Track", "ENU Position", "Height", "ENU Error", "Solution Status",
     "AR Ratio", "Differential Age", "Satellites", "DOP", "Directional DOP",
     "Skyplot & C/N0 (Env)", "Skyplot", "C/N0", "Satellite Elevation",
     "Residuals", "Residual Triad", "El vs SNR & Resp", "Top Outlier Satellites",
@@ -55,7 +55,7 @@ MODES = [
 ]
 
 NON_TIME_SERIES_MODES = (
-    "Gnd Trk", "Trajectory Error Heatmap", "Skyplot", "Multipath Skyplot", "Multipath Proxy",
+    "Gnd Trk", "Trajectory Error Heatmap", "3D Ground Track", "Skyplot", "Multipath Skyplot", "Multipath Proxy",
     "Per-PRN Residuals", "False Fix Analysis", "Innovation / NIS", "Error CDF",
     "Error Histogram",
     "El vs SNR & Resp", "Top Outlier Satellites", "Env & Geometry Combined", "Skyplot & C/N0 (Env)"
@@ -64,14 +64,14 @@ NON_TIME_SERIES_MODES = (
 PLOT_CATEGORIES = {
     "核心诊断链路 (Survey Diagnostics)": [
         "Env & Geometry Combined", "Skyplot & C/N0 (Env)", "Satellite Visibility Gantt", "Top Outlier Satellites",
-        "False Fix Analysis", "Covariance", "Trajectory Error Heatmap",
+        "False Fix Analysis", "Covariance", "Trajectory Error Heatmap", "3D Ground Track",
         "Residual Triad", "El vs SNR & Resp", "Directional DOP", "Body-Frame Error"
     ],
     "轨迹与空间位置 (Trajectory & Position)": [
-        "Gnd Trk", "Trajectory Error Heatmap", "ENU Position", "Height", "Body-Frame Error"
+        "Gnd Trk", "Trajectory Error Heatmap", "3D Ground Track", "ENU Position", "Height", "Body-Frame Error"
     ],
     "定位误差与精度评估 (Accuracy & Errors)": [
-        "ENU Error", "Trajectory Error Heatmap", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad", "Body-Frame Error"
+        "ENU Error", "Trajectory Error Heatmap", "3D Ground Track", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad", "Body-Frame Error"
     ],
     "解算状态与可靠性 (Status & Reliability)": [
         "Solution Status", "AR Ratio", "Differential Age", "False Fix Analysis", "Innovation / NIS"
@@ -95,6 +95,7 @@ MODE_BILINGUAL = {
     "Satellite Elevation": "卫星高度角时序 (Elevation)",
     "Gnd Trk": "地面轨迹 (Gnd Trk)",
     "Trajectory Error Heatmap": "轨迹误差热力图 (Trajectory Error)",
+    "3D Ground Track": "三维空间轨迹 (3D Ground Track)",
     "ENU Position": "ENU位置时序 (ENU Pos)",
     "Height": "大地高程 (Height)",
     "ENU Error": "ENU定位误差 (ENU Error)",
@@ -249,8 +250,11 @@ class RTKPlotApp:
         self.marker_size=tk.DoubleVar(value=3.0)
         self.curve_styles={}
         self.basemap_provider=tk.StringVar(value="None")
+        self.basemap_res=tk.StringVar(value="高清 (HD)")
         self.basemap_alpha=tk.DoubleVar(value=0.85)
         self.cached_basemap=None
+        self.vehicle_marker_3d=None;self.vehicle_trail_3d=None;self.vehicle_label_3d=None
+        self.truth_marker_3d=None;self.error_link_3d=None
         self.custom_preset=tk.StringVar(value="Auto Grid (自适应等分)")
         self.sync_time_axes=tk.BooleanVar(value=True)
         self.sync_y_axes=tk.BooleanVar(value=True)
@@ -303,6 +307,7 @@ class RTKPlotApp:
         filem.add_command(label="Export Current Plot…",command=self.export_plot,accelerator="Ctrl+S")
         filem.add_command(label="Batch Export Subplots…",command=self.open_batch_export_dialog,accelerator="Ctrl+E")
         filem.add_command(label="Export Google Earth KML (3D)…",command=self.export_kml)
+        filem.add_command(label="Export Web 3D Digital Globe (网页3D实景地球)…",command=self.export_web_3d_globe)
         filem.add_command(label="Export Google My Maps KML (2D)…",command=self.export_kml_2d)
         filem.add_command(label="Export Standard GeoJSON…",command=self.export_geojson)
         filem.add_separator(); filem.add_command(label="Exit",command=self.root.destroy); bar.add_cascade(label="File",menu=filem)
@@ -411,8 +416,11 @@ class RTKPlotApp:
         ttk.Checkbutton(row1,text="Grid",variable=self.grid_on,command=self.redraw).pack(side=tk.LEFT,padx=6)
         ttk.Label(row1,text="Map:").pack(side=tk.LEFT,padx=(6,2))
         self.basemap_combo=ttk.Combobox(row1,textvariable=self.basemap_provider,values=["None","Esri Satellite","OpenStreetMap","CartoDB Dark"],state="readonly",width=12)
-        self.basemap_combo.pack(side=tk.LEFT,padx=3)
+        self.basemap_combo.pack(side=tk.LEFT,padx=2)
         self.basemap_combo.bind("<<ComboboxSelected>>",self._on_basemap_changed)
+        self.basemap_res_combo=ttk.Combobox(row1,textvariable=self.basemap_res,values=["高清 (HD)","超清 (Ultra)","标准 (Fast)"],state="readonly",width=9)
+        self.basemap_res_combo.pack(side=tk.LEFT,padx=2)
+        self.basemap_res_combo.bind("<<ComboboxSelected>>",self._on_basemap_res_changed)
         ttk.Separator(row1,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=6,pady=2)
         ttk.Button(row1,text="Fit",command=self.fit_view).pack(side=tk.LEFT,padx=2)
         ttk.Button(row1,text="➕ Add",command=self.add_selected_plot).pack(side=tk.LEFT,padx=2)
@@ -433,6 +441,7 @@ class RTKPlotApp:
         ttk.Button(row2,text="Auto Detect Issues",command=self.auto_detect_issues).pack(side=tk.LEFT,padx=4)
         ttk.Button(row2,text="Diagnostic Report",command=self.open_report_dialog).pack(side=tk.LEFT,padx=4)
         ttk.Button(row2,text="Google Earth 3D…",command=self.export_kml).pack(side=tk.LEFT,padx=3)
+        ttk.Button(row2,text="Web 3D 实景地球…",command=self.export_web_3d_globe).pack(side=tk.LEFT,padx=3)
         ttk.Button(row2,text="My Maps 2D…",command=self.export_kml_2d).pack(side=tk.LEFT,padx=3)
         ttk.Button(row2,text="GeoJSON…",command=self.export_geojson).pack(side=tk.LEFT,padx=3)
         self.segment_status=ttk.Label(row2,text="右键子图快捷菜单 · 双击满屏放大/还原 · 列表双击聚焦区段 · Shift+拖拽标记区段",anchor="w")
@@ -442,6 +451,7 @@ class RTKPlotApp:
         row_ws = ttk.Frame(self.root, padding=(8, 2))
         row_ws.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(row_ws, text="诊断工作区:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(row_ws, text="🌐 3D 空间轨迹", command=lambda: self.set_mode("3D Ground Track")).pack(side=tk.LEFT, padx=2)
         ttk.Button(row_ws, text="①+③ 环境与几何", command=lambda: self.set_mode("Env & Geometry Combined")).pack(side=tk.LEFT, padx=2)
         ttk.Button(row_ws, text="① 外部多路径", command=lambda: self.switch_workspace(0)).pack(side=tk.LEFT, padx=2)
         ttk.Button(row_ws, text="② 单星污染", command=lambda: self.switch_workspace(1)).pack(side=tk.LEFT, padx=2)
@@ -1863,6 +1873,10 @@ class RTKPlotApp:
         if mode == "Multipath Skyplot":
             self.ax = self.fig.add_subplot(111, projection="polar"); self.plot_axes = [self.ax]
             self._draw_multipath_skyplot(self.ax); self._apply_segment_overlays(); self._register_dynamic_artists(); self.canvas.draw_idle(); self._update_cursor(); self.update_analysis(); return
+        if mode == "3D Ground Track":
+            from mpl_toolkits.mplot3d import Axes3D
+            self.ax = self.fig.add_subplot(111, projection="3d"); self.plot_axes = [self.ax]
+            self._draw_3d_track(self.ax, p, full); self._apply_segment_overlays(); self._register_dynamic_artists(); self.canvas.draw_idle(); self._update_cursor(); self.update_analysis(); return
         if mode in ("ENU Position","ENU Error","Error Histogram","Body-Frame Error"):
             sharex = (mode != "Error Histogram")
             axes=self.fig.subplots(3,1,sharex=sharex);self.plot_axes=list(axes);self.ax=axes[0]
@@ -1958,6 +1972,9 @@ class RTKPlotApp:
 
     def _register_dynamic_artists(self):
         """Keep moving cursors separate from the static plot for fast blitting."""
+        if getattr(self, "mode", None) and self.mode.get() == "3D Ground Track":
+            self.dynamic_artists = []
+            return
         self._home_limits={id(ax):(ax.get_xlim(),ax.get_ylim()) for ax in self.fig.axes}
         candidates=list(self.time_cursors)+list(self.custom_dynamic_artists)
         candidates.extend(a for a in (self.vehicle_marker,self.vehicle_trail,self.vehicle_label,self.truth_marker,self.error_link) if a is not None)
@@ -1985,7 +2002,7 @@ class RTKPlotApp:
             self._blit_background=None
 
     def _blit_dynamic(self):
-        if self._blit_background is None:
+        if self._blit_background is None or (getattr(self, "mode", None) and self.mode.get() == "3D Ground Track"):
             self.canvas.draw_idle();return
         self.canvas.restore_region(self._blit_background)
         for artist in self.dynamic_artists:
@@ -2907,18 +2924,17 @@ class RTKPlotApp:
             panel=self.custom_panels[i]
             name=panel["mode"]
             rect=(.065,.09,.92,.82) if self.focused_custom_panel is not None else panel["rect"]
-            is_time_series = name not in NON_TIME_SERIES_MODES
-            share = base_time_ax if (self.sync_time_axes.get() and is_time_series and self.focused_custom_panel is None) else None
-            unit_grp = PLOT_UNIT_GROUPS.get(name)
-            sharey = group_base_ax.get(unit_grp) if (self.sync_y_axes.get() and unit_grp and self.focused_custom_panel is None) else None
-            ax=self.fig.add_axes(rect,projection="polar" if name in ("Skyplot", "Multipath Skyplot", "Skyplot & C/N0 (Env)") else None, sharex=share, sharey=sharey)
+            is_3d = (name == "3D Ground Track")
+            proj = "polar" if name in ("Skyplot", "Multipath Skyplot", "Skyplot & C/N0 (Env)") else ("3d" if is_3d else None)
+            ax=self.fig.add_axes(rect, projection=proj, sharex=share if not is_3d else None, sharey=sharey if not is_3d else None)
             ax._panel_mode = name
             if self.sync_time_axes.get() and is_time_series and base_time_ax is None and self.focused_custom_panel is None:
                 base_time_ax = ax
-            if self.sync_y_axes.get() and unit_grp and unit_grp not in group_base_ax and self.focused_custom_panel is None:
+            if self.sync_y_axes.get() and unit_grp and unit_grp not in group_base_ax and self.focused_custom_panel is None and not is_3d:
                 group_base_ax[unit_grp] = ax
             self.plot_axes.append(ax)
-            for spine in ax.spines.values():spine.set_edgecolor("#168aad" if i==self.selected_custom_panel else "#b9c0c8");spine.set_linewidth(1.6 if i==self.selected_custom_panel else .75)
+            if hasattr(ax, "spines") and hasattr(ax.spines, "values"):
+                for spine in ax.spines.values():spine.set_edgecolor("#168aad" if i==self.selected_custom_panel else "#b9c0c8");spine.set_linewidth(1.6 if i==self.selected_custom_panel else .75)
             if not name:
                 # Keep the drop hint inside its own axes. A long title overlaps
                 # neighboring panels after a narrow split.
@@ -2998,6 +3014,7 @@ class RTKPlotApp:
             elif name=="Directional DOP":self._draw_directional_dop(ax)
             elif name=="Body-Frame Error":self._draw_body_frame_error(ax,p)
             elif name=="Trajectory Error Heatmap":self._draw_trajectory_error_heatmap(ax,p,full)
+            elif name=="3D Ground Track":self._draw_3d_track(ax,p,full)
             ax.grid(self.grid_on.get(),alpha=.28)
             if is_time_series:
                 self._set_datetime_axis(ax);ax.xaxis.set_major_locator(MaxNLocator(3));ax.tick_params(axis="x",labelsize=7,labelrotation=0)
@@ -3041,6 +3058,7 @@ class RTKPlotApp:
 
     def _register_custom_dynamic(self,name,ax,p,full):
         """Add a current-epoch highlight to every plot in a custom grid or single plot view."""
+        if name == "3D Ground Track": return
         def point(color="#111",marker="o",size=7,target=None):
             target=target if target is not None else ax
             return target.plot([],[],linestyle="None",marker=marker,ms=size,mfc=color,mec="white",mew=.7,zorder=12)[0]
@@ -3386,6 +3404,15 @@ class RTKPlotApp:
             if d["has_truth"]:
                 lines.append(f"与真值比较：水平 RMSE {self._rms(p.eh):.3f} m，3D RMSE {self._rms(p.e3d):.3f} m；水平误差 P95={p.eh.quantile(.95):.3f} m。")
                 worst=p.e3d.idxmax();lines.append(f"最大 3D 误差 {p.loc[worst,'e3d']:.2f} m，发生在 TOW {p.loc[worst,'tow']:.2f} s（Q={int(p.loc[worst,'q'])}）。")
+        elif mode=="3D Ground Track":
+            rates=p.q.value_counts(normalize=True);fix=float(rates.get(1,0))*100;fl=float(rates.get(2,0))*100
+            lines.append(f"三维空间轨迹：共有 {len(p):,} 个历元，FIX {fix:.1f}%、FLOAT {fl:.1f}%。支持鼠标 360° 拖拽三维视角旋转与滚轮缩放。")
+            u_min, u_max = float(p.U.min()), float(p.U.max())
+            lines.append(f"空间跨度：东向 {p.E.max()-p.E.min():.1f}m、北向 {p.N.max()-p.N.min():.1f}m、高程落差 {u_max-u_min:.1f}m (最低 {u_min:.1f}m ~ 最高 {u_max:.1f}m)。")
+            if d["has_truth"]:
+                lines.append(f"空间真值对比：3D RMSE {self._rms(p.e3d):.3f} m (水平 {self._rms(p.eh):.3f} m, 垂向 {self._rms(p.du):.3f} m)；P95 3D误差={p.e3d.quantile(.95):.3f} m。")
+            else:
+                lines.append("未加载参考真值：空间曲线按解算状态 Q 彩色区分，可点击「Open Ground Truth」载入真值进行三维空间误差对比。")
         elif mode=="ENU Position":
             ranges=[]
             for c,label in [("E","东向"),("N","北向"),("U","天向")]:
@@ -3670,6 +3697,122 @@ class RTKPlotApp:
                 self.error_link, = ax.plot([cur.E, cur.gt_E], [cur.N, cur.gt_N], color="#df2525", lw=1.5, ls=":", zorder=7)
         if hasattr(self, "_draw_stats"):
             self._draw_stats(ax, full)
+
+    def _draw_3d_track(self, ax, p, full):
+        self._track_e = full.E.to_numpy()
+        self._track_n = full.N.to_numpy()
+        self._track_u = full.U.to_numpy() if "U" in full else np.zeros(len(full))
+
+        e = p.E.to_numpy(); n = p.N.to_numpy(); u = p.U.to_numpy() if "U" in p else np.zeros(len(p))
+        u_valid = u[np.isfinite(u)]
+        if len(u_valid) == 0:
+            u_min, u_max = -5.0, 5.0
+        else:
+            u_min, u_max = float(np.nanmin(u_valid)), float(np.nanmax(u_valid))
+        delta_u = max(u_max - u_min, 10.0)
+        z_floor = u_min - delta_u * 0.18
+
+        # 1. Background satellite map draping on ground plane (z = z_floor)
+        provider = self.basemap_provider.get()
+        if provider == "None":
+            provider = "Esri Satellite"
+        res_str = self.basemap_res.get() if hasattr(self, "basemap_res") else "高清 (HD)"
+        if "超清" in res_str or "Ultra" in res_str:
+            max_tiles, margin = 120, 0.04
+        elif "标准" in res_str or "Fast" in res_str:
+            max_tiles, margin = 25, 0.08
+        else:
+            max_tiles, margin = 72, 0.06
+
+        try:
+            cache_key = (provider, res_str, str(self.pos_path))
+            if self.cached_basemap and self.cached_basemap[0] == cache_key:
+                img, extent = self.cached_basemap[1], self.cached_basemap[2]
+            else:
+                lat_min, lat_max = float(full.lat.min()), float(full.lat.max())
+                lon_min, lon_max = float(full.lon.min()), float(full.lon.max())
+                origin_lat = float(full.lat.iloc[0])
+                origin_lon = float(full.lon.iloc[0])
+                origin_h = float(full.h.iloc[0]) if "h" in full else 0.0
+                img, extent = mt.get_stitched_tiles_enu(
+                    lat_min, lat_max, lon_min, lon_max,
+                    origin_lat, origin_lon, origin_h,
+                    provider=provider, max_tiles=max_tiles, margin=margin
+                )
+                self.cached_basemap = (cache_key, img, extent)
+
+            if img is not None and extent is not None:
+                step_x = max(1, img.shape[1] // 80)
+                step_y = max(1, img.shape[0] // 80)
+                img_sub = img[::step_y, ::step_x] / 255.0
+                ny, nx, _ = img_sub.shape
+                x_grid = np.linspace(extent[0], extent[1], nx)
+                y_grid = np.linspace(extent[3], extent[2], ny)
+                XG, YG = np.meshgrid(x_grid, y_grid)
+                ZG = np.full_like(XG, z_floor)
+                ax.plot_surface(XG, YG, ZG, facecolors=img_sub, rstride=1, cstride=1, shade=False, alpha=0.92, zorder=1)
+        except Exception as e:
+            print(f"3D Basemap draping notice: {e}")
+
+        # 2. Ground footprint shadow on z = z_floor
+        ax.plot(p.E, p.N, np.full_like(p.E, z_floor), color="#475569", lw=1.2, ls="--", alpha=0.65, label="地面投影 (Ground Shadow)", zorder=3)
+
+        # 3. Vertical drop stems to ground plane (giving strong 3D depth perception)
+        stem_step = max(1, len(p) // 50)
+        for idx_stem in range(0, len(p), stem_step):
+            row_s = p.iloc[idx_stem]
+            u_val = float(row_s.U) if "U" in row_s and np.isfinite(row_s.U) else 0.0
+            ax.plot([row_s.E, row_s.E], [row_s.N, row_s.N], [z_floor, u_val], color="#94a3b8", lw=0.6, ls=":", alpha=0.5, zorder=3)
+
+        # 4. Color-coded 3D Trajectory
+        color_by_err = (getattr(self, "track_color_by_error", None) and self.track_color_by_error.get() and self.data["has_truth"])
+        if color_by_err:
+            err = np.clip(p.e3d.fillna(0).to_numpy(dtype=float), 0, 15.0)
+            sc = ax.scatter(p.E, p.N, p.U, c=err, cmap="turbo", s=10, vmin=0, vmax=15.0, alpha=0.92, zorder=6, label="3D 定位误差")
+            fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
+            if fig_target is not None:
+                cb = fig_target.colorbar(sc, ax=ax, pad=0.08, fraction=0.035, shrink=0.7)
+                cb.set_label("3D Error (m, clipped at 15m)", fontsize=8)
+                cb.ax.tick_params(labelsize=7)
+        else:
+            for q, g in p.groupby("q"):
+                label = f"Q={q}: {Q_LABELS.get(q, 'Other')}"
+                ax.scatter(g.E, g.N, g.U, s=8, color=Q_COLORS.get(q, "#666"), label=label, alpha=0.88, zorder=6)
+
+        # 5. Ground Truth 3D Trajectory (Gold Line)
+        if self.data["has_truth"] and "gt_E" in full.columns and "gt_N" in full.columns:
+            gt_u = full.gt_U if "gt_U" in full.columns else np.zeros(len(full))
+            t_gt, gt_e, gt_n, gt_u_gap = insert_time_gaps(full.time, full.gt_E, full.gt_N, gt_u)
+            ax.plot(gt_e, gt_n, gt_u_gap, color="#ffd700", lw=2.0, ls="--", label="真值轨迹 (Truth 3D)", zorder=7)
+
+        # 6. Start & End Markers
+        ax.scatter([p.E.iloc[0]], [p.N.iloc[0]], [p.U.iloc[0]], s=70, marker="o", color="#22c55e", edgecolors="white", lw=1.5, zorder=9, label="起点 (Start)")
+        ax.scatter([p.E.iloc[-1]], [p.N.iloc[-1]], [p.U.iloc[-1]], s=70, marker="s", color="#ef4444", edgecolors="white", lw=1.5, zorder=9, label="终点 (End)")
+
+        # 7. Active Epoch Vehicle Marker & Trail
+        idx = min(int(self.slider.get()), len(full) - 1)
+        cur = full.iloc[idx]
+        cur_u = float(cur.U) if "U" in cur and np.isfinite(cur.U) else 0.0
+        start = max(0, idx - 120); stride = max(1, (idx - start + 1) // 300)
+        sub_e = self._track_e[start:idx+1:stride]
+        sub_n = self._track_n[start:idx+1:stride]
+        sub_u = self._track_u[start:idx+1:stride]
+        self.vehicle_trail_3d, = ax.plot(sub_e, sub_n, sub_u, color="#ff2727", lw=2.5, alpha=0.95, zorder=10)
+        self.vehicle_marker_3d, = ax.plot([cur.E], [cur.N], [cur_u], marker="o", ms=9, mfc="#ff2727", mec="white", mew=1.5, linestyle="None", zorder=11)
+        self.vehicle_label_3d = ax.text(cur.E, cur.N, cur_u + max(2.0, delta_u * 0.04), f"  {idx+1}/{len(full)} Q={int(cur.q)}", fontsize=8, weight="bold", color="#111", bbox=dict(boxstyle="round,pad=.2", fc="white", ec="#ff2727", alpha=0.9), zorder=12)
+
+        if self.data["has_truth"] and np.isfinite(cur.get("gt_E", np.nan)) and np.isfinite(cur.get("gt_N", np.nan)):
+            gt_u_cur = float(cur.gt_U) if ("gt_U" in cur and np.isfinite(cur.gt_U)) else 0.0
+            self.truth_marker_3d, = ax.plot([cur.gt_E], [cur.gt_N], [gt_u_cur], marker="*", ms=13, mfc="#ffd92f", mec="#222", mew=0.8, linestyle="None", zorder=11, label="当前真值")
+            self.error_link_3d, = ax.plot([cur.E, cur.gt_E], [cur.N, cur.gt_N], [cur_u, gt_u_cur], color="#df2525", lw=1.8, ls=":", zorder=10)
+
+        ax.set_xlabel("东向 East (m)", fontsize=9, weight="bold", labelpad=8)
+        ax.set_ylabel("北向 North (m)", fontsize=9, weight="bold", labelpad=8)
+        ax.set_zlabel("高程 Up (m)", fontsize=9, weight="bold", labelpad=8)
+        ax.set_title("三维空间轨迹与定位误差分布 (3D Ground Track & Error Space)", fontsize=11, weight="bold", pad=12)
+        ax.view_init(elev=28, azim=-55)
+        ax.legend(loc="upper left", fontsize=7.5, framealpha=0.85)
+        ax.grid(self.grid_on.get(), alpha=0.3, ls=":")
 
     def _draw_stats(self,ax,p):
         xyz=p[["x","y","z"]].to_numpy(); lat,lon,h=ecef_to_geodetic(*xyz[0]); avlat,avlon,avh=ecef_to_geodetic(*xyz.mean(axis=0))
@@ -4379,6 +4522,16 @@ class RTKPlotApp:
             self.vehicle_marker.set_data([r.E],[r.N]);start=max(0,i-120);stride=max(1,(i-start+1)//300)
             self.vehicle_trail.set_data(self._track_e[start:i+1:stride],self._track_n[start:i+1:stride])
             self.vehicle_label.xy=(r.E,r.N);self.vehicle_label.set_text(f"  {i+1}/{len(p)}  Q={int(r.q)}:{Q_LABELS.get(int(r.q),'?')}")
+        if hasattr(self, "vehicle_marker_3d") and self.vehicle_marker_3d is not None:
+            r_u = float(r.U) if ("U" in r and np.isfinite(r.U)) else 0.0
+            self.vehicle_marker_3d.set_data_3d([r.E], [r.N], [r_u])
+            if hasattr(self, "vehicle_trail_3d") and self.vehicle_trail_3d is not None and hasattr(self, "_track_u"):
+                start=max(0,i-120);stride=max(1,(i-start+1)//300)
+                self.vehicle_trail_3d.set_data_3d(self._track_e[start:i+1:stride], self._track_n[start:i+1:stride], self._track_u[start:i+1:stride])
+            if hasattr(self, "vehicle_label_3d") and self.vehicle_label_3d is not None:
+                self.vehicle_label_3d.set_position((r.E, r.N))
+                self.vehicle_label_3d.set_3d_properties(r_u, 'z')
+                self.vehicle_label_3d.set_text(f"  {i+1}/{len(p)}  Q={int(r.q)}:{Q_LABELS.get(int(r.q),'?')}")
         if self.data["has_truth"] and np.isfinite(r.get("gt_E",np.nan)):
             if "_truth_str_cache" not in self.data:
                 self.data["_truth_str_cache"] = {}
@@ -4395,6 +4548,13 @@ class RTKPlotApp:
             self.truth_info.configure(text=self.data["_truth_str_cache"][i])
             if self.truth_marker is not None:self.truth_marker.set_data([r.gt_E],[r.gt_N])
             if self.error_link is not None:self.error_link.set_data([r.E,r.gt_E],[r.N,r.gt_N])
+            if hasattr(self, "truth_marker_3d") and self.truth_marker_3d is not None and np.isfinite(r.gt_E) and np.isfinite(r.gt_N):
+                gt_u_val = float(r.gt_U) if ("gt_U" in r and np.isfinite(r.gt_U)) else 0.0
+                self.truth_marker_3d.set_data_3d([r.gt_E], [r.gt_N], [gt_u_val])
+            if hasattr(self, "error_link_3d") and self.error_link_3d is not None and np.isfinite(r.gt_E) and np.isfinite(r.gt_N):
+                gt_u_val = float(r.gt_U) if ("gt_U" in r and np.isfinite(r.gt_U)) else 0.0
+                r_u = float(r.U) if ("U" in r and np.isfinite(r.U)) else 0.0
+                self.error_link_3d.set_data_3d([r.E, r.gt_E], [r.N, r.gt_N], [r_u, gt_u_val])
         elif self.data is None or not self.data["has_truth"]:
             self.truth_info.configure(text="Ground truth not loaded — RTK/Truth coordinate differences are unavailable.")
         else:
@@ -5033,12 +5193,24 @@ class RTKPlotApp:
         self.cached_basemap = None
         self.redraw()
 
+    def _on_basemap_res_changed(self, event=None):
+        self.cached_basemap = None
+        self.redraw()
+
     def _apply_basemap(self, ax, full):
         provider = self.basemap_provider.get()
         if provider == "None" or not hasattr(full, "lat") or not full.lat.notna().any():
             return
+        res_str = self.basemap_res.get() if hasattr(self, "basemap_res") else "高清 (HD)"
+        if "超清" in res_str or "Ultra" in res_str:
+            max_tiles, margin = 120, 0.04
+        elif "标准" in res_str or "Fast" in res_str:
+            max_tiles, margin = 25, 0.08
+        else: # 高清 (HD)
+            max_tiles, margin = 72, 0.06
+
         try:
-            cache_key = (provider, str(self.pos_path))
+            cache_key = (provider, res_str, str(self.pos_path))
             if self.cached_basemap and self.cached_basemap[0] == cache_key:
                 img, extent = self.cached_basemap[1], self.cached_basemap[2]
             else:
@@ -5050,7 +5222,7 @@ class RTKPlotApp:
                 img, extent = mt.get_stitched_tiles_enu(
                     lat_min, lat_max, lon_min, lon_max,
                     origin_lat, origin_lon, origin_h,
-                    provider=provider, max_tiles=16, margin=0.20
+                    provider=provider, max_tiles=max_tiles, margin=margin
                 )
                 self.cached_basemap = (cache_key, img, extent)
 
@@ -5287,6 +5459,40 @@ class RTKPlotApp:
         except Exception as exc:
             messagebox.showerror("导出 GeoJSON 失败", str(exc))
 
+    def export_web_3d_globe(self):
+        """Export interactive Web 3D Digital Globe using CesiumJS."""
+        if self.data is None:
+            messagebox.showwarning("提示", "请先打开解算数据文件。")
+            return
+        base = self.pos_path.stem if self.pos_path else "rtklib_solution"
+        path = filedialog.asksaveasfilename(
+            title="导出 Web 3D 实景地球 (CesiumJS)",
+            defaultextension=".html",
+            initialfile=f"{base}_3d_globe.html",
+            filetypes=[("HTML Web 3D Globe", "*.html"), ("All Files", "*.*")]
+        )
+        if not path:
+            return
+        try:
+            truth_df = self._get_ground_truth_df()
+            out_file = mt.export_web_3d_globe(self.data["pos"], path, ground_truth=truth_df, pos_name=self.pos_path.name if self.pos_path else base)
+            msg = (
+                f"Web 3D 实景数字地球 HTML 已成功导出！\n\n"
+                f"文件路径: {out_file}\n\n"
+                f"【特色功能】：\n"
+                f"• 原生浏览器 3D 实景地球与 Esri 卫星底图；\n"
+                f"• 空间 3D 轨迹与垂直高程幕墙拉伸；\n"
+                f"• 定位误差热力颜色渐变与起点/终点标记；\n"
+                f"• 完整真值对比曲线 (金色虚线)；\n"
+                f"• 无需安装任何软件，双击即可在 Edge / Chrome 浏览器流畅浏览！\n\n"
+                f"是否立即在浏览器中打开？"
+            )
+            if messagebox.askyesno("导出成功", msg):
+                import webbrowser
+                webbrowser.open(Path(out_file).as_uri())
+        except Exception as exc:
+            messagebox.showerror("导出失败", f"生成 Web 3D 地球失败:\n{exc}")
+
     def _draw_track_export(self, ax, p, full):
         self._apply_basemap(ax, full)
         ax.set_title("Ground Track / ENU Position — colored by solution status", fontsize=11, weight="bold")
@@ -5346,6 +5552,15 @@ class RTKPlotApp:
             ax = fig.add_subplot(111, projection="polar")
             self._draw_sky_export(ax, s)
             if with_hud:
+                diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
+            fig.tight_layout()
+            return
+
+        if mode_name == "3D Ground Track":
+            fig.set_size_inches(11, 7.5)
+            ax = fig.add_subplot(111, projection="3d")
+            self._draw_3d_track(ax, p, full)
+            if with_hud and metrics and "fix_rate" in metrics:
                 diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
             fig.tight_layout()
             return

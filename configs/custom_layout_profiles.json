@@ -1,18 +1,76 @@
 {
+  "RTK分析": {
+    "preset": "Auto Grid (自适应等分)",
+    "modes": [
+      "AR Ratio",
+      "Satellites",
+      "DOP",
+      "Residuals",
+      "Residual Triad",
+      "ENU Error",
+      "Directional DOP"
+    ]
+  },
+  "rtk方案 2": {
+    "preset": "Auto Grid (自适应等分)",
+    "modes": [
+      "Satellite Visibility Gantt",
+      "ENU Error",
+      "Satellites",
+      "DOP",
+      "Skyplot & C/N0 (Env)",
+      "Residuals",
+      "Covariance",
+      "Residual Triad",
+      "El vs SNR & Resp",
+      "Directional DOP",
+      "AR Ratio"
+    ]
+  },
+  "rkt方案 3": {
+    "preset": "Auto Grid (自适应等分)",
+    "modes": [
+      "Satellites",
+      "Residual Triad",
+      "Trajectory Error Heatmap",
+      "Directional DOP",
+      "El vs SNR & Resp",
+      "ENU Error"
+    ]
+  },
   "车载RTK综合监控 (轨迹主监控+误差/状态)": {
     "preset": "Focus Left (左主右副)",
-    "modes": ["Gnd Trk", "ENU Error", "Solution Status", "Satellites"]
+    "modes": [
+      "Gnd Trk",
+      "ENU Error",
+      "Solution Status",
+      "Satellites"
+    ]
   },
   "定位精度与时间流全对比 (4列垂直堆叠)": {
     "preset": "Vertical Stack (纵向流)",
-    "modes": ["ENU Position", "ENU Error", "Height", "AR Ratio"]
+    "modes": [
+      "ENU Position",
+      "ENU Error",
+      "Height",
+      "AR Ratio"
+    ]
   },
   "信号质量与多径环境评估 (四分屏)": {
     "preset": "Auto Grid (自适应等分)",
-    "modes": ["Skyplot", "C/N0", "Elevation", "Multipath Proxy"]
+    "modes": [
+      "Skyplot",
+      "C/N0",
+      "Satellite Elevation",
+      "Multipath Proxy"
+    ]
   },
   "经典定位误差三联屏 (上主下副)": {
     "preset": "Focus Top (上主下副)",
-    "modes": ["Gnd Trk", "ENU Error", "Covariance"]
+    "modes": [
+      "Gnd Trk",
+      "ENU Error",
+      "Covariance"
+    ]
   }
 }

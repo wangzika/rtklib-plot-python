@@ -1579,16 +1579,53 @@ class RTKPlotApp:
             self.segment_status.configure(text=f"已互换槽位: {self.custom_modes[idx2]} ⇄ {self.custom_modes[idx1]}")
             self.redraw()
 
+    def _get_profile_config_paths(self):
+        paths = [HERE / "configs" / "custom_layout_profiles.json"]
+        for cand in [
+            HERE.parent / "GNSS_RTKLIB_Experiments" / "scripts" / "configs" / "custom_layout_profiles.json",
+            HERE.parent.parent / "rtklib-plot-python" / "configs" / "custom_layout_profiles.json",
+        ]:
+            try:
+                if cand.resolve() != paths[0].resolve() and cand.parent.parent.exists():
+                    paths.append(cand)
+            except Exception:
+                pass
+        return paths
+
     def _load_layout_profiles(self):
         self.layout_profiles = {}
-        prof_file = HERE / "configs" / "custom_layout_profiles.json"
-        if prof_file.exists():
+        import json
+        for prof_file in reversed(self._get_profile_config_paths()):
+            if prof_file.exists():
+                try:
+                    with open(prof_file, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                        if isinstance(loaded, dict):
+                            self.layout_profiles.update(loaded)
+                except Exception as e:
+                    print(f"Error loading layout profiles from {prof_file}: {e}")
+
+    def save_layout_profile_data(self, p_name: str, modes: list[str], preset: str | None = None):
+        if preset is None:
+            preset = self.custom_preset.get() if hasattr(self, "custom_preset") and self.custom_preset.get() else "Auto Grid (自适应等分)"
+        clean_modes = [m for m in modes if m and m != "Custom Analysis"]
+        if not clean_modes:
+            clean_modes = list(modes)
+        self.layout_profiles[p_name] = {
+            "preset": preset,
+            "modes": clean_modes
+        }
+        import json
+        for prof_file in self._get_profile_config_paths():
             try:
-                import json
-                with open(prof_file, "r", encoding="utf-8") as f:
-                    self.layout_profiles = json.load(f)
+                prof_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(prof_file, "w", encoding="utf-8") as f:
+                    json.dump(self.layout_profiles, f, ensure_ascii=False, indent=2)
             except Exception as e:
-                print(f"Error loading layout profiles: {e}")
+                print(f"Warning saving layout profiles to {prof_file}: {e}")
+        self.segment_status.configure(text=f"多图方案 [{p_name}] 已成功保存 ({len(clean_modes)} 个子图)")
+        self._update_profile_combobox()
+        self.selected_profile_name.set(p_name)
 
     def _rebuild_profile_menu(self):
         if not hasattr(self, "profile_menu"):
@@ -1614,7 +1651,9 @@ class RTKPlotApp:
     def _save_current_layout_profile(self):
         modes = [p["mode"] for p in self.custom_panels if p.get("mode")]
         if not modes:
-            messagebox.showwarning("提示", "当前没有正在显示的自定义子图，请先选择子图后再保存方案。")
+            modes = self._get_active_layout_modes()
+        if not modes:
+            messagebox.showwarning("提示", "当前没有正在显示的子图，请先选择子图后再保存方案。")
             return
         name_win = tk.Toplevel(self.root)
         name_win.title("保存自定义多图方案")
@@ -1623,7 +1662,7 @@ class RTKPlotApp:
         name_win.transient(self.root)
         name_win.grab_set()
 
-        ttk.Label(name_win, text="请输入方案名称 (例如: 车载RTK动态评估、高程精度对比):", wraplength=360).pack(padx=16, pady=(16, 6), anchor="w")
+        ttk.Label(name_win, text="请输入方案名称 (例如: 车载RTK动态评估、rkt方案 3):", wraplength=360).pack(padx=16, pady=(16, 6), anchor="w")
         name_var = tk.StringVar(value=f"方案 {len(self.layout_profiles)+1}")
         entry = ttk.Entry(name_win, textvariable=name_var, width=34)
         entry.pack(padx=16, pady=4, fill=tk.X)
@@ -1632,25 +1671,14 @@ class RTKPlotApp:
         def do_save():
             p_name = name_var.get().strip()
             if not p_name:
-                messagebox.showwarning("提示", "方案名称不能为空。")
+                messagebox.showwarning("提示", "方案名称不能为空。", parent=name_win)
                 return
-            self.layout_profiles[p_name] = {
-                "preset": self.custom_preset.get(),
-                "modes": modes
-            }
-            prof_file = HERE / "configs" / "custom_layout_profiles.json"
             try:
-                prof_file.parent.mkdir(parents=True, exist_ok=True)
-                import json
-                with open(prof_file, "w", encoding="utf-8") as f:
-                    json.dump(self.layout_profiles, f, ensure_ascii=False, indent=2)
-                self.segment_status.configure(text=f"多图方案 [{p_name}] 已成功保存")
-                self._update_profile_combobox()
-                self.selected_profile_name.set(p_name)
+                self.save_layout_profile_data(p_name, modes, self.custom_preset.get())
                 name_win.destroy()
                 messagebox.showinfo("成功", f"多图方案 [{p_name}] 已保存至配置库！")
             except Exception as exc:
-                messagebox.showerror("保存失败", str(exc))
+                messagebox.showerror("保存失败", str(exc), parent=name_win)
 
         btn_f = ttk.Frame(name_win)
         btn_f.pack(padx=16, pady=14, fill=tk.X)
@@ -5573,199 +5601,271 @@ class RTKPlotApp:
 
     def export_render_mode(self, fig, mode_name, pos_sub, sat_sub, metrics, with_hud=True):
         fig.clear()
+        orig_data = self.data
+        clk_full = orig_data.get("clk")
+        if clk_full is not None and not clk_full.empty and not pos_sub.empty:
+            t0_c, t1_c = float(pos_sub.time.iloc[0]), float(pos_sub.time.iloc[-1])
+            clk_sub = clk_full[(clk_full.time >= t0_c) & (clk_full.time <= t1_c)].copy()
+        else:
+            clk_sub = clk_full
+
+        s = sat_sub if sat_sub is not None else orig_data.get("sat")
+        temp_data = {
+            "pos": pos_sub,
+            "sat": s,
+            "clk": clk_sub,
+            "reference": orig_data.get("reference"),
+            "has_truth": orig_data.get("has_truth", False),
+            "pos_path": orig_data.get("pos_path"),
+            "stat_path": orig_data.get("stat_path"),
+        }
+
         full = pos_sub
         p = pos_sub
-        s = sat_sub if sat_sub is not None else self.data["sat"]
 
-        if mode_name == "Dashboard":
-            fig.set_size_inches(16, 9)
-            axs = fig.subplots(2, 3)
-            axs_flat = axs.ravel()
-            for i, name in enumerate(["Gnd Trk", "Position Error", "Solution Status", "AR Ratio", "Satellites", "Elevation vs C/N0"]):
-                ax = axs_flat[i]
-                self._render_dashboard_item(ax, name, p, full, s, is_single=False)
-                ax.grid(self.grid_on.get(), alpha=0.3)
-            if with_hud:
-                diag.render_hud_card(axs_flat[1], metrics, loc="upper right", font_size=8.0)
-            fig.suptitle("RTKLIB Solution Dashboard", fontsize=15, weight="bold")
-            fig.tight_layout()
-            return
-
-        if mode_name == "Skyplot":
-            fig.set_size_inches(8, 8)
-            ax = fig.add_subplot(111, projection="polar")
-            self._draw_sky_export(ax, s)
-            if with_hud:
-                diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
-            fig.tight_layout()
-            return
-
-        if mode_name == "3D Ground Track":
-            fig.set_size_inches(11, 7.5)
-            ax = fig.add_subplot(111, projection="3d")
-            self._draw_3d_track(ax, p, full)
-            if with_hud and metrics and "fix_rate" in metrics:
-                diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
-            fig.tight_layout()
-            return
-
-        fig.set_size_inches(10, 6)
-        if mode_name == "ENU Position":
-            axs = fig.subplots(3, 1, sharex=True)
-            self._draw_enu_positions(axs, p)
-            self._set_datetime_axis(axs[-1])
-            if with_hud:
-                diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
-            fig.tight_layout()
-            return
-        elif mode_name == "ENU Error":
-            if not self.data["has_truth"]:
-                ax = fig.add_subplot(111)
-                ax.text(0.5, 0.5, "No Ground Truth Loaded — Position Errors Unavailable", ha="center", va="center", transform=ax.transAxes, fontsize=11)
+        self.data = temp_data
+        try:
+            if mode_name in ("Custom Analysis", "Env & Geometry Combined", "Skyplot & C/N0 (Env)"):
+                orig_fig = self.fig
+                orig_axes = list(self.plot_axes)
+                orig_ax = self.ax
+                orig_cursors = list(self.time_cursors)
+                orig_sky = list(self.sky_plots)
+                orig_dyn = list(self.custom_dynamic_artists)
+                orig_upd = list(self.custom_updaters)
+                orig_track = list(self.track_axes)
+                orig_dt = list(self.datetime_axes)
+                try:
+                    self.fig = fig
+                    self.plot_axes = []
+                    self.time_cursors = []
+                    self.sky_plots = []
+                    self.custom_dynamic_artists = []
+                    self.custom_updaters = []
+                    self.track_axes = []
+                    self.datetime_axes = []
+                    if mode_name == "Custom Analysis":
+                        fig.set_size_inches(16, 9.5)
+                        self._draw_custom_grid()
+                    elif mode_name == "Env & Geometry Combined":
+                        fig.set_size_inches(16, 9.5)
+                        self._draw_env_geometry_combined()
+                    elif mode_name == "Skyplot & C/N0 (Env)":
+                        fig.set_size_inches(16, 6.2)
+                        self._draw_skyplot_cn0_3in1()
+                    for tc in self.time_cursors:
+                        tc.set_visible(False)
+                    if with_hud and metrics and "fix_rate" in metrics and self.plot_axes and mode_name != "Custom Analysis":
+                        try:
+                            diag.render_hud_card(self.plot_axes[0], metrics, loc="upper right", font_size=8.0)
+                        except Exception:
+                            pass
+                finally:
+                    self.fig = orig_fig
+                    self.plot_axes = orig_axes
+                    self.ax = orig_ax
+                    self.time_cursors = orig_cursors
+                    self.sky_plots = orig_sky
+                    self.custom_dynamic_artists = orig_dyn
+                    self.custom_updaters = orig_upd
+                    self.track_axes = orig_track
+                    self.datetime_axes = orig_dt
                 return
-            axs = fig.subplots(3, 1, sharex=True)
-            self._draw_errors(axs, p)
-            self._set_datetime_axis(axs[-1])
-            if with_hud:
-                diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
-            fig.tight_layout()
-            return
 
-        ax = fig.add_subplot(111)
-        if mode_name == "Gnd Trk":
-            self._draw_track_export(ax, p, full)
-        elif mode_name == "Trajectory Error Heatmap":
-            self._draw_trajectory_error_heatmap(ax, p, full)
-        elif mode_name == "Height":
-            kw = self._get_line_kwargs("Height")
-            t_gap, u_gap = insert_time_gaps(p.time, p.U)
-            ax.plot(t_gap, u_gap, label="RTK U", **kw)
-            if self.data["has_truth"]:
-                t_gt_gap, gt_u_gap = insert_time_gaps(p.time, p.gt_U)
-                ax.plot(t_gt_gap, gt_u_gap, ls="--", color="#cf4b43", lw=kw.get("lw", 1.2), label="Truth U")
-            ax.set(title="Height (Up component)", xlabel="Date/time", ylabel="Up (m)")
-            ax.legend(loc="best")
-            self._set_datetime_axis(ax)
-        elif mode_name == "Solution Status":
-            t_gap, q_g = insert_time_gaps(p.time, p.q)
-            ax.step(t_gap, q_g, where="post", lw=1.2, color="#0B2B52")
-            ax.set(title="Solution Status (Q: 1=FIX, 2=FLOAT, 5=SINGLE)", xlabel="Date/time", ylabel="Q")
-            self._set_datetime_axis(ax)
-        elif mode_name == "AR Ratio":
-            self._draw_ar_ratio(ax, p)
-            self._set_datetime_axis(ax)
-        elif mode_name == "Differential Age":
-            self._draw_differential_age(ax, p)
-            self._set_datetime_axis(ax)
-        elif mode_name == "Satellites":
-            self._draw_sats(ax)
-            self._set_datetime_axis(ax)
-        elif mode_name == "DOP":
-            self._draw_dop(ax)
-            self._set_datetime_axis(ax)
-        elif mode_name in ("C/N0", "C/N₀"):
-            self._draw_cn0(ax)
-        elif mode_name == "Elevation":
-            self._draw_elevation(ax)
-            self._set_datetime_axis(ax)
-        elif mode_name == "Residuals":
-            self._draw_residuals(ax)
-            self._set_datetime_axis(ax)
-        elif mode_name == "Multipath Proxy":
-            self._draw_multipath(ax)
-        elif mode_name == "Cycle Slips":
-            self._draw_slips(ax)
-            self._set_datetime_axis(ax)
-        elif mode_name == "Satellite Visibility Gantt":
-            self._draw_satellite_visibility_gantt(ax, s)
-            self._set_datetime_axis(ax)
-        elif mode_name == "Multipath Skyplot":
-            fig.set_size_inches(8, 8)
-            fig.clear()
-            ax = fig.add_subplot(111, projection="polar")
-            self._draw_multipath_skyplot(ax)
-            if with_hud and metrics and "fix_rate" in metrics:
-                diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
-            fig.tight_layout()
-            return
-        elif mode_name == "Per-PRN Residuals":
-            fig.set_size_inches(13, 5)
-            fig.clear()
+            if mode_name == "Dashboard":
+                fig.set_size_inches(16, 9)
+                axs = fig.subplots(2, 3)
+                axs_flat = axs.ravel()
+                for i, name in enumerate(["Gnd Trk", "Position Error", "Solution Status", "AR Ratio", "Satellites", "Elevation vs C/N0"]):
+                    ax = axs_flat[i]
+                    self._render_dashboard_item(ax, name, p, full, s, is_single=False)
+                    ax.grid(self.grid_on.get(), alpha=0.3)
+                if with_hud:
+                    diag.render_hud_card(axs_flat[1], metrics, loc="upper right", font_size=8.0)
+                fig.suptitle("RTKLIB Solution Dashboard", fontsize=15, weight="bold")
+                fig.tight_layout()
+                return
+
+            if mode_name == "Skyplot":
+                fig.set_size_inches(8, 8)
+                ax = fig.add_subplot(111, projection="polar")
+                self._draw_sky_export(ax, s)
+                if with_hud:
+                    diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
+                fig.tight_layout()
+                return
+
+            if mode_name == "3D Ground Track":
+                fig.set_size_inches(11, 7.5)
+                ax = fig.add_subplot(111, projection="3d")
+                self._draw_3d_track(ax, p, full)
+                if with_hud and metrics and "fix_rate" in metrics:
+                    diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
+                fig.tight_layout()
+                return
+
+            fig.set_size_inches(10, 6)
+            if mode_name == "ENU Position":
+                axs = fig.subplots(3, 1, sharex=True)
+                self._draw_enu_positions(axs, p)
+                self._set_datetime_axis(axs[-1])
+                if with_hud:
+                    diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
+                fig.tight_layout()
+                return
+            elif mode_name == "ENU Error":
+                if not self.data["has_truth"]:
+                    ax = fig.add_subplot(111)
+                    ax.text(0.5, 0.5, "No Ground Truth Loaded — Position Errors Unavailable", ha="center", va="center", transform=ax.transAxes, fontsize=11)
+                    return
+                axs = fig.subplots(3, 1, sharex=True)
+                self._draw_errors(axs, p)
+                self._set_datetime_axis(axs[-1])
+                if with_hud:
+                    diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
+                fig.tight_layout()
+                return
+
             ax = fig.add_subplot(111)
-            self._draw_per_prn_residuals(ax)
-            if with_hud and metrics and "fix_rate" in metrics:
-                diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
-            fig.tight_layout()
-            return
-        elif mode_name == "Covariance":
-            self._draw_covariance(ax, p)
-            self._set_datetime_axis(ax)
-        elif mode_name == "False Fix Analysis":
-            self._draw_false_fix(ax, p)
-        elif mode_name == "Error CDF":
-            self._draw_error_cdf(ax, p)
-        elif mode_name == "Error Histogram":
-            fig.set_size_inches(13, 4.5)
-            fig.clear()
-            axs = fig.subplots(1, 3, sharey=True)
-            self._draw_error_histogram(axs, p)
-            if with_hud:
-                diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
-            fig.tight_layout()
-            return
-        elif mode_name == "Innovation / NIS":
-            self._draw_nis(ax)
-        elif mode_name in ("Elevation vs C/N0", "Elevation vs C/N₀"):
-            ss = s.query("freq == 1 and snr > 0") if not s.empty else s
-            if not ss.empty:
-                ax.scatter(ss.el, ss.snr, s=2, alpha=.15)
-            ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
-        elif mode_name in ("Position Error", "Position error"):
-            if self.data["has_truth"]:
-                t_gap, eh_gap, e3d_gap = insert_time_gaps(p.time, p.eh, p.e3d)
-                ax.plot(t_gap, eh_gap, lw=.8, label="Horizontal")
-                ax.plot(t_gap, e3d_gap, lw=.8, label="3D")
-                ax.legend(fontsize=8)
-                ax.set(title="Position Error", xlabel="Time (s)", ylabel="Error (m)")
-            else:
-                ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
-                ax.set(title="Position Error")
-            self._set_datetime_axis(ax)
-        elif mode_name == "Residual Triad":
-            self._draw_residual_triad(ax)
-            self._set_datetime_axis(ax)
-        elif mode_name == "El vs SNR & Resp":
-            self._draw_el_snr_resp(ax)
-        elif mode_name == "Top Outlier Satellites":
-            self._draw_top_outliers(ax)
-        elif mode_name == "Directional DOP":
-            self._draw_directional_dop(ax)
-            self._set_datetime_axis(ax)
-        elif mode_name == "Body-Frame Error":
-            self._draw_body_frame_error(ax, p)
-            self._set_datetime_axis(ax)
-        elif mode_name == "Clock Bias & ISB":
-            self._draw_clock_bias_isb(ax)
-            self._set_datetime_axis(ax)
-        elif mode_name == "Constellation Summary":
-            fig.set_size_inches(13, 4.5)
-            fig.clear()
-            axs = fig.subplots(1, 2)
-            self._draw_constellation_summary(axs, s)
-            if with_hud:
-                diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
-            fig.tight_layout()
-            return
+            if mode_name == "Gnd Trk":
+                self._draw_track_export(ax, p, full)
+            elif mode_name == "Trajectory Error Heatmap":
+                self._draw_trajectory_error_heatmap(ax, p, full)
+            elif mode_name == "Height":
+                kw = self._get_line_kwargs("Height")
+                t_gap, u_gap = insert_time_gaps(p.time, p.U)
+                ax.plot(t_gap, u_gap, label="RTK U", **kw)
+                if self.data["has_truth"]:
+                    t_gt_gap, gt_u_gap = insert_time_gaps(p.time, p.gt_U)
+                    ax.plot(t_gt_gap, gt_u_gap, ls="--", color="#cf4b43", lw=kw.get("lw", 1.2), label="Truth U")
+                ax.set(title="Height (Up component)", xlabel="Date/time", ylabel="Up (m)")
+                ax.legend(loc="best")
+                self._set_datetime_axis(ax)
+            elif mode_name == "Solution Status":
+                t_gap, q_g = insert_time_gaps(p.time, p.q)
+                ax.step(t_gap, q_g, where="post", lw=1.2, color="#0B2B52")
+                ax.set(title="Solution Status (Q: 1=FIX, 2=FLOAT, 5=SINGLE)", xlabel="Date/time", ylabel="Q")
+                self._set_datetime_axis(ax)
+            elif mode_name == "AR Ratio":
+                self._draw_ar_ratio(ax, p)
+                self._set_datetime_axis(ax)
+            elif mode_name == "Differential Age":
+                self._draw_differential_age(ax, p)
+                self._set_datetime_axis(ax)
+            elif mode_name == "Satellites":
+                self._draw_sats(ax)
+                self._set_datetime_axis(ax)
+            elif mode_name == "DOP":
+                self._draw_dop(ax)
+                self._set_datetime_axis(ax)
+            elif mode_name in ("C/N0", "C/N₀"):
+                self._draw_cn0(ax)
+                self._set_datetime_axis(ax)
+            elif mode_name in ("Satellite Elevation", "Elevation"):
+                self._draw_elevation(ax)
+                self._set_datetime_axis(ax)
+            elif mode_name == "Residuals":
+                self._draw_residuals(ax)
+                self._set_datetime_axis(ax)
+            elif mode_name == "Multipath Proxy":
+                self._draw_multipath(ax)
+            elif mode_name == "Cycle Slips":
+                self._draw_slips(ax)
+                self._set_datetime_axis(ax)
+            elif mode_name == "Satellite Visibility Gantt":
+                self._draw_satellite_visibility_gantt(ax, s)
+                self._set_datetime_axis(ax)
+            elif mode_name == "Multipath Skyplot":
+                fig.set_size_inches(8, 8)
+                fig.clear()
+                ax = fig.add_subplot(111, projection="polar")
+                self._draw_multipath_skyplot(ax)
+                if with_hud and metrics and "fix_rate" in metrics:
+                    diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
+                fig.tight_layout()
+                return
+            elif mode_name == "Per-PRN Residuals":
+                fig.set_size_inches(13, 5)
+                fig.clear()
+                ax = fig.add_subplot(111)
+                self._draw_per_prn_residuals(ax)
+                if with_hud and metrics and "fix_rate" in metrics:
+                    diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
+                fig.tight_layout()
+                return
+            elif mode_name == "Covariance":
+                self._draw_covariance(ax, p)
+                self._set_datetime_axis(ax)
+            elif mode_name == "False Fix Analysis":
+                self._draw_false_fix(ax, p)
+            elif mode_name == "Error CDF":
+                self._draw_error_cdf(ax, p)
+            elif mode_name == "Error Histogram":
+                fig.set_size_inches(13, 4.5)
+                fig.clear()
+                axs = fig.subplots(1, 3, sharey=True)
+                self._draw_error_histogram(axs, p)
+                if with_hud:
+                    diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
+                fig.tight_layout()
+                return
+            elif mode_name == "Innovation / NIS":
+                self._draw_nis(ax)
+            elif mode_name in ("Elevation vs C/N0", "Elevation vs C/N₀"):
+                ss = s.query("freq == 1 and snr > 0") if (s is not None and not s.empty) else s
+                if ss is not None and not ss.empty:
+                    ax.scatter(ss.el, ss.snr, s=2, alpha=.15)
+                ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
+            elif mode_name in ("Position Error", "Position error"):
+                if self.data["has_truth"]:
+                    t_gap, eh_gap, e3d_gap = insert_time_gaps(p.time, p.eh, p.e3d)
+                    ax.plot(t_gap, eh_gap, lw=.8, label="Horizontal")
+                    ax.plot(t_gap, e3d_gap, lw=.8, label="3D")
+                    ax.legend(fontsize=8)
+                    ax.set(title="Position Error", xlabel="Time (s)", ylabel="Error (m)")
+                else:
+                    ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
+                    ax.set(title="Position Error")
+                self._set_datetime_axis(ax)
+            elif mode_name == "Residual Triad":
+                self._draw_residual_triad(ax)
+                self._set_datetime_axis(ax)
+            elif mode_name == "El vs SNR & Resp":
+                self._draw_el_snr_resp(ax)
+            elif mode_name == "Top Outlier Satellites":
+                self._draw_top_outliers(ax)
+            elif mode_name == "Directional DOP":
+                self._draw_directional_dop(ax)
+                self._set_datetime_axis(ax)
+            elif mode_name == "Body-Frame Error":
+                self._draw_body_frame_error(ax, p)
+                self._set_datetime_axis(ax)
+            elif mode_name == "Clock Bias & ISB":
+                self._draw_clock_bias_isb(ax)
+                self._set_datetime_axis(ax)
+            elif mode_name == "Constellation Summary":
+                fig.set_size_inches(13, 4.5)
+                fig.clear()
+                axs = fig.subplots(1, 2)
+                self._draw_constellation_summary(axs, s)
+                if with_hud:
+                    diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
+                fig.tight_layout()
+                return
 
-        ax.grid(self.grid_on.get(), alpha=0.3)
-        if with_hud and metrics and "fix_rate" in metrics:
-            diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.5)
-        fig.tight_layout()
+            ax.grid(self.grid_on.get(), alpha=0.3)
+            if with_hud and metrics and "fix_rate" in metrics:
+                diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.5)
+            fig.tight_layout()
+        finally:
+            self.data = orig_data
 
     def open_batch_export_dialog(self):
         if self.data is None:
             messagebox.showwarning("Warning", "请先打开 .pos 解算文件后再执行批量导出。")
             return
+        self._load_layout_profiles()
+        self._update_profile_combobox()
         BatchExportDialog(self)
 
     def export_plot(self):
@@ -5780,37 +5880,134 @@ class BatchExportDialog(tk.Toplevel):
     def __init__(self, app):
         super().__init__(app.root)
         self.app = app
-        self.title("批量导出所选子图与数据切片")
-        self.geometry("640x720")
-        self.minsize(560, 620)
+        self.title("批量导出所选子图、保存方案与多时间段数据切片")
+        self.geometry("950x810")
+        self.minsize(780, 660)
         self.transient(app.root)
         self.grab_set()
 
-        # 1. Segment Selection
-        top_frame = ttk.LabelFrame(self, text="1. 选择时间段 (Time Segment Range)", padding=(10, 8))
-        top_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+        n_segs = len(self.app.segments)
 
-        self.seg_options = ["全程全部历元 (Full Dataset)"]
-        for seg in self.app.segments:
-            self.seg_options.append(f"{seg['name']}: {self.app._epoch_datetime_label(seg['start'])} — {self.app._epoch_datetime_label(seg['end'])} CST")
+        # =====================================================================
+        # 1. Segment Selection (支持全程、单时间段、全部已标记时间段、多区段自由勾选)
+        # =====================================================================
+        top_frame = ttk.LabelFrame(self, text="1. 选择时间段 (Time Segment Range — 支持单区段 / 全部已标记时间区段批量导出)", padding=(10, 6))
+        top_frame.pack(fill=tk.X, padx=10, pady=(8, 4))
 
-        self.seg_var = tk.StringVar(value=self.seg_options[-1] if len(self.seg_options) > 1 else self.seg_options[0])
-        ttk.Label(top_frame, text="时间区间:").pack(side=tk.LEFT, padx=(0, 6))
-        seg_combo = ttk.Combobox(top_frame, textvariable=self.seg_var, values=self.seg_options, state="readonly", width=48)
-        seg_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        row_seg_top = ttk.Frame(top_frame)
+        row_seg_top.pack(fill=tk.X)
 
-        # 2. Subplots to Export (Multi-select Checkboxes)
-        mid_frame = ttk.LabelFrame(self, text="2. 选择要导出的子图 (Select Subplots to Export)", padding=(10, 8))
-        mid_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        self.opt_full = "全程全部历元 (Full Dataset)"
+        self.opt_all_segs = f"⚡ 全部已标记时间区段 — 批量逐段导出 (All {n_segs} Segments)"
+        self.opt_full_plus_all = f"⚡ 全程全部历元 + 全部已标记时间区段 (Full + All {n_segs} Segments)"
+        self.opt_custom_segs = "☑️ 自定义多选下方时间区段 (Custom Checked Segments)"
 
+        self.seg_options = [self.opt_full]
+        if n_segs > 0:
+            self.seg_options.append(self.opt_all_segs)
+            self.seg_options.append(self.opt_full_plus_all)
+            self.seg_options.append(self.opt_custom_segs)
+            for seg in self.app.segments:
+                self.seg_options.append(f"{seg['name']}: {self.app._epoch_datetime_label(seg['start'])} — {self.app._epoch_datetime_label(seg['end'])} CST")
+
+        # Default selection: if segments exist, check if user highlighted one in segment_box, else default to All Segments
+        init_seg_val = self.opt_full
+        if n_segs > 0:
+            sel_s = self.app.segment_box.curselection() if hasattr(self.app, "segment_box") else ()
+            if sel_s and 0 <= sel_s[0] < n_segs:
+                init_seg_val = self.seg_options[4 + sel_s[0]]
+            else:
+                init_seg_val = self.opt_all_segs
+
+        self.seg_var = tk.StringVar(value=init_seg_val)
+        ttk.Label(row_seg_top, text="时间区段:").pack(side=tk.LEFT, padx=(0, 6))
+        self.seg_combo = ttk.Combobox(row_seg_top, textvariable=self.seg_var, values=self.seg_options, state="readonly", width=46)
+        self.seg_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        self.seg_combo.bind("<<ComboboxSelected>>", self._on_seg_combo_changed)
+
+        if n_segs > 0:
+            ttk.Button(row_seg_top, text=f"⚡ 选全部区段 ({n_segs}段)", command=self._select_all_segments).pack(side=tk.LEFT, padx=2)
+            ttk.Button(row_seg_top, text="🌍 仅选全程", command=self._select_full_only).pack(side=tk.LEFT, padx=2)
+            ttk.Button(row_seg_top, text="🎯 全程+全部区段", command=self._select_full_and_all_segments).pack(side=tk.LEFT, padx=2)
+
+        # Multi-segment checkbuttons for flexible picking
+        self.seg_chk_full = tk.BooleanVar(value=(init_seg_val == self.opt_full))
+        self.seg_chk_vars = []
+        self.var_seg_subfolder = tk.BooleanVar(value=True)
+
+        if n_segs > 0:
+            seg_chk_frame = ttk.Frame(top_frame)
+            seg_chk_frame.pack(fill=tk.X, pady=(6, 2))
+            ttk.Label(seg_chk_frame, text="勾选导出区段:", foreground="#0B2B52", font=("Segoe UI", 8, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
+            cb_full = ttk.Checkbutton(seg_chk_frame, text="全程历元(Full)", variable=self.seg_chk_full, command=self._on_seg_checkbox_clicked)
+            cb_full.grid(row=0, column=1, sticky="w", padx=6, pady=2)
+            for idx, seg in enumerate(self.app.segments):
+                t0_short = self.app._epoch_datetime_label(seg["start"]).split(" ")[-1]
+                t1_short = self.app._epoch_datetime_label(seg["end"]).split(" ")[-1]
+                bv = tk.BooleanVar(value=False)
+                self.seg_chk_vars.append(bv)
+                col_pos = (idx + 1) % 5 + 1
+                row_pos = (idx + 1) // 5
+                cb_s = ttk.Checkbutton(
+                    seg_chk_frame,
+                    text=f"{seg['name']} ({t0_short}~{t1_short})",
+                    variable=bv,
+                    command=self._on_seg_checkbox_clicked
+                )
+                cb_s.grid(row=row_pos, column=col_pos, sticky="w", padx=6, pady=2)
+
+            sub_opt_row = ttk.Frame(top_frame)
+            sub_opt_row.pack(fill=tk.X, pady=(2, 0))
+            ttk.Checkbutton(
+                sub_opt_row,
+                text="多时间区段导出时，自动为每个时间区段创建独立子文件夹 (Segment_01, Segment_02...) 并生成区段精度对比汇总表 (.csv)",
+                variable=self.var_seg_subfolder
+            ).pack(side=tk.LEFT)
+
+        self._sync_seg_checkboxes_from_combo()
+
+        # =====================================================================
+        # 2. Subplots & Saved Profiles to Export
+        # =====================================================================
+        mid_frame = ttk.LabelFrame(self, text="2. 选择要导出的子图与保存方案 (Select Subplots & User Saved Profiles)", padding=(10, 6))
+        mid_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+
+        # Row 2A: Action Buttons + Profile Combobox + Save Current Selection as Profile
         btn_row = ttk.Frame(mid_frame)
-        btn_row.pack(fill=tk.X, pady=(0, 6))
-        ttk.Button(btn_row, text="全选 (Select All)", command=self._select_all).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(btn_row, text="清空 (Clear)", command=self._clear_all).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_row, text="常用推荐 (Recommended 6)", command=self._select_recommended).pack(side=tk.LEFT, padx=4)
+        btn_row.pack(fill=tk.X, pady=(0, 4))
+        ttk.Button(btn_row, text="全选 (Select All)", command=self._select_all).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(btn_row, text="清空 (Clear)", command=self._clear_all).pack(side=tk.LEFT, padx=3)
+        ttk.Button(btn_row, text="当前画面子图 (Active View)", command=self._select_current_view).pack(side=tk.LEFT, padx=3)
+        ttk.Button(btn_row, text="常用推荐 (Recommended)", command=self._select_recommended).pack(side=tk.LEFT, padx=3)
 
-        chk_canvas = tk.Canvas(mid_frame, borderwidth=0, highlightthickness=0)
-        chk_scroll = ttk.Scrollbar(mid_frame, orient=tk.VERTICAL, command=chk_canvas.yview)
+        ttk.Separator(btn_row, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=2)
+        ttk.Label(btn_row, text="📂 选择方案:", font=("Segoe UI", 9, "bold"), foreground="#0B2B52").pack(side=tk.LEFT, padx=(2, 4))
+
+        self.preset_map = {}
+        self.profile_combo_items = []
+        self._build_profile_preset_items()
+
+        self.export_profile_var = tk.StringVar()
+        self.export_profile_combo = ttk.Combobox(btn_row, textvariable=self.export_profile_var, values=self.profile_combo_items, state="readonly", width=28)
+        self.export_profile_combo.pack(side=tk.LEFT, padx=3)
+        self.export_profile_combo.bind("<<ComboboxSelected>>", self._on_export_profile_selected)
+
+        ttk.Button(btn_row, text="💾 保存勾选为方案…", command=self._save_checked_as_profile).pack(side=tk.LEFT, padx=4)
+
+        self.sel_count_lbl = ttk.Label(btn_row, text="已选: 0 项", foreground="#0070C0", font=("Segoe UI", 9, "bold"))
+        self.sel_count_lbl.pack(side=tk.RIGHT, padx=4)
+
+        # Row 2B: Quick One-Click Pill Buttons for User's Saved Profiles (e.g. RTK分析, rtk方案 2, rkt方案 3)
+        self.quick_prof_frame = ttk.Frame(mid_frame)
+        self.quick_prof_frame.pack(fill=tk.X, pady=(0, 6))
+        self._rebuild_quick_profile_buttons()
+
+        # Row 2C: 3-Column Scrollable Bilingual Checkbox Grid covering ALL modes
+        chk_container = ttk.Frame(mid_frame)
+        chk_container.pack(fill=tk.BOTH, expand=True)
+
+        chk_canvas = tk.Canvas(chk_container, borderwidth=0, highlightthickness=0)
+        chk_scroll = ttk.Scrollbar(chk_container, orient=tk.VERTICAL, command=chk_canvas.yview)
         chk_inner = ttk.Frame(chk_canvas)
         chk_inner.bind("<Configure>", lambda e: chk_canvas.configure(scrollregion=chk_canvas.bbox("all")))
         chk_window = chk_canvas.create_window((0, 0), window=chk_inner, anchor="nw")
@@ -5819,38 +6016,84 @@ class BatchExportDialog(tk.Toplevel):
         chk_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         chk_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.all_export_modes = ["Dashboard"] + list(MODES)
-        self.chk_vars = {}
-        for i, mode in enumerate(self.all_export_modes):
-            v = tk.BooleanVar(value=(mode in ("Dashboard", "Gnd Trk", "ENU Position", "ENU Error", "AR Ratio", "Satellites")))
-            self.chk_vars[mode] = v
-            cb = ttk.Checkbutton(chk_inner, text=mode, variable=v)
-            row = i // 2
-            col = i % 2
-            cb.grid(row=row, column=col, sticky="w", padx=12, pady=3)
+        def _on_mousewheel(event):
+            try:
+                chk_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
 
+        chk_canvas.bind("<MouseWheel>", _on_mousewheel)
+        chk_inner.bind("<MouseWheel>", _on_mousewheel)
+
+        # Complete list of all exportable composite & individual modes
+        ordered_modes = ["Custom Analysis", "Dashboard", "Env & Geometry Combined", "Skyplot & C/N0 (Env)"]
+        for m in MODES:
+            if m not in ordered_modes:
+                ordered_modes.append(m)
+        self.all_export_modes = ordered_modes
+
+        # Determine initial checked modes: prefer user's active profile or current Custom Analysis panels
+        active_prof = self.app.selected_profile_name.get() if hasattr(self.app, "selected_profile_name") else ""
+        if active_prof and active_prof in self.app.layout_profiles:
+            prof_modes = set(self.app.layout_profiles[active_prof].get("modes", []))
+            init_checked = prof_modes | {"Custom Analysis"}
+            self.export_profile_var.set(f"⭐ [保存方案] {active_prof} ({len(prof_modes)}图)")
+        elif self.app.mode.get() == "Custom Analysis" and self.app.custom_panels:
+            panel_modes = {p["mode"] for p in self.app.custom_panels if p.get("mode")}
+            init_checked = panel_modes | {"Custom Analysis"}
+            self.export_profile_var.set("🖥️ [当前画面] 当前画布正在显示的子图")
+        else:
+            init_checked = {"Dashboard", "Gnd Trk", "ENU Position", "ENU Error", "AR Ratio", "Satellites"}
+            self.export_profile_var.set("🔥 [常用推荐] 经典推荐 6 图")
+
+        self.chk_vars = {}
+        for col_idx in range(3):
+            chk_inner.columnconfigure(col_idx, weight=1)
+
+        for i, mode in enumerate(self.all_export_modes):
+            v = tk.BooleanVar(value=(mode in init_checked))
+            v.trace_add("write", lambda *_: self._update_selected_count())
+            self.chk_vars[mode] = v
+            disp_label = MODE_BILINGUAL.get(mode, mode)
+            if mode in ("Custom Analysis", "Dashboard", "Env & Geometry Combined", "Skyplot & C/N0 (Env)"):
+                disp_label = f"★ {disp_label}"
+            cb = ttk.Checkbutton(chk_inner, text=disp_label, variable=v)
+            cb.bind("<MouseWheel>", _on_mousewheel)
+            row = i // 3
+            col = i % 3
+            cb.grid(row=row, column=col, sticky="w", padx=8, pady=2)
+
+        self._update_selected_count()
+
+        # =====================================================================
         # 3. Export Options
-        opt_frame = ttk.LabelFrame(self, text="3. 学术增强与导出选项 (Export & Academic Options)", padding=(10, 8))
-        opt_frame.pack(fill=tk.X, padx=10, pady=5)
+        # =====================================================================
+        opt_frame = ttk.LabelFrame(self, text="3. 学术增强与导出选项 (Export & Academic Options)", padding=(10, 6))
+        opt_frame.pack(fill=tk.X, padx=10, pady=4)
+
+        opt_grid = ttk.Frame(opt_frame)
+        opt_grid.pack(fill=tk.X)
 
         self.var_hud = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_frame, text="在图角绘制学术量化指标 HUD 卡片 (FIX率、RMS 3D、CEP50/95、平均卫星数)", variable=self.var_hud).pack(anchor="w", pady=2)
+        ttk.Checkbutton(opt_grid, text="在图角绘制学术量化指标 HUD 卡片 (FIX率、RMS 3D、CEP50/95、平均卫星数)", variable=self.var_hud).grid(row=0, column=0, sticky="w", padx=4, pady=1)
 
         self.var_dpi300 = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_frame, text="学术汇报/论文级高清输出 (300 DPI, 自动优化线条与字号清晰度)", variable=self.var_dpi300).pack(anchor="w", pady=2)
+        ttk.Checkbutton(opt_grid, text="学术汇报/论文级高清输出 (300 DPI, 自动优化线条与字号清晰度)", variable=self.var_dpi300).grid(row=0, column=1, sticky="w", padx=12, pady=1)
 
         self.var_crop_pos = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_frame, text="同时导出该时间段裁剪版 .pos 解算文件 (保留完整RTKLIB头信息与高精度坐标)", variable=self.var_crop_pos).pack(anchor="w", pady=2)
+        ttk.Checkbutton(opt_grid, text="同时导出该时间段裁剪版 .pos 解算文件 (保留完整RTKLIB头信息)", variable=self.var_crop_pos).grid(row=1, column=0, sticky="w", padx=4, pady=1)
 
         self.var_kml = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_frame, text="同时导出 Google Earth 3D 轨迹工程文件 (.kml，含真实高程挤出与分色)", variable=self.var_kml).pack(anchor="w", pady=2)
+        ttk.Checkbutton(opt_grid, text="同时导出 Google Earth 3D 轨迹与独立真值 (.kml，含高程挤出与分色)", variable=self.var_kml).grid(row=1, column=1, sticky="w", padx=12, pady=1)
 
         self.var_geojson = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_frame, text="同时导出标准 GIS 空间要素集 (.geojson，包含历元属性，可直接在 QGIS 分析)", variable=self.var_geojson).pack(anchor="w", pady=2)
+        ttk.Checkbutton(opt_grid, text="同时导出标准 GIS 空间要素集 (.geojson，包含历元属性，可在 QGIS 分析)", variable=self.var_geojson).grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=1)
 
+        # =====================================================================
         # 4. Output Path
-        path_frame = ttk.LabelFrame(self, text="4. 导出存储目录 (Output Directory)", padding=(10, 8))
-        path_frame.pack(fill=tk.X, padx=10, pady=5)
+        # =====================================================================
+        path_frame = ttk.LabelFrame(self, text="4. 导出存储目录 (Output Directory)", padding=(10, 6))
+        path_frame.pack(fill=tk.X, padx=10, pady=4)
 
         default_dir = (self.app.pos_path.parent / "exports") if self.app.pos_path else Path.cwd() / "exports"
         self.out_dir_var = tk.StringVar(value=str(default_dir))
@@ -5858,133 +6101,416 @@ class BatchExportDialog(tk.Toplevel):
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
         ttk.Button(path_frame, text="浏览… (Browse)", command=self._browse_dir).pack(side=tk.RIGHT)
 
+        # =====================================================================
         # 5. Bottom action bar
-        act_frame = ttk.Frame(self, padding=(10, 10))
+        # =====================================================================
+        act_frame = ttk.Frame(self, padding=(10, 8))
         act_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
         self.progress = ttk.Progressbar(act_frame, mode="determinate")
         self.progress.pack(fill=tk.X, pady=(0, 6))
-        self.status_label = ttk.Label(act_frame, text="就绪。点击下方按钮开始导出。", anchor="w")
+        self.status_label = ttk.Label(act_frame, text="就绪。可选择全部时间区段与自存方案一键批量导出。", anchor="w")
         self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         ttk.Button(act_frame, text="关闭 (Close)", command=self.destroy).pack(side=tk.RIGHT, padx=4)
         self.btn_export = ttk.Button(act_frame, text="🚀 开始批量导出 (Start Export)", command=self._do_export)
         self.btn_export.pack(side=tk.RIGHT, padx=4)
 
+    # ---- Segment selection helpers ----
+    def _sync_seg_checkboxes_from_combo(self):
+        val = self.seg_var.get()
+        n_segs = len(self.app.segments)
+        if val == self.opt_full:
+            self.seg_chk_full.set(True)
+            for bv in self.seg_chk_vars:
+                bv.set(False)
+        elif val == self.opt_all_segs:
+            self.seg_chk_full.set(False)
+            for bv in self.seg_chk_vars:
+                bv.set(True)
+        elif val == self.opt_full_plus_all:
+            self.seg_chk_full.set(True)
+            for bv in self.seg_chk_vars:
+                bv.set(True)
+        elif val in self.seg_options and n_segs > 0:
+            idx = self.seg_options.index(val)
+            if idx >= 4:
+                seg_i = idx - 4
+                self.seg_chk_full.set(False)
+                for k, bv in enumerate(self.seg_chk_vars):
+                    bv.set(k == seg_i)
+
+    def _on_seg_combo_changed(self, _event=None):
+        self._sync_seg_checkboxes_from_combo()
+
+    def _on_seg_checkbox_clicked(self):
+        n_segs = len(self.seg_chk_vars)
+        full_on = self.seg_chk_full.get()
+        checked_indices = [i for i, bv in enumerate(self.seg_chk_vars) if bv.get()]
+        if full_on and len(checked_indices) == n_segs and n_segs > 0:
+            self.seg_var.set(self.opt_full_plus_all)
+        elif not full_on and len(checked_indices) == n_segs and n_segs > 0:
+            self.seg_var.set(self.opt_all_segs)
+        elif full_on and len(checked_indices) == 0:
+            self.seg_var.set(self.opt_full)
+        elif not full_on and len(checked_indices) == 1:
+            self.seg_var.set(self.seg_options[4 + checked_indices[0]])
+        else:
+            self.seg_var.set(self.opt_custom_segs)
+
+    def _select_all_segments(self):
+        self.seg_var.set(self.opt_all_segs)
+        self._sync_seg_checkboxes_from_combo()
+
+    def _select_full_only(self):
+        self.seg_var.set(self.opt_full)
+        self._sync_seg_checkboxes_from_combo()
+
+    def _select_full_and_all_segments(self):
+        self.seg_var.set(self.opt_full_plus_all)
+        self._sync_seg_checkboxes_from_combo()
+
+    # ---- Profile & Subplot selection helpers ----
+    def _build_profile_preset_items(self):
+        self.preset_map.clear()
+        self.profile_combo_items.clear()
+
+        # 1. User-saved profiles from custom_layout_profiles.json
+        for p_name, p_data in self.app.layout_profiles.items():
+            modes = list(p_data.get("modes", []))
+            label = f"⭐ [保存方案] {p_name} ({len(modes)}图)"
+            self.profile_combo_items.append(label)
+            self.preset_map[label] = set(modes) | {"Custom Analysis"}
+
+        # 2. Current active view
+        cur_lbl = "🖥️ [当前画面] 当前画布正在显示的子图"
+        self.profile_combo_items.append(cur_lbl)
+        active_modes = set(self.app._get_active_layout_modes())
+        if self.app.mode.get() == "Custom Analysis":
+            active_modes.add("Custom Analysis")
+        elif self.app.mode.get() == "Dashboard":
+            active_modes.add("Dashboard")
+        self.preset_map[cur_lbl] = active_modes
+
+        # 3. Classic Recommended 6
+        rec_lbl = "🔥 [常用推荐] 经典推荐 6 图"
+        self.profile_combo_items.append(rec_lbl)
+        self.preset_map[rec_lbl] = {"Dashboard", "Gnd Trk", "ENU Position", "ENU Error", "AR Ratio", "Satellites"}
+
+        # 4. Diagnostic Workspaces
+        env_lbl = "🧭 [工作区] ①+③ 环境与几何综合"
+        self.profile_combo_items.append(env_lbl)
+        self.preset_map[env_lbl] = {"Env & Geometry Combined", "Multipath Skyplot", "El vs SNR & Resp", "Satellites", "Directional DOP", "Residual Triad"}
+
+        for ws in DIAGNOSTIC_WORKSPACES:
+            ws_lbl = f"🧭 [工作区] {ws['name']} ({len(ws['modes'])}图)"
+            self.profile_combo_items.append(ws_lbl)
+            self.preset_map[ws_lbl] = set(ws["modes"]) | {"Custom Analysis"}
+
+    def _rebuild_quick_profile_buttons(self):
+        for w in self.quick_prof_frame.winfo_children():
+            w.destroy()
+        ttk.Label(self.quick_prof_frame, text="⭐ 自存方案快捷选:", font=("Segoe UI", 8, "bold"), foreground="#475569").pack(side=tk.LEFT, padx=(0, 4))
+        if not self.app.layout_profiles:
+            ttk.Label(self.quick_prof_frame, text="(暂无保存方案，可勾选后点击上方「保存勾选为方案」)", foreground="#777").pack(side=tk.LEFT)
+            return
+        for p_name in self.app.layout_profiles:
+            ttk.Button(
+                self.quick_prof_frame,
+                text=f"📋 {p_name}",
+                command=lambda name=p_name: self._apply_saved_profile_by_name(name)
+            ).pack(side=tk.LEFT, padx=2, pady=1)
+
+    def _apply_saved_profile_by_name(self, p_name: str):
+        if p_name not in self.app.layout_profiles:
+            return
+        modes = list(self.app.layout_profiles[p_name].get("modes", []))
+        target_set = set(modes) | {"Custom Analysis"}
+        # Also sync app's custom_panels to this profile so if "Custom Analysis" composite is exported, it matches this profile!
+        preset = self.app.layout_profiles[p_name].get("preset", "Auto Grid (自适应等分)")
+        self.app.custom_preset.set(preset)
+        self.app.custom_modes = list(modes)
+        self.app.custom_panels = self.app._initial_custom_panels(modes, preset)
+        self.app.selected_profile_name.set(p_name)
+        for k, v in self.chk_vars.items():
+            v.set(k in target_set)
+        lbl = f"⭐ [保存方案] {p_name} ({len(modes)}图)"
+        if lbl in self.profile_combo_items:
+            self.export_profile_var.set(lbl)
+        self.status_label.configure(text=f"已套用自存方案 [{p_name}]：勾选 {len(modes)} 个子图 + 自定义组合大图。")
+
+    def _on_export_profile_selected(self, _event=None):
+        sel = self.export_profile_var.get()
+        if sel not in self.preset_map:
+            return
+        # Check if it's a user-saved profile so we can also sync custom_panels
+        for p_name, p_data in self.app.layout_profiles.items():
+            modes = list(p_data.get("modes", []))
+            if sel == f"⭐ [保存方案] {p_name} ({len(modes)}图)":
+                self._apply_saved_profile_by_name(p_name)
+                return
+        target_set = self.preset_map[sel]
+        for k, v in self.chk_vars.items():
+            v.set(k in target_set)
+        self.status_label.configure(text=f"已按 [{sel}] 自动勾选 {len(target_set)} 项导出图表。")
+
+    def _update_selected_count(self):
+        if not hasattr(self, "sel_count_lbl") or not hasattr(self, "chk_vars"):
+            return
+        cnt = sum(1 for v in self.chk_vars.values() if v.get())
+        self.sel_count_lbl.configure(text=f"已选: {cnt} / {len(self.chk_vars)} 项")
+
     def _select_all(self):
-        for v in self.chk_vars.values(): v.set(True)
+        for v in self.chk_vars.values():
+            v.set(True)
 
     def _clear_all(self):
-        for v in self.chk_vars.values(): v.set(False)
+        for v in self.chk_vars.values():
+            v.set(False)
+
+    def _select_current_view(self):
+        active_modes = set(self.app._get_active_layout_modes())
+        if self.app.mode.get() == "Custom Analysis":
+            active_modes.add("Custom Analysis")
+        elif self.app.mode.get() == "Dashboard":
+            active_modes.add("Dashboard")
+        for k, v in self.chk_vars.items():
+            v.set(k in active_modes)
+        self.export_profile_var.set("🖥️ [当前画面] 当前画布正在显示的子图")
+        self.status_label.configure(text=f"已勾选当前画面正在显示的 {len(active_modes)} 项图表。")
 
     def _select_recommended(self):
+        # If user has an active saved profile, offer recommended 6 or their active profile
         rec = {"Dashboard", "Gnd Trk", "ENU Position", "ENU Error", "AR Ratio", "Satellites"}
-        for k, v in self.chk_vars.items(): v.set(k in rec)
+        for k, v in self.chk_vars.items():
+            v.set(k in rec)
+        self.export_profile_var.set("🔥 [常用推荐] 经典推荐 6 图")
+        self.status_label.configure(text="已勾选经典推荐 6 项核心图表。")
+
+    def _save_checked_as_profile(self):
+        checked_modes = [m for m, v in self.chk_vars.items() if v.get() and m not in ("Custom Analysis", "Dashboard")]
+        if not checked_modes:
+            messagebox.showwarning("提示", "请至少勾选一个具体子图后再保存为方案。", parent=self)
+            return
+        name_win = tk.Toplevel(self)
+        name_win.title("保存当前勾选为自定义方案")
+        name_win.geometry("400x165")
+        name_win.resizable(False, False)
+        name_win.transient(self)
+        name_win.grab_set()
+
+        ttk.Label(name_win, text=f"将当前勾选的 {len(checked_modes)} 个子图保存为常用方案:", wraplength=360).pack(padx=16, pady=(16, 6), anchor="w")
+        name_var = tk.StringVar(value=f"rtk方案 {len(self.app.layout_profiles)+1}")
+        entry = ttk.Entry(name_win, textvariable=name_var, width=34)
+        entry.pack(padx=16, pady=4, fill=tk.X)
+        entry.focus_set()
+
+        def do_save():
+            p_name = name_var.get().strip()
+            if not p_name:
+                messagebox.showwarning("提示", "方案名称不能为空。", parent=name_win)
+                return
+            self.app.save_layout_profile_data(p_name, checked_modes)
+            self._build_profile_preset_items()
+            self.export_profile_combo.configure(values=self.profile_combo_items)
+            self._rebuild_quick_profile_buttons()
+            self._apply_saved_profile_by_name(p_name)
+            name_win.destroy()
+            messagebox.showinfo("保存成功", f"方案 [{p_name}] ({len(checked_modes)}个子图) 已保存！\n后续在主界面「Profile」或导出窗口均可一键直接调用。", parent=self)
+
+        btn_f = ttk.Frame(name_win)
+        btn_f.pack(padx=16, pady=12, fill=tk.X)
+        ttk.Button(btn_f, text="确定保存", command=do_save).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_f, text="取消", command=name_win.destroy).pack(side=tk.RIGHT)
 
     def _browse_dir(self):
-        d = filedialog.askdirectory(title="选择导出目录", initialdir=self.out_dir_var.get())
-        if d: self.out_dir_var.set(d)
+        d = filedialog.askdirectory(title="选择导出目录", initialdir=self.out_dir_var.get(), parent=self)
+        if d:
+            self.out_dir_var.set(d)
+
+    def _collect_export_targets(self):
+        """Return list of (seg_slug, seg_title, pos_sub, sat_sub, t_lo, t_hi, seg_list_for_kml) to export."""
+        full_pos = self.app.data["pos"]
+        targets = []
+        n_segs = len(self.app.segments)
+
+        if n_segs == 0:
+            targets.append((
+                "full",
+                "全程全部历元",
+                full_pos.copy(),
+                self.app.data["sat"],
+                float(full_pos.tow.iloc[0]),
+                float(full_pos.tow.iloc[-1]),
+                self.app.segments
+            ))
+            return targets
+
+        # Sync from checkboxes (which are always kept in sync with combobox)
+        if self.seg_chk_full.get():
+            targets.append((
+                "full",
+                "全程全部历元",
+                full_pos.copy(),
+                self.app.data["sat"],
+                float(full_pos.tow.iloc[0]),
+                float(full_pos.tow.iloc[-1]),
+                self.app.segments
+            ))
+
+        for idx, bv in enumerate(self.seg_chk_vars):
+            if bv.get() and idx < len(self.app.segments):
+                seg = self.app.segments[idx]
+                pos_sub = full_pos.iloc[seg["start"]:seg["end"]+1].copy()
+                if pos_sub.empty:
+                    continue
+                t0 = float(pos_sub.time.iloc[0])
+                t1 = float(pos_sub.time.iloc[-1])
+                sat_sub = self.app._segment_sat_records(t0, t1)
+                t_lo = float(pos_sub.tow.iloc[0])
+                t_hi = float(pos_sub.tow.iloc[-1])
+                targets.append((
+                    f"seg{idx+1:02d}",
+                    seg["name"],
+                    pos_sub,
+                    sat_sub,
+                    t_lo,
+                    t_hi,
+                    [seg]
+                ))
+        return targets
 
     def _do_export(self):
         selected_modes = [m for m, v in self.chk_vars.items() if v.get()]
-        if not selected_modes and not self.var_crop_pos.get():
-            messagebox.showwarning("Warning", "请至少勾选一个要导出的子图或勾选导出裁剪版 .pos 文件。")
+        if not selected_modes and not self.var_crop_pos.get() and not self.var_kml.get() and not self.var_geojson.get():
+            messagebox.showwarning("提示", "请至少勾选一个要导出的子图或数据文件选项。", parent=self)
+            return
+
+        targets = self._collect_export_targets()
+        if not targets:
+            messagebox.showwarning("提示", "请至少选择一个时间区段（或勾选「全程历元」/「全部区段」）。", parent=self)
             return
 
         out_dir = Path(self.out_dir_var.get())
         out_dir.mkdir(parents=True, exist_ok=True)
-
-        full_pos = self.app.data["pos"]
-        seg_idx = self.seg_options.index(self.seg_var.get())
-        if seg_idx == 0:
-            seg_slug = "full"
-            pos_sub = full_pos.copy()
-            sat_sub = self.app.data["sat"]
-            t_lo = float(full_pos.tow.iloc[0])
-            t_hi = float(full_pos.tow.iloc[-1])
-        else:
-            seg = self.app.segments[seg_idx - 1]
-            seg_slug = f"seg{seg_idx}"
-            pos_sub = full_pos.iloc[seg["start"]:seg["end"]+1].copy()
-            t0 = float(pos_sub.time.iloc[0])
-            t1 = float(pos_sub.time.iloc[-1])
-            sat_sub = self.app._segment_sat_records(t0, t1)
-            t_lo = float(pos_sub.tow.iloc[0])
-            t_hi = float(pos_sub.tow.iloc[-1])
-
-        metrics = diag.compute_segment_metrics(pos_sub, sat_sub)
         base_name = self.app.pos_path.stem if self.app.pos_path else "rtklib_solution"
 
+        use_subfolders = (len(targets) > 1) and self.var_seg_subfolder.get()
+        per_target_steps = (
+            len(selected_modes)
+            + (1 if self.var_crop_pos.get() else 0)
+            + (1 if self.var_kml.get() else 0)
+            + (1 if self.var_geojson.get() else 0)
+        )
+        total_tasks = max(1, len(targets) * per_target_steps)
+
         self.btn_export.configure(state="disabled")
-        total_tasks = (len(selected_modes)
-                       + (1 if self.var_crop_pos.get() else 0)
-                       + (1 if self.var_kml.get() else 0)
-                       + (1 if self.var_geojson.get() else 0))
         self.progress["maximum"] = total_tasks
         current_step = 0
         exported_files = []
-
-        if self.var_crop_pos.get() and self.app.pos_path and self.app.pos_path.exists():
-            self.status_label.configure(text="正在导出裁剪版 .pos 解算文件...")
-            self.update_idletasks()
-            out_pos_file = out_dir / f"{base_name}_{seg_slug}.pos"
-            try:
-                cnt = diag.crop_and_export_pos(self.app.pos_path, out_pos_file, t_lo, t_hi)
-                exported_files.append(out_pos_file.name)
-            except Exception as e:
-                print(f"Error exporting .pos: {e}")
-            current_step += 1
-            self.progress["value"] = current_step
-            self.update_idletasks()
-
-        if self.var_kml.get():
-            self.status_label.configure(text="正在导出 Google Earth 3D KML 文件...")
-            self.update_idletasks()
-            out_kml_file = out_dir / f"{base_name}_{seg_slug}_3d.kml"
-            try:
-                mt.export_kml_3d(pos_sub, out_kml_file, segments=self.app.segments, pos_name=f"{base_name}_{seg_slug}")
-                exported_files.append(out_kml_file.name)
-            except Exception as e:
-                print(f"Error exporting .kml: {e}")
-            current_step += 1
-            self.progress["value"] = current_step
-            self.update_idletasks()
-
-        if self.var_geojson.get():
-            self.status_label.configure(text="正在导出标准 GIS GeoJSON 要素集...")
-            self.update_idletasks()
-            out_json_file = out_dir / f"{base_name}_{seg_slug}.geojson"
-            try:
-                mt.export_geojson(pos_sub, out_json_file)
-                exported_files.append(out_json_file.name)
-            except Exception as e:
-                print(f"Error exporting .geojson: {e}")
-            current_step += 1
-            self.progress["value"] = current_step
-            self.update_idletasks()
-
+        summary_rows = []
         dpi = 300 if self.var_dpi300.get() else 180
-        for mode in selected_modes:
-            self.status_label.configure(text=f"正在导出子图 [{mode}]...")
-            self.update_idletasks()
-            slug = mode.lower().replace(" ", "_").replace("/", "_")
-            out_img = out_dir / f"{base_name}_{seg_slug}_{slug}.png"
-            try:
-                fig = plt.Figure(facecolor="white")
-                self.app.export_render_mode(fig, mode, pos_sub, sat_sub, metrics, with_hud=self.var_hud.get())
-                fig.savefig(out_img, dpi=dpi, bbox_inches="tight")
-                exported_files.append(out_img.name)
-            except Exception as e:
-                print(f"Error exporting {mode}: {e}")
-            current_step += 1
-            self.progress["value"] = current_step
-            self.update_idletasks()
+        truth_df_full = self.app._get_ground_truth_df()
 
-        self.status_label.configure(text=f"导出完成！成功生成 {len(exported_files)} 个文件。")
+        for seg_slug, seg_title, pos_sub, sat_sub, t_lo, t_hi, seg_kml_list in targets:
+            target_dir = (out_dir / f"{base_name}_{seg_slug}") if use_subfolders else out_dir
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            metrics = diag.compute_segment_metrics(pos_sub, sat_sub)
+            summary_rows.append({
+                "segment_id": seg_slug,
+                "segment_name": seg_title,
+                "epochs": len(pos_sub),
+                "duration_s": round(float(pos_sub.time.iloc[-1] - pos_sub.time.iloc[0]), 2) if len(pos_sub) > 1 else 0.0,
+                "fix_rate_pct": round(float(metrics.get("fix_rate", 0.0)), 2),
+                "rms_2d_m": round(float(metrics.get("rms_2d", np.nan)), 4) if pd.notna(metrics.get("rms_2d", np.nan)) else "",
+                "rms_3d_m": round(float(metrics.get("rms_3d", np.nan)), 4) if pd.notna(metrics.get("rms_3d", np.nan)) else "",
+                "cep50_m": round(float(metrics.get("cep50", np.nan)), 4) if pd.notna(metrics.get("cep50", np.nan)) else "",
+                "cep95_m": round(float(metrics.get("cep95", np.nan)), 4) if pd.notna(metrics.get("cep95", np.nan)) else "",
+                "mean_sats": round(float(metrics.get("mean_sats", 0.0)), 1),
+            })
+
+            if self.var_crop_pos.get() and self.app.pos_path and self.app.pos_path.exists():
+                self.status_label.configure(text=f"[{seg_title}] 正在导出裁剪版 .pos 解算文件...")
+                self.update_idletasks()
+                out_pos_file = target_dir / f"{base_name}_{seg_slug}.pos"
+                try:
+                    diag.crop_and_export_pos(self.app.pos_path, out_pos_file, t_lo, t_hi)
+                    exported_files.append(str(out_pos_file.relative_to(out_dir)))
+                except Exception as e:
+                    print(f"Error exporting .pos ({seg_slug}): {e}")
+                current_step += 1
+                self.progress["value"] = current_step
+                self.update_idletasks()
+
+            if self.var_kml.get():
+                self.status_label.configure(text=f"[{seg_title}] 正在导出 Google Earth 3D KML 与独立真值 KML...")
+                self.update_idletasks()
+                out_kml_file = target_dir / f"{base_name}_{seg_slug}_3d.kml"
+                try:
+                    mt.export_kml_3d(pos_sub, out_kml_file, segments=seg_kml_list, pos_name=f"{base_name}_{seg_slug}", ground_truth=pos_sub if self.app.data.get("has_truth") else truth_df_full)
+                    exported_files.append(str(out_kml_file.relative_to(out_dir)))
+                    if self.app.data.get("has_truth") or truth_df_full is not None:
+                        truth_kml_file = target_dir / f"{base_name}_{seg_slug}_truth.kml"
+                        gt_slice = pos_sub if self.app.data.get("has_truth") else truth_df_full
+                        if gt_slice is not None and not gt_slice.empty:
+                            mt.export_ground_truth_kml(gt_slice, truth_kml_file, name=f"{base_name}_{seg_slug}_Truth")
+                            exported_files.append(str(truth_kml_file.relative_to(out_dir)))
+                except Exception as e:
+                    print(f"Error exporting .kml ({seg_slug}): {e}")
+                current_step += 1
+                self.progress["value"] = current_step
+                self.update_idletasks()
+
+            if self.var_geojson.get():
+                self.status_label.configure(text=f"[{seg_title}] 正在导出标准 GIS GeoJSON 要素集...")
+                self.update_idletasks()
+                out_json_file = target_dir / f"{base_name}_{seg_slug}.geojson"
+                try:
+                    mt.export_geojson(pos_sub, out_json_file)
+                    exported_files.append(str(out_json_file.relative_to(out_dir)))
+                except Exception as e:
+                    print(f"Error exporting .geojson ({seg_slug}): {e}")
+                current_step += 1
+                self.progress["value"] = current_step
+                self.update_idletasks()
+
+            for mode in selected_modes:
+                disp_m = MODE_BILINGUAL.get(mode, mode)
+                self.status_label.configure(text=f"[{seg_title}] 正在导出图表: {disp_m}...")
+                self.update_idletasks()
+                slug = mode.lower().replace(" ", "_").replace("/", "_").replace("&", "and").replace("(", "").replace(")", "")
+                out_img = target_dir / f"{base_name}_{seg_slug}_{slug}.png"
+                try:
+                    fig = plt.Figure(facecolor="white")
+                    self.app.export_render_mode(fig, mode, pos_sub, sat_sub, metrics, with_hud=self.var_hud.get())
+                    fig.savefig(out_img, dpi=dpi, bbox_inches="tight")
+                    exported_files.append(str(out_img.relative_to(out_dir)))
+                except Exception as e:
+                    print(f"Error exporting {mode} ({seg_slug}): {e}")
+                current_step += 1
+                self.progress["value"] = current_step
+                self.update_idletasks()
+
+        if len(summary_rows) > 1:
+            try:
+                summary_csv = out_dir / f"{base_name}_segments_summary_metrics.csv"
+                pd.DataFrame(summary_rows).to_csv(summary_csv, index=False, encoding="utf-8-sig")
+                exported_files.append(summary_csv.name)
+            except Exception as e:
+                print(f"Error saving summary csv: {e}")
+
+        self.status_label.configure(text=f"导出完成！共完成 {len(targets)} 个时间区段，生成 {len(exported_files)} 个文件。")
         self.btn_export.configure(state="normal")
 
-        msg = f"批量导出成功完成！\n共生成 {len(exported_files)} 个文件保存在：\n{out_dir}\n\n是否立即在文件管理器中打开该目录？"
-        if messagebox.askyesno("导出成功", msg):
+        msg = (
+            f"批量导出成功完成！\n\n"
+            f"• 导出时间区段数：{len(targets)} 个\n"
+            f"• 生成文件总数：{len(exported_files)} 个\n"
+            f"• 存储目录：{out_dir}\n\n"
+            f"是否立即在文件管理器中打开该目录？"
+        )
+        if messagebox.askyesno("导出成功", msg, parent=self):
             try:
                 os.startfile(out_dir)
             except Exception:

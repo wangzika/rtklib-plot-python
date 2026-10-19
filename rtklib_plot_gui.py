@@ -1008,6 +1008,19 @@ class RTKPlotApp:
         disp = MODE_BILINGUAL.get(internal, internal)
         if hasattr(self, "mode_box") and self.mode_box.get() != disp:
             self.mode_box.set(disp)
+        if internal == "Custom Analysis":
+            if not getattr(self, "custom_modes", None) or not getattr(self, "custom_panels", None):
+                selected = []
+                if hasattr(self, "plot_list") and hasattr(self, "_current_listed_modes"):
+                    selected = [self._current_listed_modes[i] for i in self.plot_list.curselection() if i < len(self._current_listed_modes)]
+                if not selected:
+                    selected = ["Gnd Trk", "ENU Error", "Solution Status", "Satellites"]
+                preset = self.custom_preset.get() if hasattr(self, "custom_preset") and self.custom_preset.get() else "Auto Grid (自适应等分)"
+                self.custom_modes = list(selected)
+                self.custom_panels = self._initial_custom_panels(self.custom_modes, preset)
+                self.custom_page = 0
+                self.selected_custom_panel = 0
+                self.focused_custom_panel = None
         self.redraw()
 
     def _epoch_datetime_label(self,index):
@@ -2364,6 +2377,9 @@ class RTKPlotApp:
         self.selected_custom_panel = 0
         self.focused_custom_panel = None
         self.mode.set("Custom Analysis")
+        disp = MODE_BILINGUAL.get("Custom Analysis", "Custom Analysis")
+        if hasattr(self, "mode_box") and self.mode_box.get() != disp:
+            self.mode_box.set(disp)
         self.segment_status.configure(text=f"已切换至诊断工作区 [{ws['name']}]: {ws['desc']}")
         self.redraw()
 
@@ -2906,9 +2922,26 @@ class RTKPlotApp:
             p_ax.tick_params(labelbottom=False)
 
     def _draw_custom_grid(self):
-        modes=self.custom_modes
+        modes = self.custom_modes
         if not modes or not self.custom_panels:
-            ax=self.fig.add_subplot(111);ax.text(.5,.5,"Select plot types from the left list.",ha="center",va="center",transform=ax.transAxes);return
+            selected = []
+            if hasattr(self, "plot_list") and hasattr(self, "_current_listed_modes"):
+                selected = [self._current_listed_modes[i] for i in self.plot_list.curselection() if i < len(self._current_listed_modes)]
+            if not selected:
+                selected = ["Gnd Trk", "ENU Error", "Solution Status", "Satellites"]
+            preset = self.custom_preset.get() if hasattr(self, "custom_preset") and self.custom_preset.get() else "Auto Grid (自适应等分)"
+            self.custom_modes = list(selected)
+            self.custom_panels = self._initial_custom_panels(self.custom_modes, preset)
+            self.custom_page = 0
+            self.selected_custom_panel = 0
+            self.focused_custom_panel = None
+            modes = self.custom_modes
+        if not modes or not self.custom_panels:
+            self.fig.clear(); self.plot_axes = []
+            ax = self.fig.add_subplot(111)
+            ax.text(0.5, 0.5, "请在左侧【可用图表】列表勾选图表后点击「替换(Show)」或「添加(Add)」", ha="center", va="center", transform=ax.transAxes, fontsize=12)
+            self.plot_axes = [ax]; self.ax = ax
+            return
         self.fig.clear();self.plot_axes=[];self.custom_sky=[];p=self._filtered();full=self.data["pos"];s=self.data["sat"]
         self.custom_modes=[panel["mode"] for panel in self.custom_panels]
         pages=max(1,(len(self.custom_panels)+self.custom_page_size-1)//self.custom_page_size)
@@ -2925,10 +2958,14 @@ class RTKPlotApp:
             name=panel["mode"]
             rect=(.065,.09,.92,.82) if self.focused_custom_panel is not None else panel["rect"]
             is_3d = (name == "3D Ground Track")
+            is_time_series = (name is not None) and (name not in NON_TIME_SERIES_MODES)
+            share = base_time_ax if (self.sync_time_axes.get() and is_time_series and self.focused_custom_panel is None) else None
+            unit_grp = PLOT_UNIT_GROUPS.get(name) if name else None
+            sharey = group_base_ax.get(unit_grp) if (self.sync_y_axes.get() and unit_grp and self.focused_custom_panel is None and not is_3d) else None
             proj = "polar" if name in ("Skyplot", "Multipath Skyplot", "Skyplot & C/N0 (Env)") else ("3d" if is_3d else None)
             ax=self.fig.add_axes(rect, projection=proj, sharex=share if not is_3d else None, sharey=sharey if not is_3d else None)
             ax._panel_mode = name
-            if self.sync_time_axes.get() and is_time_series and base_time_ax is None and self.focused_custom_panel is None:
+            if self.sync_time_axes.get() and is_time_series and base_time_ax is None and self.focused_custom_panel is None and not is_3d:
                 base_time_ax = ax
             if self.sync_y_axes.get() and unit_grp and unit_grp not in group_base_ax and self.focused_custom_panel is None and not is_3d:
                 group_base_ax[unit_grp] = ax
@@ -2942,84 +2979,91 @@ class RTKPlotApp:
                 ax.text(.5,.5,"Drop plot here",ha="center",va="center",transform=ax.transAxes,fontsize=8,color="#777")
                 ax.patch.set_facecolor("#fafafa");ax.patch.set_edgecolor("#cccccc")
                 continue
-            if name=="Gnd Trk":
-                self.track_axes.append(ax)
-                if self.data["has_truth"]:
-                    gt_t, gt_e, gt_n = insert_time_gaps(full.time, full.gt_E, full.gt_N)
-                    ax.plot(gt_e, gt_n, "k--", lw=.7, label="Truth")
-                for q,g in p.groupby("q"):ax.scatter(g.E,g.N,s=2,color=Q_COLORS.get(int(q),"#777"),label=Q_LABELS.get(int(q),str(q)))
-                ax.set(xlabel="E (m)",ylabel="N (m)",title=name);ax.legend(fontsize=6,ncol=2);ax.set_aspect("equal" if self.equal_scale.get() else "auto")
-            elif name=="ENU Position":
-                t_gap, e_g, n_g, u_g = insert_time_gaps(p.time, p.E, p.N, p.U)
-                for y_arr, col, lbl in zip([e_g, n_g, u_g], ["#2878B5","#E07A2D","#36965A"], ["E", "N", "U"]):
-                    ax.plot(t_gap, y_arr, lw=.65, marker=".", ms=2, markevery=max(1, len(p)//50), label=lbl, color=col)
-                ax.set(title=name, ylabel="Position (m)"); ax.legend(fontsize=6, ncol=3)
-            elif name=="Height":
-                t_gap, u_g = insert_time_gaps(p.time, p.U)
-                ax.plot(t_gap, u_g, lw=.7, marker=".", ms=2, markevery=max(1, len(p)//50), label="RTK U")
-                if self.data["has_truth"]:
-                    t_gap_gt, gt_u_g = insert_time_gaps(p.time, p.gt_U)
-                    ax.plot(t_gap_gt, gt_u_g, lw=.7, ls="--", label="Truth U")
-                ax.set(title=name, ylabel="Up (m)"); ax.legend(fontsize=6)
-            elif name=="ENU Error":
-                if self.data["has_truth"]:
-                    t_gap, de_g, dn_g, du_g = insert_time_gaps(p.time, p.de, p.dn, p.du)
-                    for y_arr, col, lbl in zip([de_g, dn_g, du_g], ["#2878B5","#E07A2D","#36965A"], ["DE", "DN", "DU"]):
-                        ax.plot(t_gap, y_arr, lw=.65, label=lbl, color=col)
-                    ax.axhline(0, color="k", lw=.5); ax.legend(fontsize=6, ncol=3)
-                    self._apply_robust_ylim(ax, [p.de, p.dn, p.du], is_symmetric=True, min_span=2.0)
-                else:ax.text(.5,.5,"No truth",ha="center",transform=ax.transAxes)
-                ax.set(title=name,ylabel="Error (m)")
-            elif name=="Solution Status":
-                t_gap, q_g = insert_time_gaps(p.time, p.q)
-                ax.step(t_gap, q_g, where="post", lw=.65, marker=".", ms=2, markevery=max(1, len(p)//50))
-                ax.set(title=name, ylabel="Q")
-            elif name=="AR Ratio":self._draw_ar_ratio(ax,p)
-            elif name=="Differential Age":self._draw_differential_age(ax,p)
-            elif name=="Satellites":self._draw_sats(ax)
-            elif name=="DOP":self._draw_dop(ax)
-            elif name in ("Skyplot & C/N0 (Env)", "Skyplot"):
-                if getattr(ax, "name", "") == "polar":
-                    self._draw_sky(ax)
-                else:
-                    ax.text(0.5, 0.5, "星空图需要极坐标投影\n(双击放大查看)", ha="center", va="center", transform=ax.transAxes)
-                    ax.set_title("Skyplot & C/N0")
-            elif name == "Multipath Skyplot":
-                if getattr(ax, "name", "") == "polar":
-                    self._draw_multipath_skyplot(ax)
-                else:
-                    ax.text(0.5, 0.5, "多路径星空图需要极坐标投影\n(双击放大查看)", ha="center", va="center", transform=ax.transAxes)
-                    ax.set_title("Multipath Skyplot")
-            elif name in ("C/N0", "C/N₀"):
-                self._draw_cn0(ax)
-                ax.set_title("载噪比与信号强度 (C/N0)")
-            elif name in ("Satellite Elevation", "Elevation"):
-                self._draw_elevation(ax)
-            elif name in ("Clock Bias & ISB", "Clock Bias"):
-                self._draw_clock_bias_isb(ax)
-            elif name=="Residuals":self._draw_residuals(ax)
-            elif name=="Multipath Proxy":self._draw_multipath(ax)
-            elif name=="Cycle Slips":self._draw_slips(ax)
-            elif name=="Satellite Visibility Gantt":self._draw_satellite_visibility_gantt(ax,s)
-            elif name=="Per-PRN Residuals":self._draw_per_prn_residuals(ax)
-            elif name=="Covariance":self._draw_covariance(ax,p)
-            elif name=="False Fix Analysis":self._draw_false_fix(ax,p)
-            elif name=="Innovation / NIS":self._draw_nis(ax)
-            elif name=="Error CDF":self._draw_error_cdf(ax,p)
-            elif name=="Error Histogram":self._draw_error_histogram([ax],p)
-            elif name=="Residual Triad":self._draw_residual_triad(ax)
-            elif name=="Env & Geometry Combined":self._draw_residual_triad(ax)
-            elif name=="El vs SNR & Resp":self._draw_el_snr_resp(ax)
-            elif name=="Top Outlier Satellites":self._draw_top_outliers(ax)
-            elif name=="Directional DOP":self._draw_directional_dop(ax)
-            elif name=="Body-Frame Error":self._draw_body_frame_error(ax,p)
-            elif name=="Trajectory Error Heatmap":self._draw_trajectory_error_heatmap(ax,p,full)
-            elif name=="3D Ground Track":self._draw_3d_track(ax,p,full)
+            try:
+                if name=="Gnd Trk":
+                    self.track_axes.append(ax)
+                    if self.data["has_truth"]:
+                        gt_t, gt_e, gt_n = insert_time_gaps(full.time, full.gt_E, full.gt_N)
+                        ax.plot(gt_e, gt_n, "k--", lw=.7, label="Truth")
+                    for q,g in p.groupby("q"):ax.scatter(g.E,g.N,s=2,color=Q_COLORS.get(int(q),"#777"),label=Q_LABELS.get(int(q),str(q)))
+                    ax.set(xlabel="E (m)",ylabel="N (m)",title=name);ax.legend(fontsize=6,ncol=2);ax.set_aspect("equal" if self.equal_scale.get() else "auto")
+                elif name=="ENU Position":
+                    t_gap, e_g, n_g, u_g = insert_time_gaps(p.time, p.E, p.N, p.U)
+                    for y_arr, col, lbl in zip([e_g, n_g, u_g], ["#2878B5","#E07A2D","#36965A"], ["E", "N", "U"]):
+                        ax.plot(t_gap, y_arr, lw=.65, marker=".", ms=2, markevery=max(1, len(p)//50), label=lbl, color=col)
+                    ax.set(title=name, ylabel="Position (m)"); ax.legend(fontsize=6, ncol=3)
+                elif name=="Height":
+                    t_gap, u_g = insert_time_gaps(p.time, p.U)
+                    ax.plot(t_gap, u_g, lw=.7, marker=".", ms=2, markevery=max(1, len(p)//50), label="RTK U")
+                    if self.data["has_truth"]:
+                        t_gap_gt, gt_u_g = insert_time_gaps(p.time, p.gt_U)
+                        ax.plot(t_gap_gt, gt_u_g, lw=.7, ls="--", label="Truth U")
+                    ax.set(title=name, ylabel="Up (m)"); ax.legend(fontsize=6)
+                elif name=="ENU Error":
+                    if self.data["has_truth"]:
+                        t_gap, de_g, dn_g, du_g = insert_time_gaps(p.time, p.de, p.dn, p.du)
+                        for y_arr, col, lbl in zip([de_g, dn_g, du_g], ["#2878B5","#E07A2D","#36965A"], ["DE", "DN", "DU"]):
+                            ax.plot(t_gap, y_arr, lw=.65, label=lbl, color=col)
+                        ax.axhline(0, color="k", lw=.5); ax.legend(fontsize=6, ncol=3)
+                        self._apply_robust_ylim(ax, [p.de, p.dn, p.du], is_symmetric=True, min_span=2.0)
+                    else:ax.text(.5,.5,"No truth",ha="center",transform=ax.transAxes)
+                    ax.set(title=name,ylabel="Error (m)")
+                elif name=="Solution Status":
+                    t_gap, q_g = insert_time_gaps(p.time, p.q)
+                    ax.step(t_gap, q_g, where="post", lw=.65, marker=".", ms=2, markevery=max(1, len(p)//50))
+                    ax.set(title=name, ylabel="Q")
+                elif name=="AR Ratio":self._draw_ar_ratio(ax,p)
+                elif name=="Differential Age":self._draw_differential_age(ax,p)
+                elif name=="Satellites":self._draw_sats(ax)
+                elif name=="DOP":self._draw_dop(ax)
+                elif name in ("Skyplot & C/N0 (Env)", "Skyplot"):
+                    if getattr(ax, "name", "") == "polar":
+                        self._draw_sky(ax)
+                    else:
+                        ax.text(0.5, 0.5, "星空图需要极坐标投影\n(双击放大查看)", ha="center", va="center", transform=ax.transAxes)
+                        ax.set_title("Skyplot & C/N0")
+                elif name == "Multipath Skyplot":
+                    if getattr(ax, "name", "") == "polar":
+                        self._draw_multipath_skyplot(ax)
+                    else:
+                        ax.text(0.5, 0.5, "多路径星空图需要极坐标投影\n(双击放大查看)", ha="center", va="center", transform=ax.transAxes)
+                        ax.set_title("Multipath Skyplot")
+                elif name in ("C/N0", "C/N₀"):
+                    self._draw_cn0(ax)
+                    ax.set_title("载噪比与信号强度 (C/N0)")
+                elif name in ("Satellite Elevation", "Elevation"):
+                    self._draw_elevation(ax)
+                elif name in ("Clock Bias & ISB", "Clock Bias"):
+                    self._draw_clock_bias_isb(ax)
+                elif name=="Residuals":self._draw_residuals(ax)
+                elif name=="Multipath Proxy":self._draw_multipath(ax)
+                elif name=="Cycle Slips":self._draw_slips(ax)
+                elif name=="Satellite Visibility Gantt":self._draw_satellite_visibility_gantt(ax,s)
+                elif name=="Per-PRN Residuals":self._draw_per_prn_residuals(ax)
+                elif name=="Covariance":self._draw_covariance(ax,p)
+                elif name=="False Fix Analysis":self._draw_false_fix(ax,p)
+                elif name=="Innovation / NIS":self._draw_nis(ax)
+                elif name=="Error CDF":self._draw_error_cdf(ax,p)
+                elif name=="Error Histogram":self._draw_error_histogram([ax],p)
+                elif name=="Residual Triad":self._draw_residual_triad(ax)
+                elif name=="Env & Geometry Combined":self._draw_residual_triad(ax)
+                elif name=="El vs SNR & Resp":self._draw_el_snr_resp(ax)
+                elif name=="Top Outlier Satellites":self._draw_top_outliers(ax)
+                elif name=="Directional DOP":self._draw_directional_dop(ax)
+                elif name=="Body-Frame Error":self._draw_body_frame_error(ax,p)
+                elif name=="Trajectory Error Heatmap":self._draw_trajectory_error_heatmap(ax,p,full)
+                elif name=="3D Ground Track":self._draw_3d_track(ax,p,full)
+            except Exception as exc:
+                ax.text(0.5, 0.5, f"绘制 [{name}] 提示:\n{exc}", ha="center", va="center", transform=ax.transAxes, fontsize=8, color="#d90429")
+                ax.set_title(f"{name}")
             ax.grid(self.grid_on.get(),alpha=.28)
             if is_time_series:
                 self._set_datetime_axis(ax);ax.xaxis.set_major_locator(MaxNLocator(3));ax.tick_params(axis="x",labelsize=7,labelrotation=0)
                 self.time_cursors.append(ax.axvline(0,color="#333",ls="--",lw=.7,alpha=.65))
-            self._register_custom_dynamic(name,ax,p,full)
+            try:
+                self._register_custom_dynamic(name,ax,p,full)
+            except Exception:
+                pass
         for ax in self.plot_axes:
             box = ax.get_position()
             p_mode = getattr(ax, "_panel_mode", "")

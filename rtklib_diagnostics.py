@@ -800,7 +800,7 @@ def detect_problematic_segments(
         return ([], meta) if return_details else []
 
     times = pos_df.time.to_numpy() if "time" in pos_df else np.arange(len(pos_df), dtype=float)
-    palette = ["#C00000", "#D17B0F", "#B23A48", "#AE5A9D", "#0070C0", "#7B61A8"]
+    palette = ["#7b61a8", "#168aad", "#d17b0f", "#b23a48", "#4f772d", "#ae5a9d", "#2563eb", "#059669"]
 
     has_truth = ("eh" in pos_df and pos_df["eh"].notna().any() and 
                  "e3d" in pos_df and pos_df["e3d"].notna().any())
@@ -885,7 +885,7 @@ def detect_problematic_segments(
             c = palette[len(segments) % len(palette)]
             if is_false_fix:
                 name = f"【假固定】Max {eh_max:.2f}m (3D {e3d_max:.2f}m, 持续{dur:.1f}s)"
-                color = "#C00000"
+                color = c
                 seg_type = "false_fix"
                 reason = (f"含固定解(Fix率{fix_pct:.0f}%)但误差超标：水平峰值 {eh_max:.2f}m，"
                           f"3D峰值 {e3d_max:.2f}m，持续 {dur:.1f}s (历元 {s_idx+1}~{e_idx+1})")

@@ -167,10 +167,8 @@ DIAGNOSTIC_WORKSPACES = [
 PLOT_UNIT_GROUPS = {
     # 距离定位误差 (米) - 以 0 为中心对称
     "ENU Error": "error_m",
-    "Trajectory Error Heatmap": "error_m",
     "Body-Frame Error": "error_m",
     "Compare Error": "error_m",
-    "False Fix Analysis": "error_m",
     # 测量残差 (米) - 以 0 为中心对称
     "Residuals": "residual_m",
     "Residual Triad": "triad_m",
@@ -240,7 +238,7 @@ class RTKPlotApp:
         self.custom_updaters=[];self.custom_dynamic_artists=[];self.dop_frames={};self.cov_twin_axes={}
         self.dynamic_artists=[];self._blit_background=None;self._cursor_job=None;self._last_cursor_index=None;self._press_state=None
         self.false_fix_limit=tk.DoubleVar(value=1.0)
-        self.segments=[];self.segment_start_idx=None;self.segment_palette=["#7b61a8","#168aad","#d17b0f","#b23a48","#4f772d","#ae5a9d"]
+        self.segments=[];self.segment_start_idx=None;self.segment_palette=["#7b61a8","#168aad","#d17b0f","#b23a48","#4f772d","#ae5a9d","#2563eb","#059669"]
         self._drag_epoch=False;self.track_axes=[];self.datetime_axes=[];self.segment_track_lines=[];self.segment_sky_artists=[];self.segment_artists=[]
         self._shift_drag_start=None;self._shift_drag_patch=None;self._shift_drag_ax=None
         self.line_scope=tk.StringVar(value="All Subplots")
@@ -607,8 +605,12 @@ class RTKPlotApp:
         self.sidebar_canvas.bind("<Configure>", lambda e: self.sidebar_canvas.itemconfig(self.sidebar_window, width=e.width))
 
         def _on_wheel(event):
-            w = self.root.winfo_containing(event.x_root, event.y_root)
-            if not w: return
+            try:
+                w = self.root.winfo_containing(event.x_root, event.y_root)
+            except Exception:
+                return
+            if not w:
+                return
             if w in (self.plot_list, getattr(self, "segment_box", None)):
                 w.yview_scroll(int(-1 * (event.delta / 120)), "units")
                 return "break"
@@ -1267,11 +1269,14 @@ class RTKPlotApp:
                 e_idx = max(0, min(int(e_idx), len(p) - 1))
                 if e_idx < s_idx:
                     s_idx, e_idx = e_idx, s_idx
+                raw_c = str(item.get("color", "")).strip()
+                if not raw_c or raw_c.upper() == "#C00000":
+                    raw_c = self.segment_palette[len(loaded) % len(self.segment_palette)]
                 loaded.append({
                     "start": s_idx,
                     "end": e_idx,
                     "name": item.get("name", f"Segment {len(loaded)+1}"),
-                    "color": item.get("color", self.segment_palette[len(loaded) % len(self.segment_palette)]),
+                    "color": raw_c,
                     "cause": item.get("cause", "")
                 })
             self.segments = loaded
@@ -1424,8 +1429,8 @@ class RTKPlotApp:
                 page_size = 6
                 cols = 3
                 rows = 2
-                left, right, bottom, top = 0.065, 0.985, 0.08, 0.91
-                gap_x, gap_y = 0.045, 0.075
+                left, right, bottom, top = 0.058, 0.982, 0.085, 0.912
+                gap_x, gap_y = 0.054, 0.082
                 width = (right - left - gap_x * (cols - 1)) / cols
                 height = (top - bottom - gap_y * (rows - 1)) / rows
                 for i, name in enumerate(modes):
@@ -1452,7 +1457,11 @@ class RTKPlotApp:
     def _drop_plot_on_panel(self,event):
         name=self._drag_plot_name;self._drag_plot_name=None
         if name is None or self.mode.get()!="Custom Analysis" or not self.custom_panels:return
-        target=self.root.winfo_containing(event.x_root,event.y_root);widget=self.canvas.get_tk_widget()
+        try:
+            target=self.root.winfo_containing(event.x_root,event.y_root)
+        except Exception:
+            return
+        widget=self.canvas.get_tk_widget()
         if target is not widget:return
         width=max(1,widget.winfo_width());height=max(1,widget.winfo_height())
         x=(event.x_root-widget.winfo_rootx())*self.fig.bbox.width/width
@@ -2066,54 +2075,79 @@ class RTKPlotApp:
         return self._sat_sorted.iloc[lo:hi]
 
     def _apply_segment_overlays(self):
-        if not self.segments or self.data is None: return
+        if not self.segments or self.data is None:
+            return
         p = self.data["pos"]
+        if p is None or p.empty:
+            return
         focused_idx = getattr(self, "_selected_segment_idx", None)
         has_focused = (focused_idx is not None and 0 <= focused_idx < len(self.segments))
 
         for ax in self.datetime_axes:
             for i, seg in enumerate(self.segments):
+                if seg["start"] >= len(p) or seg["end"] >= len(p):
+                    continue
+                seg_color = seg.get("color") or self.segment_palette[i % len(self.segment_palette)]
                 t0 = float(p.iloc[seg["start"]].time)
                 t1 = float(p.iloc[seg["end"]].time)
                 is_foc = (has_focused and i == focused_idx)
-                alpha = 0.35 if is_foc else (0.07 if has_focused else 0.15)
-                lw = 1.4 if is_foc else 0.5
-                patch = ax.axvspan(t0, t1, facecolor=seg["color"], alpha=alpha, edgecolor=seg["color"], linewidth=lw, zorder=2.5 if is_foc else 1.5)
+                alpha = 0.35 if is_foc else (0.08 if has_focused else 0.24)
+                lw = 1.4 if is_foc else 0.85
+                patch = ax.axvspan(
+                    t0, t1,
+                    facecolor=seg_color,
+                    alpha=alpha,
+                    edgecolor=seg_color,
+                    linewidth=lw,
+                    zorder=2.5 if is_foc else 1.5
+                )
                 self.segment_artists.append(patch)
 
         for ax in self.track_axes:
-            # 1. First draw background non-focused segments softly
+            # 1. First draw background non-focused segments
             for i, seg in enumerate(self.segments):
                 if has_focused and i == focused_idx:
                     continue
+                if seg["start"] >= len(p) or seg["end"] >= len(p):
+                    continue
+                seg_color = seg.get("color") or self.segment_palette[i % len(self.segment_palette)]
                 g = p.iloc[seg["start"]:seg["end"]+1]
-                alpha = 0.25 if has_focused else 0.70
-                lw = 1.4 if has_focused else 2.5
-                line, = ax.plot(g.E, g.N, color=seg["color"], lw=lw, alpha=alpha, zorder=6)
-                self.segment_track_lines.append(line); self.segment_artists.append(line)
-                first = ax.scatter([g.E.iloc[0]], [g.N.iloc[0]], s=16, marker="o", facecolors="white", edgecolors=seg["color"], linewidths=0.9, alpha=alpha, zorder=7)
-                last = ax.scatter([g.E.iloc[-1]], [g.N.iloc[-1]], s=16, marker="s", facecolors=seg["color"], edgecolors="white", linewidths=0.6, alpha=alpha, zorder=7)
+                if g.empty:
+                    continue
+                alpha = 0.25 if has_focused else 0.78
+                lw = 1.4 if has_focused else 2.6
+                seg_lbl = seg.get("name", f"Segment {i+1}") if (not has_focused and len(self.segments) <= 6) else None
+                line, = ax.plot(g.E, g.N, color=seg_color, lw=lw, alpha=alpha, zorder=6, label=seg_lbl)
+                self.segment_track_lines.append(line)
+                self.segment_artists.append(line)
+                first = ax.scatter([g.E.iloc[0]], [g.N.iloc[0]], s=18, marker="o", facecolors="white", edgecolors=seg_color, linewidths=0.9, alpha=alpha, zorder=7)
+                last = ax.scatter([g.E.iloc[-1]], [g.N.iloc[-1]], s=18, marker="s", facecolors=seg_color, edgecolors="white", linewidths=0.6, alpha=alpha, zorder=7)
                 self.segment_artists.extend((first, last))
 
             # 2. Draw focused segment prominently with high contrast and labels
             if has_focused:
                 seg = self.segments[focused_idx]
-                g = p.iloc[seg["start"]:seg["end"]+1]
-                halo, = ax.plot(g.E, g.N, color="#ffffff", lw=7.0, alpha=0.95, zorder=8)
-                line, = ax.plot(g.E, g.N, color=seg["color"], lw=4.2, alpha=1.0, zorder=9, label=f"★聚焦: {seg['name']}")
-                self.segment_track_lines.append(line); self.segment_artists.extend((halo, line))
-                s_pt = ax.scatter([g.E.iloc[0]], [g.N.iloc[0]], s=65, marker="o", facecolors="white", edgecolors=seg["color"], linewidths=2.5, zorder=11)
-                e_pt = ax.scatter([g.E.iloc[-1]], [g.N.iloc[-1]], s=65, marker="s", facecolors=seg["color"], edgecolors="white", linewidths=1.8, zorder=11)
-                self.segment_artists.extend((s_pt, e_pt))
-                
-                ann_s = ax.annotate("起点", (g.E.iloc[0], g.N.iloc[0]), xytext=(7, 7), textcoords="offset points", fontsize=8.5, weight="bold", color="#111", bbox=dict(boxstyle="round,pad=0.2", fc="#ffffff", ec=seg["color"], lw=1.2, alpha=0.92), zorder=12)
-                ann_e = ax.annotate("终点", (g.E.iloc[-1], g.N.iloc[-1]), xytext=(7, -12), textcoords="offset points", fontsize=8.5, weight="bold", color="#111", bbox=dict(boxstyle="round,pad=0.2", fc=seg["color"], ec="#ffffff", lw=1.2, alpha=0.92), zorder=12)
-                self.segment_artists.extend((ann_s, ann_e))
-                ax.legend(fontsize=7.5, loc="best")
+                if seg["start"] < len(p) and seg["end"] < len(p):
+                    seg_color = seg.get("color") or self.segment_palette[focused_idx % len(self.segment_palette)]
+                    g = p.iloc[seg["start"]:seg["end"]+1]
+                    if not g.empty:
+                        halo, = ax.plot(g.E, g.N, color="#ffffff", lw=7.0, alpha=0.95, zorder=8)
+                        line, = ax.plot(g.E, g.N, color=seg_color, lw=4.2, alpha=1.0, zorder=9, label=f"★聚焦: {seg['name']}")
+                        self.segment_track_lines.append(line)
+                        self.segment_artists.extend((halo, line))
+                        s_pt = ax.scatter([g.E.iloc[0]], [g.N.iloc[0]], s=65, marker="o", facecolors="white", edgecolors=seg_color, linewidths=2.5, zorder=11)
+                        e_pt = ax.scatter([g.E.iloc[-1]], [g.N.iloc[-1]], s=65, marker="s", facecolors=seg_color, edgecolors="white", linewidths=1.8, zorder=11)
+                        self.segment_artists.extend((s_pt, e_pt))
+
+                        ann_s = ax.annotate("起点", (g.E.iloc[0], g.N.iloc[0]), xytext=(7, 7), textcoords="offset points", fontsize=8.5, weight="bold", color="#111", bbox=dict(boxstyle="round,pad=0.2", fc="#ffffff", ec=seg_color, lw=1.2, alpha=0.92), zorder=12)
+                        ann_e = ax.annotate("终点", (g.E.iloc[-1], g.N.iloc[-1]), xytext=(7, -12), textcoords="offset points", fontsize=8.5, weight="bold", color="#111", bbox=dict(boxstyle="round,pad=0.2", fc=seg_color, ec="#ffffff", lw=1.2, alpha=0.92), zorder=12)
+                        self.segment_artists.extend((ann_s, ann_e))
+                        ax.legend(fontsize=7.5, loc="best")
             else:
-                dummy, = ax.plot([], [], color="#C00000", lw=2.5, label=f"异常时段标注 (共{len(self.segments)}处)")
-                self.segment_artists.append(dummy)
-                ax.legend(fontsize=7.5, loc="upper left", ncol=2)
+                if len(self.segments) > 6:
+                    dummy, = ax.plot([], [], color="#C00000", lw=2.5, label=f"标记区段 (共{len(self.segments)}段)")
+                    self.segment_artists.append(dummy)
+                ax.legend(fontsize=7.5, loc="best", ncol=2 if len(self.segments) > 3 else 1)
 
         # Multipath proxy uses elevation (not time) on its x-axis, so overlay
         # the observations from each selected interval as colored points.
@@ -2122,6 +2156,8 @@ class RTKPlotApp:
         proxy_axes=[axes_by_mode["Multipath Proxy"]] if "Multipath Proxy" in axes_by_mode else ([self.ax] if self.mode.get()=="Multipath Proxy" else [])
         for ax in proxy_axes:
             for seg in self.segments:
+                if seg["start"] >= len(p) or seg["end"] >= len(p):
+                    continue
                 t0=float(p.iloc[seg["start"]].time);t1=float(p.iloc[seg["end"]].time)
                 g=self._segment_sat_records(t0,t1);g=g[(g.freq==1)&(g.resp!=0)]
                 if len(g)>1800:g=g.iloc[::int(np.ceil(len(g)/1800))]
@@ -2129,6 +2165,8 @@ class RTKPlotApp:
         if self.mode.get()=="Dashboard" and len(self.plot_axes)>5:
             ax=self.plot_axes[5]
             for seg in self.segments:
+                if seg["start"] >= len(p) or seg["end"] >= len(p):
+                    continue
                 t0=float(p.iloc[seg["start"]].time);t1=float(p.iloc[seg["end"]].time);g=self._segment_sat_records(t0,t1)
                 g=g[(g.freq==1)&(g.snr>0)]
                 if len(g)>1800:g=g.iloc[::int(np.ceil(len(g)/1800))]
@@ -2999,7 +3037,10 @@ class RTKPlotApp:
                 group_base_ax[unit_grp] = ax
             self.plot_axes.append(ax)
             if hasattr(ax, "spines") and hasattr(ax.spines, "values"):
-                for spine in ax.spines.values():spine.set_edgecolor("#168aad" if i==self.selected_custom_panel else "#b9c0c8");spine.set_linewidth(1.6 if i==self.selected_custom_panel else .75)
+                is_exp = getattr(self, "_is_exporting", False)
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("#94a3b8" if is_exp else ("#168aad" if i==self.selected_custom_panel else "#b9c0c8"))
+                    spine.set_linewidth(0.85 if is_exp else (1.6 if i==self.selected_custom_panel else .75))
             if not name:
                 # Keep the drop hint inside its own axes. A long title overlaps
                 # neighboring panels after a narrow split.
@@ -3081,6 +3122,25 @@ class RTKPlotApp:
                 elif name=="Body-Frame Error":self._draw_body_frame_error(ax,p)
                 elif name=="Trajectory Error Heatmap":self._draw_trajectory_error_heatmap(ax,p,full)
                 elif name=="3D Ground Track":self._draw_3d_track(ax,p,full)
+                elif name in ("Position Error", "Position error"):
+                    if self.data["has_truth"]:
+                        t_gap, eh_gap, e3d_gap = insert_time_gaps(p.time, p.eh, p.e3d)
+                        ax.plot(t_gap, eh_gap, lw=.8, label="Horizontal")
+                        ax.plot(t_gap, e3d_gap, lw=.8, label="3D")
+                        self._apply_robust_ylim(ax, [p.eh, p.e3d], non_negative=True, min_span=2.0)
+                        ax.legend(fontsize=7, loc="best")
+                        ax.set(title="Position Error", ylabel="Error (m)")
+                    else:
+                        ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
+                        ax.set(title="Position Error")
+                elif name in ("Elevation vs C/N0", "Elevation vs C/N₀"):
+                    ss = s.query("freq == 1 and snr > 0") if (s is not None and not s.empty) else s
+                    if ss is not None and not ss.empty:
+                        ax.scatter(ss.el, ss.snr, s=2, alpha=.15, label="L1 Observations")
+                        ax.legend(loc="lower right", fontsize=7)
+                    ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
+                elif name == "Constellation Summary":
+                    self._draw_constellation_summary([ax], s)
             except Exception as exc:
                 ax.text(0.5, 0.5, f"绘制 [{name}] 提示:\n{exc}", ha="center", va="center", transform=ax.transAxes, fontsize=8, color="#d90429")
                 ax.set_title(f"{name}")
@@ -3109,9 +3169,9 @@ class RTKPlotApp:
                 for other in self.plot_axes
             )
             if has_panel_below:
-                # Unconditionally clear the bulky date-time xlabel whenever another subplot is underneath
-                ax.set_xlabel("")
                 if is_ts:
+                    # Clear the bulky date-time xlabel whenever another subplot is underneath
+                    ax.set_xlabel("")
                     if has_ts_panel_below and self.sync_time_axes.get():
                         ax.tick_params(axis="x", labelbottom=False)
                     elif self.sync_time_axes.get():
@@ -3126,6 +3186,10 @@ class RTKPlotApp:
                             ax.tick_params(axis="x", labelsize=6.5, pad=1)
                     else:
                         ax.tick_params(axis="x", labelsize=6.5, pad=1)
+                else:
+                    ax.xaxis.label.set_size(8)
+                    ax.xaxis.labelpad = 1.5
+                    ax.tick_params(axis="x", labelsize=7.5, pad=1)
         self.fig.suptitle("Custom RTKLIB Analysis",fontsize=13,weight="bold",y=0.985)
 
     def _register_custom_dynamic(self,name,ax,p,full):
@@ -3672,12 +3736,13 @@ class RTKPlotApp:
         self.analysis_info.configure(text="\n".join(lines))
 
     def _draw_enu_positions(self,axes,p):
-        specs=[("E","East (m)","#2878B5"),("N","North (m)","#E07A2D"),("U","Up (m)","#36965A")]
+        specs=[("E","East (m)","#2878B5","East (E)"),("N","North (m)","#E07A2D","North (N)"),("U","Up (m)","#36965A","Up (U)")]
         kw=self._get_line_kwargs("ENU Position",default_ls="-",default_lw=.8)
         t_gap, e_gap, n_gap, u_gap = insert_time_gaps(p.time, p.E, p.N, p.U)
-        for ax,(col,label,color),y_arr in zip(axes,specs,[e_gap, n_gap, u_gap]):
-            ax.plot(t_gap,y_arr,color=color,**kw)
+        for ax,(col,label,color,leg_lbl),y_arr in zip(axes,specs,[e_gap, n_gap, u_gap]):
+            ax.plot(t_gap,y_arr,color=color,label=leg_lbl,**kw)
             ax.set_ylabel(label);ax.set_title(f"{label.split()[0]} component",loc="left",fontsize=9);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
+            ax.legend(loc="upper right", fontsize=8, framealpha=0.88)
         axes[0].set_title("ENU Position Components",loc="center",fontsize=12,weight="bold")
         axes[-1].set_xlabel("Time from start (s)")
 
@@ -3706,19 +3771,19 @@ class RTKPlotApp:
             ax.legend(loc="upper left",fontsize=8)
 
         ax.set_xlabel("East (m)");ax.set_ylabel("North (m)");ax.set_aspect("equal" if self.equal_scale.get() else "auto",adjustable="box")
-        idx=min(int(self.slider.get()),len(full)-1); cur=full.iloc[idx]
-        stride=max(1,(idx+1)//2500)
-        sub_t = full.time.iloc[:idx+1:stride]
-        sub_e = self._track_e[:idx+1:stride]
-        sub_n = self._track_n[:idx+1:stride]
-        _t_gap, e_gap, n_gap = insert_time_gaps(sub_t, sub_e, sub_n)
-        self.vehicle_trail,=ax.plot(e_gap, n_gap, color="#ed3030", lw=1.8, alpha=.9, zorder=5)
-        self.vehicle_marker,=ax.plot([cur.E],[cur.N],marker=(3,0,0),ms=17,mfc="#ff2727",mec="black",mew=1.0,linestyle="None",zorder=8)
-        self.vehicle_label=ax.annotate(f"  {idx+1}/{len(full)}  Q={int(cur.q)}:{Q_LABELS.get(int(cur.q),'?')}",(cur.E,cur.N),xytext=(9,8),textcoords="offset points",fontsize=8,weight="bold",bbox=dict(boxstyle="round,pad=.25",fc="white",ec="#888",alpha=.9),zorder=9)
-        if self.data["has_truth"] and np.isfinite(cur.gt_E) and np.isfinite(cur.gt_N):
-            self.truth_marker,=ax.plot([cur.gt_E],[cur.gt_N],marker="*",ms=14,mfc="#ffd92f",mec="#222",mew=.8,linestyle="None",zorder=9,label="Current truth")
-            self.error_link,=ax.plot([cur.E,cur.gt_E],[cur.N,cur.gt_N],color="#df2525",lw=1.5,ls=":",zorder=7)
-        self._draw_stats(ax,full)
+        if not getattr(self, "_is_exporting", False) and hasattr(self, "slider"):
+            idx=min(int(self.slider.get()),len(full)-1); cur=full.iloc[idx]
+            stride=max(1,(idx+1)//2500)
+            sub_t = full.time.iloc[:idx+1:stride]
+            sub_e = self._track_e[:idx+1:stride]
+            sub_n = self._track_n[:idx+1:stride]
+            _t_gap, e_gap, n_gap = insert_time_gaps(sub_t, sub_e, sub_n)
+            self.vehicle_trail,=ax.plot(e_gap, n_gap, color="#ed3030", lw=1.8, alpha=.9, zorder=5)
+            self.vehicle_marker,=ax.plot([cur.E],[cur.N],marker=(3,0,0),ms=17,mfc="#ff2727",mec="black",mew=1.0,linestyle="None",zorder=8)
+            self.vehicle_label=ax.annotate(f"  {idx+1}/{len(full)}  Q={int(cur.q)}:{Q_LABELS.get(int(cur.q),'?')}",(cur.E,cur.N),xytext=(9,8),textcoords="offset points",fontsize=8,weight="bold",bbox=dict(boxstyle="round,pad=.25",fc="white",ec="#888",alpha=.9),zorder=9)
+            if self.data["has_truth"] and np.isfinite(cur.gt_E) and np.isfinite(cur.gt_N):
+                self.truth_marker,=ax.plot([cur.gt_E],[cur.gt_N],marker="*",ms=14,mfc="#ffd92f",mec="#222",mew=.8,linestyle="None",zorder=9,label="Current truth")
+                self.error_link,=ax.plot([cur.E,cur.gt_E],[cur.N,cur.gt_N],color="#df2525",lw=1.5,ls=":",zorder=7)
 
     def _draw_trajectory_error_heatmap(self, ax, p, full):
         self.track_axes.append(ax)
@@ -3736,7 +3801,7 @@ class RTKPlotApp:
             if fig_target is not None:
                 cb = fig_target.colorbar(sc, ax=ax, pad=0.015, fraction=0.046)
                 cb.set_label("3D Error (m, clipped at 15m)")
-            ax.legend(loc="upper right", fontsize=8.5)
+            ax.legend(loc="best", fontsize=8)
         else:
             for q, g in p.groupby("q"):
                 label = f"Q={q}: {Q_LABELS.get(q, 'Other')}"
@@ -3744,7 +3809,7 @@ class RTKPlotApp:
             ax.text(0.5, 0.5, "未加载参考真值 (Ground Truth is required for Error Heatmap)",
                     ha="center", va="center", transform=ax.transAxes, fontsize=10, color="#666",
                     bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
-            ax.legend(loc="upper left", fontsize=8)
+            ax.legend(loc="best", fontsize=8)
 
         ax.set_xlabel("East Offset from Start (m)")
         ax.set_ylabel("North Offset from Start (m)")
@@ -3753,7 +3818,7 @@ class RTKPlotApp:
         grid_val = self.grid_on.get() if hasattr(self, "grid_on") else True
         ax.grid(grid_val, alpha=0.3, ls=":")
 
-        if hasattr(self, "slider"):
+        if not getattr(self, "_is_exporting", False) and hasattr(self, "slider"):
             idx = min(int(self.slider.get()), len(full) - 1)
             cur = full.iloc[idx]
             stride = max(1, (idx + 1) // 2500)
@@ -3767,8 +3832,6 @@ class RTKPlotApp:
             if self.data["has_truth"] and np.isfinite(cur.gt_E) and np.isfinite(cur.gt_N):
                 self.truth_marker, = ax.plot([cur.gt_E], [cur.gt_N], marker="*", ms=14, mfc="#ffd92f", mec="#222", mew=0.8, linestyle="None", zorder=9, label="Current truth")
                 self.error_link, = ax.plot([cur.E, cur.gt_E], [cur.N, cur.gt_N], color="#df2525", lw=1.5, ls=":", zorder=7)
-        if hasattr(self, "_draw_stats"):
-            self._draw_stats(ax, full)
 
     def _draw_3d_track(self, ax, p, full):
         self._track_e = full.E.to_numpy()
@@ -3900,11 +3963,12 @@ class RTKPlotApp:
             axes[0].text(.5,.5,"Ground truth not loaded — position errors unavailable",ha="center",va="center",transform=axes[0].transAxes)
             for ax in axes[1:]:ax.set_visible(False)
             return
-        specs=[("de","ΔE (m)","#2878B5"),("dn","ΔN (m)","#E07A2D"),("du","ΔU (m)","#36965A")]
+        specs=[("de","ΔE (m)","#2878B5","ΔE (East Error)"),("dn","ΔN (m)","#E07A2D","ΔN (North Error)"),("du","ΔU (m)","#36965A","ΔU (Up Error)")]
         kw=self._get_line_kwargs("ENU Error",default_ls="-",default_lw=.75)
         t_gap, de_gap, dn_gap, du_gap = insert_time_gaps(p.time, p.de, p.dn, p.du)
-        for ax,(col,label,color),y_arr in zip(axes,specs,[de_gap, dn_gap, du_gap]):
-            ax.plot(t_gap,y_arr,color=color,**kw);ax.axhline(0,color="#222",lw=.6);ax.set_ylabel(label);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
+        for ax,(col,label,color,leg_lbl),y_arr in zip(axes,specs,[de_gap, dn_gap, du_gap]):
+            ax.plot(t_gap,y_arr,color=color,label=leg_lbl,**kw);ax.axhline(0,color="#222",lw=.6);ax.set_ylabel(label);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
+            ax.legend(loc="upper right", fontsize=8, framealpha=0.88)
             if hasattr(self, "_apply_robust_ylim"):
                 self._apply_robust_ylim(ax, [p[col]], is_symmetric=True, min_span=1.0)
         axes[0].set_title("ENU Position Error Components",fontsize=12,weight="bold");axes[-1].set_xlabel("Time from start (s)")
@@ -5182,7 +5246,8 @@ class RTKPlotApp:
                 pos_sub = self._filtered()
                 sat_sub = self.data.get("sat")
                 metrics = diag.compute_segment_metrics(pos_sub, sat_sub)
-                self.export_render_mode(temp_fig, mode_name, pos_sub, sat_sub, metrics, with_hud=True)
+                foc_idx = getattr(self, "_selected_segment_idx", None)
+                self.export_render_mode(temp_fig, mode_name, pos_sub, sat_sub, metrics, with_hud=False, focus_seg_idx=foc_idx)
 
             temp_fig.savefig(path, dpi=300 if path.lower().endswith(".png") else None, bbox_inches="tight")
             self.segment_status.configure(text=f"子图 [{mode_name}] 已成功导出至: {os.path.basename(path)}")
@@ -5566,6 +5631,7 @@ class RTKPlotApp:
             messagebox.showerror("导出失败", f"生成 Web 3D 地球失败:\n{exc}")
 
     def _draw_track_export(self, ax, p, full):
+        self.track_axes.append(ax)
         self._apply_basemap(ax, full)
         ax.set_title("Ground Track / ENU Position — colored by solution status", fontsize=11, weight="bold")
         if self.data["has_truth"]:
@@ -5579,7 +5645,7 @@ class RTKPlotApp:
         ax.set_xlabel("East (m)")
         ax.set_ylabel("North (m)")
         ax.set_aspect("equal" if self.equal_scale.get() else "auto")
-        ax.legend(loc="upper left", fontsize=8)
+        ax.legend(loc="best", fontsize=8)
 
     def _draw_sky_export(self, ax, s):
         if s is None or s.empty:
@@ -5594,271 +5660,522 @@ class RTKPlotApp:
             g = self._display_sample(g.sort_values("time"), 400)
             th = np.deg2rad(g.az)
             r = 90 - g.el
-            ax.plot(th, r, lw=0.75, alpha=0.6, color=diag.COLORS.get(con, "#666"))
+            ax.plot(th, r, lw=0.75, alpha=0.6, color=diag.COLORS.get(con, "#666"), label=con)
             k = int(np.nanargmax(g.el.to_numpy()))
             ax.text(th.iloc[k], r.iloc[k], prn, fontsize=7, weight="bold")
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            by_label = dict(zip(labels, handles))
+            ax.legend(by_label.values(), by_label.keys(), loc="upper right", bbox_to_anchor=(1.15, 1.05), fontsize=8)
         ax.set_title("Satellite Skyplot", pad=18, fontsize=12, weight="bold")
 
-    def export_render_mode(self, fig, mode_name, pos_sub, sat_sub, metrics, with_hud=True):
+    def _finalize_export_overlays_and_zoom(self, orig_data, focus_seg_idx, use_full_context):
+        """Hide interactive scrub cursors/badges and apply segment bands & focus window zoom."""
+        for tc in self.time_cursors:
+            try:
+                tc.set_visible(False)
+            except Exception:
+                pass
+        for art in self.custom_dynamic_artists:
+            try:
+                art.set_visible(False)
+            except Exception:
+                pass
+        for _, pts, lbls in self.sky_plots:
+            try:
+                pts.set_visible(False)
+                for lb in lbls:
+                    lb.set_visible(False)
+            except Exception:
+                pass
+
+        if not use_full_context or not self.segments:
+            return
+
+        # Draw colored segment bands on datetime_axes and colored segment tracks on track_axes
+        self._selected_segment_idx = focus_seg_idx
+        self._apply_segment_overlays()
+
+        # If exporting a specific segment, zoom timeline and 2D track axes around that segment (Image 2 style)
+        if focus_seg_idx is not None and 0 <= focus_seg_idx < len(self.segments):
+            seg = self.segments[focus_seg_idx]
+            p_full = orig_data["pos"]
+            if seg["start"] < len(p_full) and seg["end"] < len(p_full):
+                t0 = float(p_full.iloc[seg["start"]].time)
+                t1 = float(p_full.iloc[seg["end"]].time)
+                dur = max(0.1, t1 - t0)
+                pad = max(2.0, dur * 0.12)
+                for ax_dt in self.datetime_axes:
+                    ax_dt.set_xlim(t0 - pad, t1 + pad)
+
+                g = p_full.iloc[seg["start"]:seg["end"]+1]
+                if not g.empty:
+                    e_min, e_max = float(g.E.min()), float(g.E.max())
+                    n_min, n_max = float(g.N.min()), float(g.N.max())
+                    span_e = max(1.0, e_max - e_min)
+                    span_n = max(1.0, n_max - n_min)
+                    center_e = (e_min + e_max) / 2.0
+                    center_n = (n_min + n_max) / 2.0
+                    half_span = max(span_e * 0.65, span_n * 0.65, 8.0)
+                    for ax_trk in self.track_axes:
+                        ax_trk.set_xlim(center_e - half_span, center_e + half_span)
+                        ax_trk.set_ylim(center_n - half_span, center_n + half_span)
+                        if getattr(self, "equal_scale", None) and self.equal_scale.get():
+                            ax_trk.set_aspect("equal", adjustable="box")
+
+    def export_render_mode(self, fig, mode_name, pos_sub, sat_sub, metrics, with_hud=False, focus_seg_idx=None):
         fig.clear()
         orig_data = self.data
-        clk_full = orig_data.get("clk")
-        if clk_full is not None and not clk_full.empty and not pos_sub.empty:
-            t0_c, t1_c = float(pos_sub.time.iloc[0]), float(pos_sub.time.iloc[-1])
-            clk_sub = clk_full[(clk_full.time >= t0_c) & (clk_full.time <= t1_c)].copy()
-        else:
-            clk_sub = clk_full
+        orig_fig = self.fig
+        orig_axes = list(self.plot_axes)
+        orig_ax = self.ax
+        orig_cursors = list(self.time_cursors)
+        orig_sky = list(self.sky_plots)
+        orig_dyn = list(self.custom_dynamic_artists)
+        orig_upd = list(self.custom_updaters)
+        orig_track = list(self.track_axes)
+        orig_dt = list(self.datetime_axes)
+        orig_seg_art = list(self.segment_artists)
+        orig_seg_lines = list(self.segment_track_lines)
+        orig_seg_sky = list(self.segment_sky_artists)
+        orig_sel_seg = getattr(self, "_selected_segment_idx", None)
+        orig_is_exp = getattr(self, "_is_exporting", False)
 
-        s = sat_sub if sat_sub is not None else orig_data.get("sat")
+        # Modes with timeline or 2D trajectory use full dataset context + colored segment band/focus zoom
+        use_full_context = (
+            (focus_seg_idx is None)
+            or (mode_name in ("Custom Analysis", "Dashboard", "Env & Geometry Combined", "Gnd Trk", "Trajectory Error Heatmap"))
+            or (mode_name not in NON_TIME_SERIES_MODES)
+        )
+
+        if use_full_context:
+            active_pos = orig_data["pos"]
+            active_sat = orig_data.get("sat")
+            active_clk = orig_data.get("clk")
+        else:
+            active_pos = pos_sub
+            active_sat = sat_sub if sat_sub is not None else orig_data.get("sat")
+            clk_full = orig_data.get("clk")
+            if clk_full is not None and not clk_full.empty and not pos_sub.empty:
+                t0_c, t1_c = float(pos_sub.time.iloc[0]), float(pos_sub.time.iloc[-1])
+                active_clk = clk_full[(clk_full.time >= t0_c) & (clk_full.time <= t1_c)].copy()
+            else:
+                active_clk = clk_full
+
         temp_data = {
-            "pos": pos_sub,
-            "sat": s,
-            "clk": clk_sub,
+            "pos": active_pos,
+            "sat": active_sat,
+            "clk": active_clk,
             "reference": orig_data.get("reference"),
             "has_truth": orig_data.get("has_truth", False),
             "pos_path": orig_data.get("pos_path"),
             "stat_path": orig_data.get("stat_path"),
         }
 
-        full = pos_sub
-        p = pos_sub
+        full = orig_data["pos"] if mode_name == "3D Ground Track" else active_pos
+        p = active_pos
+        s = active_sat
 
-        self.data = temp_data
         try:
-            if mode_name in ("Custom Analysis", "Env & Geometry Combined", "Skyplot & C/N0 (Env)"):
-                orig_fig = self.fig
-                orig_axes = list(self.plot_axes)
-                orig_ax = self.ax
-                orig_cursors = list(self.time_cursors)
-                orig_sky = list(self.sky_plots)
-                orig_dyn = list(self.custom_dynamic_artists)
-                orig_upd = list(self.custom_updaters)
-                orig_track = list(self.track_axes)
-                orig_dt = list(self.datetime_axes)
-                try:
-                    self.fig = fig
-                    self.plot_axes = []
-                    self.time_cursors = []
-                    self.sky_plots = []
-                    self.custom_dynamic_artists = []
-                    self.custom_updaters = []
-                    self.track_axes = []
-                    self.datetime_axes = []
-                    if mode_name == "Custom Analysis":
-                        fig.set_size_inches(16, 9.5)
-                        self._draw_custom_grid()
-                    elif mode_name == "Env & Geometry Combined":
-                        fig.set_size_inches(16, 9.5)
-                        self._draw_env_geometry_combined()
-                    elif mode_name == "Skyplot & C/N0 (Env)":
-                        fig.set_size_inches(16, 6.2)
-                        self._draw_skyplot_cn0_3in1()
-                    for tc in self.time_cursors:
-                        tc.set_visible(False)
-                    if with_hud and metrics and "fix_rate" in metrics and self.plot_axes and mode_name != "Custom Analysis":
-                        try:
-                            diag.render_hud_card(self.plot_axes[0], metrics, loc="upper right", font_size=8.0)
-                        except Exception:
-                            pass
-                finally:
-                    self.fig = orig_fig
-                    self.plot_axes = orig_axes
-                    self.ax = orig_ax
-                    self.time_cursors = orig_cursors
-                    self.sky_plots = orig_sky
-                    self.custom_dynamic_artists = orig_dyn
-                    self.custom_updaters = orig_upd
-                    self.track_axes = orig_track
-                    self.datetime_axes = orig_dt
-                return
+            self.data = temp_data
+            self.fig = fig
+            self.plot_axes = []
+            self.time_cursors = []
+            self.sky_plots = []
+            self.custom_dynamic_artists = []
+            self.custom_updaters = []
+            self.track_axes = []
+            self.datetime_axes = []
+            self.segment_artists = []
+            self.segment_track_lines = []
+            self.segment_sky_artists = []
+            self._selected_segment_idx = focus_seg_idx
+            self._is_exporting = True
 
-            if mode_name == "Dashboard":
+            need_tight = True
+            if mode_name in ("Custom Analysis", "Env & Geometry Combined", "Skyplot & C/N0 (Env)"):
+                if mode_name == "Custom Analysis":
+                    fig.set_size_inches(16, 9.5)
+                    self._draw_custom_grid()
+                    need_tight = False
+                elif mode_name == "Env & Geometry Combined":
+                    fig.set_size_inches(16, 9.5)
+                    self._draw_env_geometry_combined()
+                    need_tight = False
+                elif mode_name == "Skyplot & C/N0 (Env)":
+                    fig.set_size_inches(16, 6.2)
+                    self._draw_skyplot_cn0_3in1()
+                    need_tight = False
+            elif mode_name == "Dashboard":
                 fig.set_size_inches(16, 9)
                 axs = fig.subplots(2, 3)
                 axs_flat = axs.ravel()
+                self.plot_axes = list(axs_flat)
                 for i, name in enumerate(["Gnd Trk", "Position Error", "Solution Status", "AR Ratio", "Satellites", "Elevation vs C/N0"]):
                     ax = axs_flat[i]
                     self._render_dashboard_item(ax, name, p, full, s, is_single=False)
                     ax.grid(self.grid_on.get(), alpha=0.3)
-                if with_hud:
-                    diag.render_hud_card(axs_flat[1], metrics, loc="upper right", font_size=8.0)
                 fig.suptitle("RTKLIB Solution Dashboard", fontsize=15, weight="bold")
-                fig.tight_layout()
-                return
-
-            if mode_name == "Skyplot":
+            elif mode_name == "Skyplot":
                 fig.set_size_inches(8, 8)
                 ax = fig.add_subplot(111, projection="polar")
+                self.plot_axes = [ax]
                 self._draw_sky_export(ax, s)
-                if with_hud:
-                    diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
-                fig.tight_layout()
-                return
-
-            if mode_name == "3D Ground Track":
+            elif mode_name == "3D Ground Track":
                 fig.set_size_inches(11, 7.5)
                 ax = fig.add_subplot(111, projection="3d")
-                self._draw_3d_track(ax, p, full)
-                if with_hud and metrics and "fix_rate" in metrics:
-                    diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
-                fig.tight_layout()
-                return
-
-            fig.set_size_inches(10, 6)
-            if mode_name == "ENU Position":
+                self.plot_axes = [ax]
+                self._draw_3d_track(ax, pos_sub, orig_data["pos"])
+            elif mode_name == "ENU Position":
+                fig.set_size_inches(10, 6)
                 axs = fig.subplots(3, 1, sharex=True)
+                self.plot_axes = list(axs)
                 self._draw_enu_positions(axs, p)
-                self._set_datetime_axis(axs[-1])
-                if with_hud:
-                    diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
-                fig.tight_layout()
-                return
+                for a in axs:
+                    self._set_datetime_axis(a)
+                for a in axs[:-1]:
+                    a.set_xlabel("")
+                    a.tick_params(labelbottom=False)
             elif mode_name == "ENU Error":
+                fig.set_size_inches(10, 6)
                 if not self.data["has_truth"]:
                     ax = fig.add_subplot(111)
+                    self.plot_axes = [ax]
                     ax.text(0.5, 0.5, "No Ground Truth Loaded — Position Errors Unavailable", ha="center", va="center", transform=ax.transAxes, fontsize=11)
-                    return
-                axs = fig.subplots(3, 1, sharex=True)
-                self._draw_errors(axs, p)
-                self._set_datetime_axis(axs[-1])
-                if with_hud:
-                    diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
-                fig.tight_layout()
-                return
-
-            ax = fig.add_subplot(111)
-            if mode_name == "Gnd Trk":
-                self._draw_track_export(ax, p, full)
-            elif mode_name == "Trajectory Error Heatmap":
-                self._draw_trajectory_error_heatmap(ax, p, full)
-            elif mode_name == "Height":
-                kw = self._get_line_kwargs("Height")
-                t_gap, u_gap = insert_time_gaps(p.time, p.U)
-                ax.plot(t_gap, u_gap, label="RTK U", **kw)
-                if self.data["has_truth"]:
-                    t_gt_gap, gt_u_gap = insert_time_gaps(p.time, p.gt_U)
-                    ax.plot(t_gt_gap, gt_u_gap, ls="--", color="#cf4b43", lw=kw.get("lw", 1.2), label="Truth U")
-                ax.set(title="Height (Up component)", xlabel="Date/time", ylabel="Up (m)")
-                ax.legend(loc="best")
-                self._set_datetime_axis(ax)
-            elif mode_name == "Solution Status":
-                t_gap, q_g = insert_time_gaps(p.time, p.q)
-                ax.step(t_gap, q_g, where="post", lw=1.2, color="#0B2B52")
-                ax.set(title="Solution Status (Q: 1=FIX, 2=FLOAT, 5=SINGLE)", xlabel="Date/time", ylabel="Q")
-                self._set_datetime_axis(ax)
-            elif mode_name == "AR Ratio":
-                self._draw_ar_ratio(ax, p)
-                self._set_datetime_axis(ax)
-            elif mode_name == "Differential Age":
-                self._draw_differential_age(ax, p)
-                self._set_datetime_axis(ax)
-            elif mode_name == "Satellites":
-                self._draw_sats(ax)
-                self._set_datetime_axis(ax)
-            elif mode_name == "DOP":
-                self._draw_dop(ax)
-                self._set_datetime_axis(ax)
-            elif mode_name in ("C/N0", "C/N₀"):
-                self._draw_cn0(ax)
-                self._set_datetime_axis(ax)
-            elif mode_name in ("Satellite Elevation", "Elevation"):
-                self._draw_elevation(ax)
-                self._set_datetime_axis(ax)
-            elif mode_name == "Residuals":
-                self._draw_residuals(ax)
-                self._set_datetime_axis(ax)
-            elif mode_name == "Multipath Proxy":
-                self._draw_multipath(ax)
-            elif mode_name == "Cycle Slips":
-                self._draw_slips(ax)
-                self._set_datetime_axis(ax)
-            elif mode_name == "Satellite Visibility Gantt":
-                self._draw_satellite_visibility_gantt(ax, s)
-                self._set_datetime_axis(ax)
+                else:
+                    axs = fig.subplots(3, 1, sharex=True)
+                    self.plot_axes = list(axs)
+                    self._draw_errors(axs, p)
+                    for a in axs:
+                        self._set_datetime_axis(a)
+                    for a in axs[:-1]:
+                        a.set_xlabel("")
+                        a.tick_params(labelbottom=False)
             elif mode_name == "Multipath Skyplot":
                 fig.set_size_inches(8, 8)
-                fig.clear()
                 ax = fig.add_subplot(111, projection="polar")
+                self.plot_axes = [ax]
                 self._draw_multipath_skyplot(ax)
-                if with_hud and metrics and "fix_rate" in metrics:
-                    diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
-                fig.tight_layout()
-                return
             elif mode_name == "Per-PRN Residuals":
                 fig.set_size_inches(13, 5)
-                fig.clear()
                 ax = fig.add_subplot(111)
+                self.plot_axes = [ax]
                 self._draw_per_prn_residuals(ax)
-                if with_hud and metrics and "fix_rate" in metrics:
-                    diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.0)
-                fig.tight_layout()
-                return
-            elif mode_name == "Covariance":
-                self._draw_covariance(ax, p)
-                self._set_datetime_axis(ax)
-            elif mode_name == "False Fix Analysis":
-                self._draw_false_fix(ax, p)
-            elif mode_name == "Error CDF":
-                self._draw_error_cdf(ax, p)
+                ax.grid(self.grid_on.get(), alpha=0.3)
             elif mode_name == "Error Histogram":
                 fig.set_size_inches(13, 4.5)
-                fig.clear()
                 axs = fig.subplots(1, 3, sharey=True)
+                self.plot_axes = list(axs)
                 self._draw_error_histogram(axs, p)
-                if with_hud:
-                    diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
-                fig.tight_layout()
-                return
-            elif mode_name == "Innovation / NIS":
-                self._draw_nis(ax)
-            elif mode_name in ("Elevation vs C/N0", "Elevation vs C/N₀"):
-                ss = s.query("freq == 1 and snr > 0") if (s is not None and not s.empty) else s
-                if ss is not None and not ss.empty:
-                    ax.scatter(ss.el, ss.snr, s=2, alpha=.15)
-                ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
-            elif mode_name in ("Position Error", "Position error"):
-                if self.data["has_truth"]:
-                    t_gap, eh_gap, e3d_gap = insert_time_gaps(p.time, p.eh, p.e3d)
-                    ax.plot(t_gap, eh_gap, lw=.8, label="Horizontal")
-                    ax.plot(t_gap, e3d_gap, lw=.8, label="3D")
-                    ax.legend(fontsize=8)
-                    ax.set(title="Position Error", xlabel="Time (s)", ylabel="Error (m)")
-                else:
-                    ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
-                    ax.set(title="Position Error")
-                self._set_datetime_axis(ax)
-            elif mode_name == "Residual Triad":
-                self._draw_residual_triad(ax)
-                self._set_datetime_axis(ax)
-            elif mode_name == "El vs SNR & Resp":
-                self._draw_el_snr_resp(ax)
-            elif mode_name == "Top Outlier Satellites":
-                self._draw_top_outliers(ax)
-            elif mode_name == "Directional DOP":
-                self._draw_directional_dop(ax)
-                self._set_datetime_axis(ax)
-            elif mode_name == "Body-Frame Error":
-                self._draw_body_frame_error(ax, p)
-                self._set_datetime_axis(ax)
-            elif mode_name == "Clock Bias & ISB":
-                self._draw_clock_bias_isb(ax)
-                self._set_datetime_axis(ax)
             elif mode_name == "Constellation Summary":
                 fig.set_size_inches(13, 4.5)
-                fig.clear()
                 axs = fig.subplots(1, 2)
+                self.plot_axes = list(axs)
                 self._draw_constellation_summary(axs, s)
-                if with_hud:
-                    diag.render_hud_card(axs[0], metrics, loc="upper right", font_size=8.0)
-                fig.tight_layout()
-                return
+            else:
+                fig.set_size_inches(10, 6)
+                ax = fig.add_subplot(111)
+                self.plot_axes = [ax]
+                if mode_name == "Gnd Trk":
+                    self._draw_track_export(ax, p, full)
+                elif mode_name == "Trajectory Error Heatmap":
+                    self._draw_trajectory_error_heatmap(ax, p, full)
+                elif mode_name == "Height":
+                    kw = self._get_line_kwargs("Height")
+                    t_gap, u_gap = insert_time_gaps(p.time, p.U)
+                    ax.plot(t_gap, u_gap, label="RTK U", **kw)
+                    if self.data["has_truth"]:
+                        t_gt_gap, gt_u_gap = insert_time_gaps(p.time, p.gt_U)
+                        ax.plot(t_gt_gap, gt_u_gap, ls="--", color="#cf4b43", lw=kw.get("lw", 1.2), label="Truth U")
+                    ax.set(title="Height (Up component)", xlabel="Date/time", ylabel="Up (m)")
+                    ax.legend(loc="best")
+                    self._set_datetime_axis(ax)
+                elif mode_name == "Solution Status":
+                    t_gap, q_g = insert_time_gaps(p.time, p.q)
+                    ax.step(t_gap, q_g, where="post", lw=1.2, color="#0B2B52", label="Solution Status Q")
+                    ax.set(title="Solution Status (Q: 1=FIX, 2=FLOAT, 5=SINGLE)", xlabel="Date/time", ylabel="Q")
+                    ax.legend(loc="best", fontsize=8)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "AR Ratio":
+                    self._draw_ar_ratio(ax, p)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "Differential Age":
+                    self._draw_differential_age(ax, p)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "Satellites":
+                    self._draw_sats(ax)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "DOP":
+                    self._draw_dop(ax)
+                    self._set_datetime_axis(ax)
+                elif mode_name in ("C/N0", "C/N₀"):
+                    self._draw_cn0(ax)
+                    self._set_datetime_axis(ax)
+                elif mode_name in ("Satellite Elevation", "Elevation"):
+                    self._draw_elevation(ax)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "Residuals":
+                    self._draw_residuals(ax)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "Multipath Proxy":
+                    self._draw_multipath(ax)
+                elif mode_name == "Cycle Slips":
+                    self._draw_slips(ax)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "Satellite Visibility Gantt":
+                    self._draw_satellite_visibility_gantt(ax, s)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "Covariance":
+                    self._draw_covariance(ax, p)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "False Fix Analysis":
+                    self._draw_false_fix(ax, p)
+                elif mode_name == "Error CDF":
+                    self._draw_error_cdf(ax, p)
+                elif mode_name == "Innovation / NIS":
+                    self._draw_nis(ax)
+                elif mode_name in ("Elevation vs C/N0", "Elevation vs C/N₀"):
+                    ss = s.query("freq == 1 and snr > 0") if (s is not None and not s.empty) else s
+                    if ss is not None and not ss.empty:
+                        ax.scatter(ss.el, ss.snr, s=2, alpha=.15, label="L1 Observations")
+                        ax.legend(loc="lower right", fontsize=8)
+                    ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
+                elif mode_name in ("Position Error", "Position error"):
+                    if self.data["has_truth"]:
+                        t_gap, eh_gap, e3d_gap = insert_time_gaps(p.time, p.eh, p.e3d)
+                        ax.plot(t_gap, eh_gap, lw=.8, label="Horizontal")
+                        ax.plot(t_gap, e3d_gap, lw=.8, label="3D")
+                        self._apply_robust_ylim(ax, [p.eh, p.e3d], non_negative=True, min_span=2.0)
+                        ax.legend(fontsize=8, loc="best")
+                        ax.set(title="Position Error", xlabel="Time (s)", ylabel="Error (m)")
+                    else:
+                        ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
+                        ax.set(title="Position Error")
+                    self._set_datetime_axis(ax)
+                elif mode_name == "Residual Triad":
+                    self._draw_residual_triad(ax)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "El vs SNR & Resp":
+                    self._draw_el_snr_resp(ax)
+                elif mode_name == "Top Outlier Satellites":
+                    self._draw_top_outliers(ax)
+                elif mode_name == "Directional DOP":
+                    self._draw_directional_dop(ax)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "Body-Frame Error":
+                    self._draw_body_frame_error(ax, p)
+                    self._set_datetime_axis(ax)
+                elif mode_name == "Clock Bias & ISB":
+                    self._draw_clock_bias_isb(ax)
+                    self._set_datetime_axis(ax)
+                ax.grid(self.grid_on.get(), alpha=0.3)
 
-            ax.grid(self.grid_on.get(), alpha=0.3)
-            if with_hud and metrics and "fix_rate" in metrics:
-                diag.render_hud_card(ax, metrics, loc="upper right", font_size=8.5)
-            fig.tight_layout()
+            # Apply colored segment bands / tracks and segment focus zoom
+            self._finalize_export_overlays_and_zoom(orig_data, focus_seg_idx, use_full_context)
+
+            if need_tight:
+                try:
+                    fig.tight_layout()
+                except Exception:
+                    pass
         finally:
             self.data = orig_data
+            self.fig = orig_fig
+            self.plot_axes = orig_axes
+            self.ax = orig_ax
+            self.time_cursors = orig_cursors
+            self.sky_plots = orig_sky
+            self.custom_dynamic_artists = orig_dyn
+            self.custom_updaters = orig_upd
+            self.track_axes = orig_track
+            self.datetime_axes = orig_dt
+            self.segment_artists = orig_seg_art
+            self.segment_track_lines = orig_seg_lines
+            self.segment_sky_artists = orig_seg_sky
+            self._selected_segment_idx = orig_sel_seg
+            self._is_exporting = orig_is_exp
+
+    def _compute_rich_segment_row(self, seg_id: str, seg_name: str, pos_sub: pd.DataFrame, sat_sub: pd.DataFrame | None, seg_color: str = "#0B2B52") -> dict:
+        """Compute full statistical & coordinate metrics row for standalone summary table."""
+        m = diag.compute_segment_metrics(pos_sub, sat_sub)
+        n_ep = len(pos_sub)
+        dur = float(pos_sub.time.iloc[-1] - pos_sub.time.iloc[0]) if n_ep > 1 else 0.0
+        r0 = pos_sub.iloc[0]
+        r1 = pos_sub.iloc[-1]
+        t0_dt = gpst_to_local_datetime(r0.week, r0.tow).strftime("%H:%M:%S")
+        t1_dt = gpst_to_local_datetime(r1.week, r1.tow).strftime("%H:%M:%S")
+        date_str = gpst_to_local_datetime(r0.week, r0.tow).strftime("%Y-%m-%d")
+
+        xyz = pos_sub[["x", "y", "z"]].to_numpy()
+        lat0, lon0, h0 = ecef_to_geodetic(*xyz[0])
+        avlat, avlon, avh = ecef_to_geodetic(*xyz.mean(axis=0))
+
+        single_rate = float((pos_sub["q"] == 5).mean() * 100.0) if "q" in pos_sub else 0.0
+        rms_2d = float(np.hypot(m["rms_e"], m["rms_n"]))
+        max_2d = float(pos_sub["eh"].max()) if ("eh" in pos_sub and pos_sub["eh"].notna().any()) else np.nan
+        max_3d = float(pos_sub["e3d"].max()) if ("e3d" in pos_sub and pos_sub["e3d"].notna().any()) else np.nan
+
+        cause_str = "全程基准统览"
+        if seg_id != "full":
+            try:
+                d_res = diag.diagnose_anomaly_segment(self.data["pos"], self.data.get("sat"), float(r0.tow), float(r1.tow))
+                cause_str = d_res.get("primary_cause", "异常区段")
+            except Exception:
+                cause_str = "标记区段"
+
+        return {
+            "区段编号": seg_id,
+            "时间区段名称": seg_name,
+            "日期": date_str,
+            "起止时间 (CST)": f"{t0_dt} ~ {t1_dt}",
+            "历元数": n_ep,
+            "持续时长 (s)": round(dur, 1),
+            "FIX 固定率 (%)": round(m["fix_rate"], 2),
+            "FLOAT 浮点率 (%)": round(m["float_rate"], 2),
+            "SINGLE 单点率 (%)": round(single_rate, 2),
+            "RMS E (m)": round(m["rms_e"], 3),
+            "RMS N (m)": round(m["rms_n"], 3),
+            "RMS U (m)": round(m["rms_u"], 3),
+            "RMS 2D (m)": round(rms_2d, 3),
+            "RMS 3D (m)": round(m["rms_3d"], 3),
+            "CEP50 (m)": round(m["cep50"], 3),
+            "CEP95 (m)": round(m["cep95"], 3),
+            "最大2D误差 (m)": round(max_2d, 3) if pd.notna(max_2d) else "",
+            "最大3D误差 (m)": round(max_3d, 3) if pd.notna(max_3d) else "",
+            "平均有效卫星数": round(m["mean_ns"], 1),
+            "平均 AR Ratio": round(m["mean_ratio"], 2),
+            "起点坐标 ORI": f"{lat0:.7f}°N, {lon0:.7f}°E, {h0:.2f}m",
+            "均值坐标 AVE": f"{avlat:.7f}°N, {avlon:.7f}°E, {avh:.2f}m",
+            "诊断归因": cause_str,
+            "_color": seg_color,
+        }
+
+    def export_standalone_metrics_table(self, rows: list[dict], out_dir: Path, file_prefix: str, dpi: int = 300) -> list[Path]:
+        """Generate standalone quantitative metrics table in CSV, Markdown, and high-res PNG table image."""
+        if not rows:
+            return []
+        out_dir.mkdir(parents=True, exist_ok=True)
+        saved_paths = []
+
+        # 1. Save Excel-friendly CSV (without internal _color field)
+        clean_rows = [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
+        csv_path = out_dir / f"{file_prefix}_定量指标统计汇总表.csv"
+        pd.DataFrame(clean_rows).to_csv(csv_path, index=False, encoding="utf-8-sig")
+        saved_paths.append(csv_path)
+
+        # 2. Save Markdown Table
+        md_path = out_dir / f"{file_prefix}_定量指标统计汇总表.md"
+        r_first = rows[0]
+        md_lines = [
+            f"# {file_prefix} — RTKLIB 解算定量指标统计汇总表",
+            "",
+            f"- **观测日期**: `{r_first['日期']}`",
+            f"- **起点坐标 (ORI)**: `{r_first['起点坐标 ORI']}`",
+            f"- **均值坐标 (AVE)**: `{r_first['均值坐标 AVE']}`",
+            "",
+            "| 区段名称 | 起止时间 (CST) | 历元数 (时长) | FIX 率 (%) | FLOAT 率 (%) | RMS E/N/U (m) | RMS 2D / 3D (m) | CEP50 / CEP95 (m) | 最大3D (m) | 平均星数 | 平均Ratio | 诊断归因 |",
+            "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |",
+        ]
+        for r in rows:
+            max3d_s = f"{r['最大3D误差 (m)']:.3f}" if isinstance(r["最大3D误差 (m)"], (int, float)) else "-"
+            md_lines.append(
+                f"| **{r['时间区段名称']}** | {r['起止时间 (CST)']} | {r['历元数']} ({r['持续时长 (s)']}s) | "
+                f"**{r['FIX 固定率 (%)']:.1f}%** | {r['FLOAT 浮点率 (%)']:.1f}% | "
+                f"{r['RMS E (m)']:.3f} / {r['RMS N (m)']:.3f} / {r['RMS U (m)']:.3f} | "
+                f"**{r['RMS 2D (m)']:.3f}** / **{r['RMS 3D (m)']:.3f}** | "
+                f"{r['CEP50 (m)']:.3f} / {r['CEP95 (m)']:.3f} | {max3d_s} | "
+                f"{r['平均有效卫星数']:.1f} | {r['平均 AR Ratio']:.1f} | {r['诊断归因']} |"
+            )
+        md_path.write_text("\n".join(md_lines), encoding="utf-8")
+        saved_paths.append(md_path)
+
+        # 3. Render standalone high-resolution academic table figure (.png)
+        png_path = out_dir / f"{file_prefix}_定量指标统计汇总表.png"
+        try:
+            col_headers = [
+                "时间区段", "起止时间 (CST)", "历元 (时长)", "FIX率", "FLOAT率",
+                "RMS E / N / U (m)", "RMS 2D / 3D (m)", "CEP50 / 95 (m)",
+                "最大3D (m)", "平均星数", "平均Ratio", "诊断归因"
+            ]
+            cell_data = []
+            for r in rows:
+                max3d_s = f"{r['最大3D误差 (m)']:.3f}" if isinstance(r["最大3D误差 (m)"], (int, float)) else "-"
+                raw_name = str(r["时间区段名称"])
+                seg_code = str(r["区段编号"]).upper()
+                if r["区段编号"] == "full":
+                    short_seg_label = "全程 (Full)"
+                elif "假固定" in raw_name:
+                    short_seg_label = f"{seg_code} [假固定]"
+                elif "水平超标" in raw_name:
+                    short_seg_label = f"{seg_code} [水平超标]"
+                elif "粗差" in raw_name:
+                    short_seg_label = f"{seg_code} [残差粗差]"
+                else:
+                    clean_n = raw_name.split("(")[0].strip()
+                    short_seg_label = f"{seg_code} ({clean_n[:10]})" if clean_n and not clean_n.lower().startswith("segment") else seg_code
+                cell_data.append([
+                    short_seg_label,
+                    str(r["起止时间 (CST)"]),
+                    f"{r['历元数']} ({r['持续时长 (s)']}s)",
+                    f"{r['FIX 固定率 (%)']:.1f}%",
+                    f"{r['FLOAT 浮点率 (%)']:.1f}%",
+                    f"{r['RMS E (m)']:.3f} / {r['RMS N (m)']:.3f} / {r['RMS U (m)']:.3f}",
+                    f"{r['RMS 2D (m)']:.3f} / {r['RMS 3D (m)']:.3f}",
+                    f"{r['CEP50 (m)']:.3f} / {r['CEP95 (m)']:.3f}",
+                    max3d_s,
+                    f"{r['平均有效卫星数']:.1f}",
+                    f"{r['平均 AR Ratio']:.1f}",
+                    str(r["诊断归因"]),
+                ])
+
+            n_rows = len(cell_data)
+            fig_h = max(2.8, 1.45 + 0.40 * (n_rows + 1))
+            t_fig = plt.Figure(figsize=(17.0, fig_h), dpi=dpi, facecolor="white")
+            t_ax = t_fig.add_subplot(111)
+            t_ax.axis("off")
+
+            title_text = f"RTKLIB 解算定量精度与可用性指标汇总表 — {file_prefix}"
+            sub_text = f"观测日期: {r_first['日期']}    |    起点 ORI: {r_first['起点坐标 ORI']}    |    均值 AVE: {r_first['均值坐标 AVE']}"
+            t_ax.set_title(f"{title_text}\n{sub_text}", fontsize=11.5, weight="bold", color="#0B2B52", pad=10, loc="left")
+
+            col_widths = [0.095, 0.105, 0.085, 0.052, 0.058, 0.14, 0.105, 0.095, 0.062, 0.052, 0.052, 0.145]
+            tbl = t_ax.table(
+                cellText=cell_data,
+                colLabels=col_headers,
+                colWidths=col_widths,
+                loc="center",
+                cellLoc="center",
+            )
+            tbl.auto_set_font_size(False)
+            tbl.set_fontsize(9.0)
+            tbl.scale(1.0, 1.65)
+
+            for (r_idx, c_idx), cell in tbl.get_celld().items():
+                cell.set_edgecolor("#CBD5E1")
+                cell.set_linewidth(0.8)
+                if r_idx == 0:
+                    cell.set_facecolor("#0B2B52")
+                    cell.set_text_props(color="white", weight="bold", fontsize=9.5)
+                else:
+                    row_obj = rows[r_idx - 1]
+                    is_full = (row_obj["区段编号"] == "full")
+                    bg = "#EFF6FF" if is_full else ("#FFFFFF" if r_idx % 2 == 1 else "#F8FAFC")
+                    cell.set_facecolor(bg)
+                    if c_idx == 0:
+                        seg_col = row_obj.get("_color", "#0B2B52")
+                        cell.set_text_props(color=seg_col, weight="bold", fontsize=9.0)
+                    elif c_idx in (3, 6):
+                        cell.set_text_props(color="#0B2B52", weight="bold", fontsize=9.0)
+                    else:
+                        cell.set_text_props(color="#1E293B", fontsize=8.8)
+
+            t_fig.tight_layout()
+            t_fig.savefig(png_path, dpi=dpi, bbox_inches="tight")
+            saved_paths.append(png_path)
+        except Exception as e:
+            print(f"Notice rendering metrics table PNG: {e}")
+
+        return saved_paths
 
     def open_batch_export_dialog(self):
         if self.data is None:
@@ -5891,14 +6208,14 @@ class BatchExportDialog(tk.Toplevel):
         # =====================================================================
         # 1. Segment Selection (支持全程、单时间段、全部已标记时间段、多区段自由勾选)
         # =====================================================================
-        top_frame = ttk.LabelFrame(self, text="1. 选择时间段 (Time Segment Range — 支持单区段 / 全部已标记时间区段批量导出)", padding=(10, 6))
+        top_frame = ttk.LabelFrame(self, text="1. 选择时间段 (Time Segment Range — 全程图自动用颜色标注各区段；单区段自动按聚焦样式导出)", padding=(10, 6))
         top_frame.pack(fill=tk.X, padx=10, pady=(8, 4))
 
         row_seg_top = ttk.Frame(top_frame)
         row_seg_top.pack(fill=tk.X)
 
-        self.opt_full = "全程全部历元 (Full Dataset)"
-        self.opt_all_segs = f"⚡ 全部已标记时间区段 — 批量逐段导出 (All {n_segs} Segments)"
+        self.opt_full = "全程全部历元 (Full Dataset — 图上自动以彩色色带标出所有区段)"
+        self.opt_all_segs = f"⚡ 全部已标记时间区段 — 批量逐段聚焦导出 (All {n_segs} Segments)"
         self.opt_full_plus_all = f"⚡ 全程全部历元 + 全部已标记时间区段 (Full + All {n_segs} Segments)"
         self.opt_custom_segs = "☑️ 自定义多选下方时间区段 (Custom Checked Segments)"
 
@@ -5910,14 +6227,14 @@ class BatchExportDialog(tk.Toplevel):
             for seg in self.app.segments:
                 self.seg_options.append(f"{seg['name']}: {self.app._epoch_datetime_label(seg['start'])} — {self.app._epoch_datetime_label(seg['end'])} CST")
 
-        # Default selection: if segments exist, check if user highlighted one in segment_box, else default to All Segments
+        # Default selection: if segments exist, default to Full + All Segments so user gets both full overview (with colored bands) and each focused segment
         init_seg_val = self.opt_full
         if n_segs > 0:
             sel_s = self.app.segment_box.curselection() if hasattr(self.app, "segment_box") else ()
             if sel_s and 0 <= sel_s[0] < n_segs:
                 init_seg_val = self.seg_options[4 + sel_s[0]]
             else:
-                init_seg_val = self.opt_all_segs
+                init_seg_val = self.opt_full_plus_all
 
         self.seg_var = tk.StringVar(value=init_seg_val)
         ttk.Label(row_seg_top, text="时间区段:").pack(side=tk.LEFT, padx=(0, 6))
@@ -5960,7 +6277,7 @@ class BatchExportDialog(tk.Toplevel):
             sub_opt_row.pack(fill=tk.X, pady=(2, 0))
             ttk.Checkbutton(
                 sub_opt_row,
-                text="多时间区段导出时，自动为每个时间区段创建独立子文件夹 (Segment_01, Segment_02...) 并生成区段精度对比汇总表 (.csv)",
+                text="多时间区段导出时，自动为每个时间区段创建独立子文件夹 (seg01, seg02...) 并生成独立定量统计汇总表 (.csv / .md / .png)",
                 variable=self.var_seg_subfolder
             ).pack(side=tk.LEFT)
 
@@ -6074,8 +6391,12 @@ class BatchExportDialog(tk.Toplevel):
         opt_grid = ttk.Frame(opt_frame)
         opt_grid.pack(fill=tk.X)
 
-        self.var_hud = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_grid, text="在图角绘制学术量化指标 HUD 卡片 (FIX率、RMS 3D、CEP50/95、平均卫星数)", variable=self.var_hud).grid(row=0, column=0, sticky="w", padx=4, pady=1)
+        self.var_standalone_table = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            opt_grid,
+            text="单独生成量化指标统计汇总表格 (.csv + .md + 高清三线表 .png，导出的图面仅保留清爽图例)",
+            variable=self.var_standalone_table
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=1)
 
         self.var_dpi300 = tk.BooleanVar(value=True)
         ttk.Checkbutton(opt_grid, text="学术汇报/论文级高清输出 (300 DPI, 自动优化线条与字号清晰度)", variable=self.var_dpi300).grid(row=0, column=1, sticky="w", padx=12, pady=1)
@@ -6226,7 +6547,6 @@ class BatchExportDialog(tk.Toplevel):
             return
         modes = list(self.app.layout_profiles[p_name].get("modes", []))
         target_set = set(modes) | {"Custom Analysis"}
-        # Also sync app's custom_panels to this profile so if "Custom Analysis" composite is exported, it matches this profile!
         preset = self.app.layout_profiles[p_name].get("preset", "Auto Grid (自适应等分)")
         self.app.custom_preset.set(preset)
         self.app.custom_modes = list(modes)
@@ -6243,7 +6563,6 @@ class BatchExportDialog(tk.Toplevel):
         sel = self.export_profile_var.get()
         if sel not in self.preset_map:
             return
-        # Check if it's a user-saved profile so we can also sync custom_panels
         for p_name, p_data in self.app.layout_profiles.items():
             modes = list(p_data.get("modes", []))
             if sel == f"⭐ [保存方案] {p_name} ({len(modes)}图)":
@@ -6280,7 +6599,6 @@ class BatchExportDialog(tk.Toplevel):
         self.status_label.configure(text=f"已勾选当前画面正在显示的 {len(active_modes)} 项图表。")
 
     def _select_recommended(self):
-        # If user has an active saved profile, offer recommended 6 or their active profile
         rec = {"Dashboard", "Gnd Trk", "ENU Position", "ENU Error", "AR Ratio", "Satellites"}
         for k, v in self.chk_vars.items():
             v.set(k in rec)
@@ -6329,7 +6647,7 @@ class BatchExportDialog(tk.Toplevel):
             self.out_dir_var.set(d)
 
     def _collect_export_targets(self):
-        """Return list of (seg_slug, seg_title, pos_sub, sat_sub, t_lo, t_hi, seg_list_for_kml) to export."""
+        """Return list of (seg_slug, seg_title, pos_sub, sat_sub, t_lo, t_hi, seg_list_for_kml, focus_seg_idx, seg_color) to export."""
         full_pos = self.app.data["pos"]
         targets = []
         n_segs = len(self.app.segments)
@@ -6342,11 +6660,12 @@ class BatchExportDialog(tk.Toplevel):
                 self.app.data["sat"],
                 float(full_pos.tow.iloc[0]),
                 float(full_pos.tow.iloc[-1]),
-                self.app.segments
+                self.app.segments,
+                None,
+                "#0B2B52",
             ))
             return targets
 
-        # Sync from checkboxes (which are always kept in sync with combobox)
         if self.seg_chk_full.get():
             targets.append((
                 "full",
@@ -6355,7 +6674,9 @@ class BatchExportDialog(tk.Toplevel):
                 self.app.data["sat"],
                 float(full_pos.tow.iloc[0]),
                 float(full_pos.tow.iloc[-1]),
-                self.app.segments
+                self.app.segments,
+                None,
+                "#0B2B52",
             ))
 
         for idx, bv in enumerate(self.seg_chk_vars):
@@ -6369,6 +6690,14 @@ class BatchExportDialog(tk.Toplevel):
                 sat_sub = self.app._segment_sat_records(t0, t1)
                 t_lo = float(pos_sub.tow.iloc[0])
                 t_hi = float(pos_sub.tow.iloc[-1])
+                seg_color = seg.get("color") or self.app.segment_palette[idx % len(self.app.segment_palette)]
+                local_kml_seg = [{
+                    "start": 0,
+                    "end": len(pos_sub) - 1,
+                    "name": seg["name"],
+                    "color": seg_color,
+                    "reason": seg.get("reason", "标记聚焦区段"),
+                }]
                 targets.append((
                     f"seg{idx+1:02d}",
                     seg["name"],
@@ -6376,14 +6705,16 @@ class BatchExportDialog(tk.Toplevel):
                     sat_sub,
                     t_lo,
                     t_hi,
-                    [seg]
+                    local_kml_seg,
+                    idx,
+                    seg_color,
                 ))
         return targets
 
     def _do_export(self):
         selected_modes = [m for m, v in self.chk_vars.items() if v.get()]
-        if not selected_modes and not self.var_crop_pos.get() and not self.var_kml.get() and not self.var_geojson.get():
-            messagebox.showwarning("提示", "请至少勾选一个要导出的子图或数据文件选项。", parent=self)
+        if not selected_modes and not self.var_crop_pos.get() and not self.var_kml.get() and not self.var_geojson.get() and not self.var_standalone_table.get():
+            messagebox.showwarning("提示", "请至少勾选一个要导出的子图、表格或数据文件选项。", parent=self)
             return
 
         targets = self._collect_export_targets()
@@ -6402,7 +6733,7 @@ class BatchExportDialog(tk.Toplevel):
             + (1 if self.var_kml.get() else 0)
             + (1 if self.var_geojson.get() else 0)
         )
-        total_tasks = max(1, len(targets) * per_target_steps)
+        total_tasks = max(1, len(targets) * per_target_steps + (1 if self.var_standalone_table.get() else 0))
 
         self.btn_export.configure(state="disabled")
         self.progress["maximum"] = total_tasks
@@ -6412,23 +6743,30 @@ class BatchExportDialog(tk.Toplevel):
         dpi = 300 if self.var_dpi300.get() else 180
         truth_df_full = self.app._get_ground_truth_df()
 
-        for seg_slug, seg_title, pos_sub, sat_sub, t_lo, t_hi, seg_kml_list in targets:
+        # Always include Full Dataset reference row at the top of the standalone summary table
+        full_pos_all = self.app.data["pos"]
+        full_sat_all = self.app.data.get("sat")
+        has_full_in_targets = any(t[0] == "full" for t in targets)
+        if not has_full_in_targets and not full_pos_all.empty:
+            summary_rows.append(
+                self.app._compute_rich_segment_row("full", "全程全部历元 (Full)", full_pos_all, full_sat_all, "#0B2B52")
+            )
+
+        for seg_slug, seg_title, pos_sub, sat_sub, t_lo, t_hi, seg_kml_list, focus_seg_idx, seg_color in targets:
             target_dir = (out_dir / f"{base_name}_{seg_slug}") if use_subfolders else out_dir
             target_dir.mkdir(parents=True, exist_ok=True)
 
             metrics = diag.compute_segment_metrics(pos_sub, sat_sub)
-            summary_rows.append({
-                "segment_id": seg_slug,
-                "segment_name": seg_title,
-                "epochs": len(pos_sub),
-                "duration_s": round(float(pos_sub.time.iloc[-1] - pos_sub.time.iloc[0]), 2) if len(pos_sub) > 1 else 0.0,
-                "fix_rate_pct": round(float(metrics.get("fix_rate", 0.0)), 2),
-                "rms_2d_m": round(float(metrics.get("rms_2d", np.nan)), 4) if pd.notna(metrics.get("rms_2d", np.nan)) else "",
-                "rms_3d_m": round(float(metrics.get("rms_3d", np.nan)), 4) if pd.notna(metrics.get("rms_3d", np.nan)) else "",
-                "cep50_m": round(float(metrics.get("cep50", np.nan)), 4) if pd.notna(metrics.get("cep50", np.nan)) else "",
-                "cep95_m": round(float(metrics.get("cep95", np.nan)), 4) if pd.notna(metrics.get("cep95", np.nan)) else "",
-                "mean_sats": round(float(metrics.get("mean_sats", 0.0)), 1),
-            })
+            row_dict = self.app._compute_rich_segment_row(seg_slug, seg_title, pos_sub, sat_sub, seg_color)
+            summary_rows.append(row_dict)
+
+            if use_subfolders and self.var_standalone_table.get():
+                try:
+                    sub_tbl_files = self.app.export_standalone_metrics_table([row_dict], target_dir, f"{base_name}_{seg_slug}", dpi=dpi)
+                    for tf in sub_tbl_files:
+                        exported_files.append(str(tf.relative_to(out_dir)))
+                except Exception as e:
+                    print(f"Notice saving subfolder table ({seg_slug}): {e}")
 
             if self.var_crop_pos.get() and self.app.pos_path and self.app.pos_path.exists():
                 self.status_label.configure(text=f"[{seg_title}] 正在导出裁剪版 .pos 解算文件...")
@@ -6448,14 +6786,18 @@ class BatchExportDialog(tk.Toplevel):
                 self.update_idletasks()
                 out_kml_file = target_dir / f"{base_name}_{seg_slug}_3d.kml"
                 try:
-                    mt.export_kml_3d(pos_sub, out_kml_file, segments=seg_kml_list, pos_name=f"{base_name}_{seg_slug}", ground_truth=pos_sub if self.app.data.get("has_truth") else truth_df_full)
+                    mt.export_kml_3d(pos_sub, out_kml_file, segments=seg_kml_list, pos_name=f"{base_name}_{seg_slug}")
                     exported_files.append(str(out_kml_file.relative_to(out_dir)))
-                    if self.app.data.get("has_truth") or truth_df_full is not None:
-                        truth_kml_file = target_dir / f"{base_name}_{seg_slug}_truth.kml"
-                        gt_slice = pos_sub if self.app.data.get("has_truth") else truth_df_full
-                        if gt_slice is not None and not gt_slice.empty:
-                            mt.export_ground_truth_kml(gt_slice, truth_kml_file, name=f"{base_name}_{seg_slug}_Truth")
-                            exported_files.append(str(truth_kml_file.relative_to(out_dir)))
+                    if truth_df_full is not None and not truth_df_full.empty:
+                        if seg_slug == "full":
+                            gt_slice = truth_df_full
+                        else:
+                            gt_slice = truth_df_full[(truth_df_full.tow >= t_lo - 2.0) & (truth_df_full.tow <= t_hi + 2.0)].copy()
+                            if gt_slice.empty:
+                                gt_slice = truth_df_full
+                        truth_kml_file = target_dir / f"{base_name}_{seg_slug}_truth_3d.kml"
+                        mt.export_truth_kml_3d(gt_slice, truth_kml_file, truth_name=f"{base_name}_{seg_slug} (Ground Truth Reference)")
+                        exported_files.append(str(truth_kml_file.relative_to(out_dir)))
                 except Exception as e:
                     print(f"Error exporting .kml ({seg_slug}): {e}")
                 current_step += 1
@@ -6483,7 +6825,11 @@ class BatchExportDialog(tk.Toplevel):
                 out_img = target_dir / f"{base_name}_{seg_slug}_{slug}.png"
                 try:
                     fig = plt.Figure(facecolor="white")
-                    self.app.export_render_mode(fig, mode, pos_sub, sat_sub, metrics, with_hud=self.var_hud.get())
+                    self.app.export_render_mode(
+                        fig, mode, pos_sub, sat_sub, metrics,
+                        with_hud=False,
+                        focus_seg_idx=focus_seg_idx
+                    )
                     fig.savefig(out_img, dpi=dpi, bbox_inches="tight")
                     exported_files.append(str(out_img.relative_to(out_dir)))
                 except Exception as e:
@@ -6492,13 +6838,18 @@ class BatchExportDialog(tk.Toplevel):
                 self.progress["value"] = current_step
                 self.update_idletasks()
 
-        if len(summary_rows) > 1:
+        if self.var_standalone_table.get() and summary_rows:
+            self.status_label.configure(text="正在生成独立定量指标统计汇总表格 (.csv / .md / .png)...")
+            self.update_idletasks()
             try:
-                summary_csv = out_dir / f"{base_name}_segments_summary_metrics.csv"
-                pd.DataFrame(summary_rows).to_csv(summary_csv, index=False, encoding="utf-8-sig")
-                exported_files.append(summary_csv.name)
+                tbl_files = self.app.export_standalone_metrics_table(summary_rows, out_dir, base_name, dpi=dpi)
+                for tf in tbl_files:
+                    exported_files.append(str(tf.relative_to(out_dir)))
             except Exception as e:
-                print(f"Error saving summary csv: {e}")
+                print(f"Error saving standalone metrics table: {e}")
+            current_step += 1
+            self.progress["value"] = current_step
+            self.update_idletasks()
 
         self.status_label.configure(text=f"导出完成！共完成 {len(targets)} 个时间区段，生成 {len(exported_files)} 个文件。")
         self.btn_export.configure(state="normal")
@@ -6507,6 +6858,7 @@ class BatchExportDialog(tk.Toplevel):
             f"批量导出成功完成！\n\n"
             f"• 导出时间区段数：{len(targets)} 个\n"
             f"• 生成文件总数：{len(exported_files)} 个\n"
+            f"• 独立汇总表格：{base_name}_定量指标统计汇总表 (.csv / .md / .png)\n"
             f"• 存储目录：{out_dir}\n\n"
             f"是否立即在文件管理器中打开该目录？"
         )

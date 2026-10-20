@@ -72,5 +72,45 @@
       "ENU Error",
       "Covariance"
     ]
+  },
+  "RTK完整分析方案 8": {
+    "preset": "Auto Grid (自适应等分)",
+    "modes": [
+      "Satellites",
+      "Residual Triad",
+      "Trajectory Error Heatmap",
+      "Directional DOP",
+      "El vs SNR & Resp",
+      "ENU Error",
+      "Satellite Visibility Gantt",
+      "AR Ratio",
+      "DOP",
+      "Skyplot",
+      "Residuals",
+      "Multipath Proxy",
+      "Per-PRN Residuals",
+      "Covariance",
+      "Body-Frame Error"
+    ]
+  },
+  "ppt方案 9": {
+    "preset": "Auto Grid (自适应等分)",
+    "modes": [
+      "Satellites",
+      "Residual Triad",
+      "Trajectory Error Heatmap",
+      "DOP",
+      "Satellite Visibility Gantt",
+      "ENU Error",
+      "El vs SNR & Resp",
+      "AR Ratio",
+      "Directional DOP",
+      "Skyplot",
+      "Residuals",
+      "Multipath Proxy",
+      "Per-PRN Residuals",
+      "Covariance",
+      "Body-Frame Error"
+    ]
   }
 }

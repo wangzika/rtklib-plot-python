@@ -1,0 +1,173 @@
+[
+  {
+    "start": 15,
+    "end": 95,
+    "name": "伪距残差粗差: Max 3.86m (持续8.0s)",
+    "color": "#C00000",
+    "cause": "",
+    "tow_start": 273376.5,
+    "tow_end": 273384.5
+  },
+  {
+    "start": 580,
+    "end": 730,
+    "name": "伪距残差粗差: Max 5.58m (持续15.0s)",
+    "color": "#D17B0F",
+    "cause": "",
+    "tow_start": 273433.0,
+    "tow_end": 273448.0
+  },
+  {
+    "start": 1999,
+    "end": 2049,
+    "name": "伪距残差粗差: Max 3.68m (持续5.0s)",
+    "color": "#B23A48",
+    "cause": "",
+    "tow_start": 273576.5,
+    "tow_end": 273581.5
+  },
+  {
+    "start": 2124,
+    "end": 2349,
+    "name": "伪距残差粗差: Max 27.77m (持续22.5s)",
+    "color": "#AE5A9D",
+    "cause": "",
+    "tow_start": 273589.0,
+    "tow_end": 273611.5
+  },
+  {
+    "start": 2399,
+    "end": 2844,
+    "name": "伪距残差粗差: Max 11.11m (持续44.5s)",
+    "color": "#0070C0",
+    "cause": "",
+    "tow_start": 273616.5,
+    "tow_end": 273661.0
+  },
+  {
+    "start": 3005,
+    "end": 3145,
+    "name": "伪距残差粗差: Max 26.25m (持续14.0s)",
+    "color": "#7B61A8",
+    "cause": "",
+    "tow_start": 273678.0,
+    "tow_end": 273692.0
+  },
+  {
+    "start": 3715,
+    "end": 5110,
+    "name": "伪距残差粗差: Max 22.02m (持续140.5s)",
+    "color": "#C00000",
+    "cause": "",
+    "tow_start": 273749.0,
+    "tow_end": 273889.5
+  },
+  {
+    "start": 5190,
+    "end": 5435,
+    "name": "伪距残差粗差: Max 7.97m (持续24.5s)",
+    "color": "#D17B0F",
+    "cause": "",
+    "tow_start": 273897.5,
+    "tow_end": 273922.0
+  },
+  {
+    "start": 5753,
+    "end": 5828,
+    "name": "伪距残差粗差: Max 12.33m (持续7.5s)",
+    "color": "#B23A48",
+    "cause": "",
+    "tow_start": 273958.5,
+    "tow_end": 273966.0
+  },
+  {
+    "start": 5854,
+    "end": 5874,
+    "name": "伪距残差粗差: Max 6.58m (持续2.0s)",
+    "color": "#AE5A9D",
+    "cause": "",
+    "tow_start": 273972.0,
+    "tow_end": 273974.0
+  },
+  {
+    "start": 6227,
+    "end": 7951,
+    "name": "伪距残差粗差: Max 29.81m (持续173.0s)",
+    "color": "#0070C0",
+    "cause": "",
+    "tow_start": 274009.5,
+    "tow_end": 274182.5
+  },
+  {
+    "start": 8001,
+    "end": 8031,
+    "name": "伪距残差粗差: Max 5.92m (持续5.5s)",
+    "color": "#7B61A8",
+    "cause": "",
+    "tow_start": 274187.5,
+    "tow_end": 274193.0
+  },
+  {
+    "start": 8356,
+    "end": 9200,
+    "name": "伪距残差粗差: Max 28.60m (持续87.0s)",
+    "color": "#C00000",
+    "cause": "",
+    "tow_start": 274228.5,
+    "tow_end": 274315.5
+  },
+  {
+    "start": 9270,
+    "end": 9300,
+    "name": "伪距残差粗差: Max 10.31m (持续3.0s)",
+    "color": "#D17B0F",
+    "cause": "",
+    "tow_start": 274322.5,
+    "tow_end": 274325.5
+  },
+  {
+    "start": 9425,
+    "end": 9460,
+    "name": "伪距残差粗差: Max 11.13m (持续3.5s)",
+    "color": "#B23A48",
+    "cause": "",
+    "tow_start": 274338.0,
+    "tow_end": 274341.5
+  },
+  {
+    "start": 9770,
+    "end": 9825,
+    "name": "伪距残差粗差: Max 28.68m (持续5.5s)",
+    "color": "#AE5A9D",
+    "cause": "",
+    "tow_start": 274372.5,
+    "tow_end": 274378.0
+  },
+  {
+    "start": 10405,
+    "end": 10425,
+    "name": "伪距残差粗差: Max 3.38m (持续2.0s)",
+    "color": "#0070C0",
+    "cause": "",
+    "tow_start": 274437.0,
+    "tow_end": 274439.0
+  },
+  {
+    "start": 11249,
+    "end": 11709,
+    "name": "伪距残差粗差: Max 5.96m (持续46.0s)",
+    "color": "#7B61A8",
+    "cause": "",
+    "tow_start": 274525.0,
+    "tow_end": 274571.0
+  },
+  {
+    "start": 12089,
+    "end": 12129,
+    "name": "伪距残差粗差: Max 3.19m (持续4.0s)",
+    "color": "#C00000",
+    "cause": "",
+    "tow_start": 274609.0,
+    "tow_end": 274613.0
+  }
+]

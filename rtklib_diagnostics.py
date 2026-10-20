@@ -31,9 +31,11 @@ EXPORT_DPI = 180
 plt.rcParams.update({"font.sans-serif": ["Microsoft YaHei", "SimHei", "DejaVu Sans"],
                      "axes.unicode_minus": False, "figure.dpi": 130,
                      "savefig.dpi": 180, "font.size": 9})
-COLORS = {"E": "#2878B5", "N": "#E07A2D", "U": "#36965A",
-          "GPS": "#2878B5", "GLONASS": "#E07A2D", "Galileo": "#36965A",
-          "BeiDou": "#A34FA3", "QZSS": "#D3A11E", "SBAS": "#777777"}
+COLORS = {
+    "E": "#FF6D00", "N": "#00A843", "U": "#111111",
+    "GPS": "#FF6D00", "GLONASS": "#00A843", "Galileo": "#111111",
+    "BeiDou": "#E5002B", "QZSS": "#757575", "SBAS": "#0066FF",
+}
 
 
 def _geodetic_to_ecef(lat_deg: float | np.ndarray, lon_deg: float | np.ndarray, h: float | np.ndarray):

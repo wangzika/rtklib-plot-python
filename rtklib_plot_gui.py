@@ -44,6 +44,31 @@ def insert_time_gaps(times, *arrays, max_gap_factor=2.5, min_gap_s=0.25):
 
 Q_LABELS = {1: "FIX", 2: "FLOAT", 3: "SBAS", 4: "DGPS", 5: "SINGLE", 6: "PPP"}
 Q_COLORS = {1: "#07851d", 2: "#dc8a12", 3: "#5b83c4", 4: "#9b59b6", 5: "#777777", 6: "#17a2a4"}
+# 默认高对比鲜艳多线配色：橙、绿、黑、红、灰、蓝（后续扩展亮紫、亮青）
+VIVID_LINE_PALETTE = [
+    "#FF6D00",  # 1. 鲜亮橙 (Vivid Orange)
+    "#00A843",  # 2. 鲜亮绿 (Vivid Green)
+    "#111111",  # 3. 纯黑 (Pure Black)
+    "#E5002B",  # 4. 鲜亮红 (Vivid Red)
+    "#757575",  # 5. 中深灰 (Slate Gray)
+    "#0066FF",  # 6. 鲜亮蓝 (Vivid Blue)
+    "#9D00FF",  # 7. 鲜亮紫 (Vivid Purple)
+    "#00B4D8",  # 8. 鲜亮青 (Vivid Cyan)
+]
+LINE_COLOR_OPTIONS = [
+    "Default Vivid (默认: 橙/绿/黑/红/灰/蓝)",
+    "Warm-Cool (蓝/红/绿/橙/黑/紫)",
+    "Publication (黑/红/蓝/绿/橙/灰)",
+    "Orange (鲜亮橙 #FF6D00)",
+    "Green (鲜亮绿 #00A843)",
+    "Black (纯黑 #111111)",
+    "Red (鲜亮红 #E5002B)",
+    "Gray (中深灰 #757575)",
+    "Blue (鲜亮蓝 #0066FF)",
+    "Purple (鲜亮紫 #9D00FF)",
+    "Cyan (鲜亮青 #00B4D8)",
+    "Custom... (自定义颜色 🎨)",
+]
 MODES = [
     "Gnd Trk", "Trajectory Error Heatmap", "3D Ground Track", "ENU Position", "Height", "ENU Error", "Solution Status",
     "AR Ratio", "Differential Age", "Satellites", "DOP", "Directional DOP",
@@ -231,7 +256,7 @@ class RTKPlotApp:
         self.dashboard_modes_default = ["Gnd Trk", "Position Error", "Solution Status", "AR Ratio", "Satellites", "Elevation vs C/N0"]
         self.dashboard_modes = list(self.dashboard_modes_default)
         self.selected_dashboard_index = 0; self.focused_dashboard_subplot = None
-        self.multi_solutions = []; self.multi_compare_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#d62728", "#17becf"]
+        self.multi_solutions = []; self.multi_compare_colors = list(VIVID_LINE_PALETTE[:6])
         self.selected_compare_subplot = 0; self.focused_compare_subplot = None
         self.time_cursors=[];self.sky_current=None;self.sky_labels=[];self.sky_plots=[];self.custom_modes=[];self.custom_panels=[];self.selected_custom_panel=0;self.focused_custom_panel=None;self.visible_panel_indices=[];self._drag_plot_name=None
         self.custom_page=0;self.custom_page_size=6
@@ -243,6 +268,8 @@ class RTKPlotApp:
         self._shift_drag_start=None;self._shift_drag_patch=None;self._shift_drag_ax=None
         self.line_scope=tk.StringVar(value="All Subplots")
         self.line_style=tk.StringVar(value="Solid (―)")
+        self.line_color=tk.StringVar(value=LINE_COLOR_OPTIONS[0])
+        self.custom_picked_color="#FF6D00"
         self.line_width=tk.DoubleVar(value=1.2)
         self.marker_style=tk.StringVar(value="None")
         self.marker_size=tk.DoubleVar(value=3.0)
@@ -728,6 +755,13 @@ class RTKPlotApp:
         c_ls = ttk.Combobox(r_s2, textvariable=self.line_style, values=["Solid (―)", "Dashed (---)", "Dotted (···)", "Dash-Dot (-·-)", "Scatter Only", "Line + Marker"], state="readonly", width=13)
         c_ls.pack(side=tk.RIGHT, fill=tk.X, expand=True); c_ls.bind("<<ComboboxSelected>>", lambda _e: self._on_style_changed())
 
+        r_sc = ttk.Frame(card3_content); r_sc.pack(fill=tk.X, pady=1)
+        ttk.Label(r_sc, text="Color:").pack(side=tk.LEFT)
+        self.color_swatch_btn = tk.Button(r_sc, text="🎨", width=2, relief=tk.SOLID, bd=1, bg="#FF6D00", fg="white", font=("Segoe UI", 8), command=self._pick_custom_line_color)
+        self.color_swatch_btn.pack(side=tk.RIGHT, padx=(2, 0))
+        c_col = ttk.Combobox(r_sc, textvariable=self.line_color, values=LINE_COLOR_OPTIONS, state="readonly", width=11)
+        c_col.pack(side=tk.RIGHT, fill=tk.X, expand=True); c_col.bind("<<ComboboxSelected>>", self._on_color_combo_changed)
+
         r_s3 = ttk.Frame(card3_content); r_s3.pack(fill=tk.X, pady=1)
         ttk.Label(r_s3, text="Width:").pack(side=tk.LEFT)
         sp_w = ttk.Spinbox(r_s3, from_=0.5, to=5.0, increment=0.25, textvariable=self.line_width, width=4, command=self._on_style_changed)
@@ -786,6 +820,8 @@ class RTKPlotApp:
         self.canvas.mpl_connect("button_release_event",self.on_mouse_up)
         self.canvas.mpl_connect("motion_notify_event",self.on_mouse_move)
         self.toolbar=NavigationToolbar2Tk(self.canvas,self.plot_frame,pack_toolbar=False); self.toolbar.update(); self.toolbar.pack(side=tk.BOTTOM,fill=tk.X)
+        self._orig_fig_savefig = self.fig.savefig
+        self.fig.savefig = self._savefig_without_dynamic_overlays
 
     def _build_status(self):
         self.status_bar_frame = ttk.Frame(self.root, relief=tk.SUNKEN, padding=(4, 2))
@@ -1966,42 +2002,47 @@ class RTKPlotApp:
         elif mode=="Top Outlier Satellites":self._draw_top_outliers(ax)
         elif mode=="Directional DOP":
             dop_df = diag.compute_directional_dop(self.data)
+            cols = self._get_mode_colors("Directional DOP")
+            kw = self._get_line_kwargs("Directional DOP", default_ls="-", default_lw=1.1)
             if not dop_df.empty and len(self.plot_axes) >= 2:
                 sec_cols = [c for c in dop_df.columns if c.startswith("sector_")]
                 if sec_cols:
                     sec_labels = ["北(N)", "东北(NE)", "东(E)", "东南(SE)", "南(S)", "西南(SW)", "西(W)", "西北(NW)"]
-                    sec_colors = ["#2878B5", "#00b4d8", "#36965A", "#8ac926", "#ffca3a", "#ff924c", "#ff595e", "#6a4c93"]
-                    self.plot_axes[0].stackplot(dop_df.time, *[dop_df[c] for c in sec_cols], labels=sec_labels, colors=sec_colors, alpha=0.7)
+                    sec_colors = ["#FF6D00", "#00A843", "#111111", "#E5002B", "#757575", "#0066FF", "#9D00FF", "#00B4D8"]
+                    self.plot_axes[0].stackplot(dop_df.time, *[dop_df[c] for c in sec_cols], labels=sec_labels, colors=sec_colors, alpha=0.75)
                     self.plot_axes[0].set(ylabel="各扇区星数 (颗)", title="8 扇区空间几何覆盖与方向 DOP 精度因子")
-                    self.plot_axes[0].legend(fontsize=7, ncol=4, loc="upper right")
+                    self.plot_axes[0].legend(fontsize=7.5, ncol=4, loc="upper right")
                 else:
-                    self.plot_axes[0].plot(dop_df.time, dop_df.HDOP, color="#2878B5", label="HDOP")
-                    self.plot_axes[0].plot(dop_df.time, dop_df.VDOP, color="#36965A", label="VDOP")
+                    self.plot_axes[0].plot(dop_df.time, dop_df.HDOP, color=cols[0], label="HDOP", **kw)
+                    self.plot_axes[0].plot(dop_df.time, dop_df.VDOP, color=cols[1], label="VDOP", **kw)
                     self.plot_axes[0].set(ylabel="DOP", title="方向 DOP 几何精度因子")
                     self.plot_axes[0].legend(fontsize=8)
-                self.plot_axes[1].plot(dop_df.time, dop_df.EDOP, color="#2878B5", lw=1.1, label="EDOP (东向跨街分量)")
-                self.plot_axes[1].plot(dop_df.time, dop_df.NDOP, color="#E07A2D", lw=1.1, label="NDOP (北向沿街分量)")
-                self.plot_axes[1].plot(dop_df.time, dop_df.VDOP, color="#36965A", lw=1.1, label="VDOP (天向高程分量)")
+                self.plot_axes[1].plot(dop_df.time, dop_df.EDOP, color=cols[0], label="EDOP (东向跨街分量)", **kw)
+                self.plot_axes[1].plot(dop_df.time, dop_df.NDOP, color=cols[1], label="NDOP (北向沿街分量)", **kw)
+                self.plot_axes[1].plot(dop_df.time, dop_df.VDOP, color=cols[2], label="VDOP (天向高程分量)", **kw)
                 self.plot_axes[1].set(xlabel="相对时间 (s)", ylabel="方向 DOP 分量")
+                self.plot_axes[1].legend(fontsize=8, ncol=3, loc="upper right")
                 lim_y = min(float(dop_df[["EDOP", "NDOP", "VDOP"]].quantile(0.99).max()) * 1.5, 30.0)
                 self.plot_axes[1].set_ylim(0, max(5.0, lim_y))
             else:
                 self._draw_directional_dop(ax)
         elif mode=="Body-Frame Error":
+            cols = self._get_mode_colors("Body-Frame Error")
+            kw = self._get_line_kwargs("Body-Frame Error", default_ls="-", default_lw=0.95)
             if self.data.get("has_truth") and "along_err" in p.columns and len(self.plot_axes) >= 3:
                 t_gap, along_gap, cross_gap, vert_gap = insert_time_gaps(p.time, p.along_err, p.cross_err, p.vert_err)
-                self.plot_axes[0].plot(t_gap, along_gap, color="#2878B5", lw=0.8, label="Along-track (沿航向/纵向)")
-                self.plot_axes[0].axhline(0, color="k", lw=0.5, ls=":")
+                self.plot_axes[0].plot(t_gap, along_gap, color=cols[0], label="Along-track (沿航向/纵向)", **kw)
+                self.plot_axes[0].axhline(0, color="#757575", lw=0.6, ls=":")
                 self.plot_axes[0].set(ylabel="沿向误差 (m)", title="车体坐标系误差分解 (Along-track / Cross-track / Vertical)")
-                self.plot_axes[0].legend(fontsize=8)
-                self.plot_axes[1].plot(t_gap, cross_gap, color="#d90429", lw=0.8, label="Cross-track (跨航向/横向)")
-                self.plot_axes[1].axhline(0, color="k", lw=0.5, ls=":")
+                self.plot_axes[0].legend(fontsize=8, loc="upper right")
+                self.plot_axes[1].plot(t_gap, cross_gap, color=cols[1], label="Cross-track (跨航向/横向)", **kw)
+                self.plot_axes[1].axhline(0, color="#757575", lw=0.6, ls=":")
                 self.plot_axes[1].set(ylabel="横向误差 (m)")
-                self.plot_axes[1].legend(fontsize=8)
-                self.plot_axes[2].plot(t_gap, vert_gap, color="#36965A", lw=0.8, label="Vertical (垂直高程/天向)")
-                self.plot_axes[2].axhline(0, color="k", lw=0.5, ls=":")
+                self.plot_axes[1].legend(fontsize=8, loc="upper right")
+                self.plot_axes[2].plot(t_gap, vert_gap, color=cols[2], label="Vertical (垂直高程/天向)", **kw)
+                self.plot_axes[2].axhline(0, color="#757575", lw=0.6, ls=":")
                 self.plot_axes[2].set(xlabel="相对时间 (s)", ylabel="天向误差 (m)")
-                self.plot_axes[2].legend(fontsize=8)
+                self.plot_axes[2].legend(fontsize=8, loc="upper right")
             else:
                 self._draw_body_frame_error(ax, p)
         elif mode in ("Satellite Elevation", "Elevation"):
@@ -2028,11 +2069,97 @@ class RTKPlotApp:
         self._home_limits={id(ax):(ax.get_xlim(),ax.get_ylim()) for ax in self.fig.axes}
         candidates=list(self.time_cursors)+list(self.custom_dynamic_artists)
         candidates.extend(a for a in (self.vehicle_marker,self.vehicle_trail,self.vehicle_label,self.truth_marker,self.error_link) if a is not None)
-        for ax,points,_labels in self.sky_plots:candidates.extend((points,ax.title))
+        for ax,points,labels in self.sky_plots:
+            if points is not None:
+                candidates.append(points)
+            if labels:
+                candidates.extend(labels)
         seen=set()
         for artist in candidates:
-            if id(artist) in seen:continue
+            if artist is None or id(artist) in seen:continue
             seen.add(id(artist));artist.set_animated(True);self.dynamic_artists.append(artist)
+
+    def _savefig_without_dynamic_overlays(self, *args, **kwargs):
+        """Temporarily hide all interactive current-epoch markers/badges/cursors when saving self.fig."""
+        dyn_set = []
+        seen_ids = set()
+        raw_candidates = (
+            list(getattr(self, "dynamic_artists", []))
+            + list(getattr(self, "time_cursors", []))
+            + list(getattr(self, "custom_dynamic_artists", []))
+            + [
+                getattr(self, "vehicle_marker", None),
+                getattr(self, "vehicle_trail", None),
+                getattr(self, "vehicle_label", None),
+                getattr(self, "truth_marker", None),
+                getattr(self, "error_link", None),
+                getattr(self, "vehicle_marker_3d", None),
+                getattr(self, "vehicle_trail_3d", None),
+                getattr(self, "vehicle_label_3d", None),
+                getattr(self, "truth_marker_3d", None),
+                getattr(self, "error_link_3d", None),
+            ]
+        )
+        for _ax, pts, lbls in getattr(self, "sky_plots", []):
+            if pts is not None:
+                raw_candidates.append(pts)
+            if lbls:
+                raw_candidates.extend(lbls)
+
+        for art in raw_candidates:
+            if art is not None and id(art) not in seen_ids:
+                seen_ids.add(id(art))
+                try:
+                    dyn_set.append((art, art.get_visible(), art.get_animated()))
+                    art.set_visible(False)
+                    art.set_animated(False)
+                except Exception:
+                    pass
+
+        saved_sky_titles = []
+        for sky_ax, _pts, _lbls in getattr(self, "sky_plots", []):
+            try:
+                saved_sky_titles.append((sky_ax, sky_ax.get_title()))
+                base_t = getattr(sky_ax, "_base_title", "Satellite Skyplot")
+                sky_ax.set_title(base_t)
+            except Exception:
+                pass
+
+        saved_spines = []
+        for ax in getattr(self, "plot_axes", []):
+            if hasattr(ax, "spines") and hasattr(ax.spines, "values"):
+                for sp in ax.spines.values():
+                    try:
+                        saved_spines.append((sp, sp.get_edgecolor(), sp.get_linewidth()))
+                        sp.set_edgecolor("#94a3b8")
+                        sp.set_linewidth(0.85)
+                    except Exception:
+                        pass
+
+        try:
+            return self._orig_fig_savefig(*args, **kwargs)
+        finally:
+            for sp, ec, lw in saved_spines:
+                try:
+                    sp.set_edgecolor(ec)
+                    sp.set_linewidth(lw)
+                except Exception:
+                    pass
+            for art, vis, anim in dyn_set:
+                try:
+                    art.set_visible(vis)
+                    art.set_animated(anim)
+                except Exception:
+                    pass
+            for sky_ax, old_t in saved_sky_titles:
+                try:
+                    sky_ax.set_title(old_t)
+                except Exception:
+                    pass
+            try:
+                self._blit_dynamic()
+            except Exception:
+                pass
 
     def _schedule_cursor_update(self):
         """Coalesce rapid slider/mouse events so only the newest epoch is drawn."""
@@ -2341,12 +2468,13 @@ class RTKPlotApp:
         cep95 = float(np.quantile(eh, 0.95))
         p50 = float(np.quantile(e3d, 0.5))
         p95 = float(np.quantile(e3d, 0.95))
+        cols = self._get_mode_colors("Error CDF", 2)
         kw_eh = self._get_line_kwargs("Error CDF", default_ls="-", default_lw=1.8)
-        ax.plot(eh, cdf_y, color="#2878B5", label=f"水平误差 (CEP50={cep50:.3f}m, CEP95={cep95:.3f}m)", **kw_eh)
-        ax.plot(e3d, cdf_y, color="#E07A2D", lw=kw_eh.get("lw", 1.8), ls="--", label=f"3D误差 (P50={p50:.3f}m, P95={p95:.3f}m)")
-        ax.axhline(50, color="gray", ls="--", lw=0.8, alpha=0.7, label="50% (中位数 / CEP50)")
-        ax.axhline(68.3, color="green", ls=":", lw=0.8, alpha=0.7, label="68.3% (1-Sigma)")
-        ax.axhline(95, color="red", ls="--", lw=0.8, alpha=0.7, label="95.0% (2DRMS / 2-Sigma)")
+        ax.plot(eh, cdf_y, color=cols[0], label=f"水平误差 (CEP50={cep50:.3f}m, CEP95={cep95:.3f}m)", **kw_eh)
+        ax.plot(e3d, cdf_y, color=cols[1], lw=kw_eh.get("lw", 1.8), ls="--", label=f"3D误差 (P50={p50:.3f}m, P95={p95:.3f}m)")
+        ax.axhline(50, color="#757575", ls="--", lw=0.8, alpha=0.7, label="50% (中位数 / CEP50)")
+        ax.axhline(68.3, color="#00A843", ls=":", lw=0.8, alpha=0.7, label="68.3% (1-Sigma)")
+        ax.axhline(95, color="#E5002B", ls="--", lw=0.8, alpha=0.7, label="95.0% (2DRMS / 2-Sigma)")
         ax.set_xlabel("误差 (m)")
         ax.set_ylabel("累积概率分布 (%)")
         ax.set_title("定位误差累积分布函数 (Empirical CDF)", fontsize=11, weight="bold")
@@ -2360,9 +2488,10 @@ class RTKPlotApp:
             target_ax = axes[0] if isinstance(axes, (list, tuple, np.ndarray)) else axes
             target_ax.text(0.5, 0.5, "需要真值参考轨迹才能绘制误差直方图", ha="center", va="center", transform=target_ax.transAxes, fontsize=10)
             return
+        cols = self._get_mode_colors("Error Histogram", 3)
         if not isinstance(axes, (list, tuple, np.ndarray)) or len(axes) < 3:
             ax = axes[0] if isinstance(axes, (list, tuple, np.ndarray)) else axes
-            for c, col, label in [("de", "#2878B5", "ΔE"), ("dn", "#E07A2D", "ΔN"), ("du", "#36965A", "ΔU")]:
+            for c, col, label in [("de", cols[0], "ΔE"), ("dn", cols[1], "ΔN"), ("du", cols[2], "ΔU")]:
                 vals = p[c].dropna()
                 if vals.empty: continue
                 ax.hist(vals, bins=35, density=True, alpha=0.45, color=col, edgecolor="white", label=f"{label} (RMS={np.sqrt(np.mean(vals**2)):.3f}m)")
@@ -2371,7 +2500,7 @@ class RTKPlotApp:
             ax.legend(fontsize=7); ax.grid(self.grid_on.get(), alpha=0.3)
             return
 
-        specs = [("de", "东向误差 ΔE", "#2878B5"), ("dn", "北向误差 ΔN", "#E07A2D"), ("du", "高程误差 ΔU", "#36965A")]
+        specs = [("de", "东向误差 ΔE", cols[0]), ("dn", "北向误差 ΔN", cols[1]), ("du", "高程误差 ΔU", cols[2])]
         for ax, (c, label, col) in zip(axes, specs):
             vals = p[c].dropna()
             if vals.empty: continue
@@ -2508,15 +2637,17 @@ class RTKPlotApp:
             ax.text(0.5, 0.5, "无有效伪距残差数据 (需 .stat 文件)", ha="center", va="center", transform=ax.transAxes)
             ax.set_title("伪距残差统计三线时序")
             return
+        cols = self._get_mode_colors("Residual Triad", 3)
+        kw = self._get_line_kwargs("Residual Triad", default_ls="-", default_lw=1.15)
         t_gap, max_g, sec_g, rms_g = insert_time_gaps(triad.time, triad.max_resp, triad.sec_resp, triad.rms_resp)
-        ax.plot(t_gap, max_g, color="#d90429", lw=1.1, label="第一大残差 (Max)")
-        ax.plot(t_gap, sec_g, color="#00b4d8", lw=1.0, label="第二大残差 (2nd)")
-        ax.plot(t_gap, rms_g, color="#0B2B52", lw=1.2, ls="--", label="全场RMS")
-        ax.axhline(3.0, color="gray", ls=":", lw=0.85, alpha=0.7, label="粗差门限 3.0m")
+        ax.plot(t_gap, max_g, color=cols[0], label="第一大残差 (Max)", **kw)
+        ax.plot(t_gap, sec_g, color=cols[1], label="第二大残差 (2nd)", **kw)
+        ax.plot(t_gap, rms_g, color=cols[2], lw=kw.get("lw", 1.2), ls="--", label="全场RMS")
+        ax.axhline(3.0, color="#757575", ls=":", lw=0.95, alpha=0.8, label="粗差门限 3.0m")
         if hasattr(self, "_apply_robust_ylim"):
             self._apply_robust_ylim(ax, [triad.max_resp], non_negative=True, min_span=5.0, default_max=15.0)
         ax.set(xlabel="时间 (s)", ylabel="伪距残差 (m)", title="伪距残差统计三线时序 (Max / 2nd Max / RMS)")
-        ax.legend(fontsize=7.2, loc="upper right", ncol=2, framealpha=0.88, columnspacing=0.8, handletextpad=0.35)
+        ax.legend(fontsize=7.5, loc="upper right", ncol=2, framealpha=0.88, columnspacing=0.8, handletextpad=0.35)
         ax.grid(self.grid_on.get(), alpha=0.3)
 
     def _draw_el_snr_resp(self, ax):
@@ -2532,9 +2663,13 @@ class RTKPlotApp:
             sc = ax.scatter(s1_sub.el, s1_sub.snr, c=resp_clip, cmap="turbo", s=14, vmin=0, vmax=15.0, alpha=0.88, edgecolors="none")
             fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
             if fig_target is not None:
-                cb = fig_target.colorbar(sc, ax=ax, pad=0.02, fraction=0.045)
-                cb.set_label("伪距残差 |resp| (m)", fontsize=8.5, weight="bold")
-                cb.ax.tick_params(labelsize=8)
+                has_right_neighbor = (ax.get_position().x1 < 0.82)
+                cb = fig_target.colorbar(sc, ax=ax, pad=0.012 if has_right_neighbor else 0.02, fraction=0.036 if has_right_neighbor else 0.045)
+                if has_right_neighbor:
+                    cb.ax.set_title("|resp|(m)", fontsize=7.5, weight="bold", pad=3)
+                else:
+                    cb.set_label("伪距残差 |resp| (m)", fontsize=8.5, weight="bold")
+                cb.ax.tick_params(labelsize=7.5 if has_right_neighbor else 8)
             el_grid = np.linspace(5, 90, 100)
             ax.plot(el_grid, 28.0 + 22.0 * np.sin(np.deg2rad(el_grid)), "k--", lw=1.5, label="标称信噪比包络")
             ax.legend(loc="lower right", fontsize=8)
@@ -2616,23 +2751,25 @@ class RTKPlotApp:
             ax.text(0.5, 0.5, "无法计算方向 DOP (需 .stat 卫星仰角方位角)", ha="center", va="center", transform=ax.transAxes)
             ax.set_title("方向 DOP 几何精度因子")
             return
+        cols = self._get_mode_colors("Directional DOP", 5)
+        kw = self._get_line_kwargs("Directional DOP", default_ls="-", default_lw=1.15)
         hdop_col = dop_df.HDOP if "HDOP" in dop_df.columns else np.full(len(dop_df), np.nan)
         pdop_col = dop_df.PDOP if "PDOP" in dop_df.columns else np.full(len(dop_df), np.nan)
         t_gap, edop_g, ndop_g, vdop_g, pdop_g, hdop_g = insert_time_gaps(
             dop_df.time, dop_df.EDOP, dop_df.NDOP, dop_df.VDOP, pdop_col, hdop_col
         )
-        ax.plot(t_gap, edop_g, color="#2878B5", lw=1.1, label="EDOP (东)")
-        ax.plot(t_gap, ndop_g, color="#E07A2D", lw=1.1, label="NDOP (北)")
-        ax.plot(t_gap, vdop_g, color="#36965A", lw=1.1, label="VDOP (天)")
+        ax.plot(t_gap, edop_g, color=cols[0], label="EDOP (东)", **kw)
+        ax.plot(t_gap, ndop_g, color=cols[1], label="NDOP (北)", **kw)
+        ax.plot(t_gap, vdop_g, color=cols[2], label="VDOP (天)", **kw)
         if "PDOP" in dop_df.columns:
-            ax.plot(t_gap, pdop_g, color="#111111", lw=1.1, ls=":", label="PDOP (空间)")
+            ax.plot(t_gap, pdop_g, color=cols[3], lw=kw.get("lw", 1.1), ls=":", label="PDOP (空间)")
         if "HDOP" in dop_df.columns:
-            ax.plot(t_gap, hdop_g, color="#666666", lw=0.9, ls="--", label="HDOP (水平)")
-        ax.axhline(6.0, color="gray", ls="--", lw=0.85, alpha=0.7, label="门限 6.0")
+            ax.plot(t_gap, hdop_g, color=cols[4], lw=max(0.8, kw.get("lw", 1.1) - 0.15), ls="--", label="HDOP (水平)")
+        ax.axhline(6.0, color="#757575", ls="--", lw=0.95, alpha=0.8, label="门限 6.0")
         ax.set(xlabel="时间 (s)", ylabel="DOP 值", title="方向 DOP 几何精度因子 (EDOP / NDOP / VDOP)")
         lim_y = min(float(dop_df[["EDOP", "NDOP", "VDOP"]].quantile(0.99).max()) * 1.5, 30.0)
         ax.set_ylim(0, max(6.5, lim_y * 1.15))
-        ax.legend(fontsize=7.2, ncol=3, loc="upper right", framealpha=0.88, columnspacing=0.8, handletextpad=0.35)
+        ax.legend(fontsize=7.5, ncol=3, loc="upper right", framealpha=0.88, columnspacing=0.8, handletextpad=0.35)
         ax.grid(self.grid_on.get(), alpha=0.3)
 
     def _draw_clock_bias_isb(self, ax):
@@ -2641,25 +2778,27 @@ class RTKPlotApp:
             ax.text(0.5, 0.5, "无接收机钟差数据 (未在 .stat 中找到 $CLK)", ha="center", va="center", transform=ax.transAxes)
             ax.set_title("接收机钟差漂移与系统间偏差 (Clock Bias & ISB)")
             return
+        cols = self._get_mode_colors("Clock Bias & ISB", 6)
+        kw = self._get_line_kwargs("Clock Bias & ISB", default_ls="-", default_lw=1.15)
         t0 = self.data["pos"].tow.iloc[0]
         clk_t = clk.tow - t0
         has_isb = False
         if "isb_glo" in clk.columns and clk.isb_glo.abs().max() > 0:
-            ax.plot(clk_t, clk.isb_glo, label="ISB GLONASS-GPS", color="#9b59b6", lw=1.0)
+            ax.plot(clk_t, clk.isb_glo, label="ISB GLONASS-GPS", color=cols[0], **kw)
             has_isb = True
         if "isb_gal" in clk.columns and clk.isb_gal.abs().max() > 0:
-            ax.plot(clk_t, clk.isb_gal, label="ISB Galileo-GPS", color="#36965A", lw=1.0)
+            ax.plot(clk_t, clk.isb_gal, label="ISB Galileo-GPS", color=cols[1], **kw)
             has_isb = True
         if "isb_bds" in clk.columns and clk.isb_bds.abs().max() > 0:
-            ax.plot(clk_t, clk.isb_bds, label="ISB BDS-GPS", color="#d90429", lw=1.0)
+            ax.plot(clk_t, clk.isb_bds, label="ISB BDS-GPS", color=cols[3], **kw)
             has_isb = True
         if "isb_qzs" in clk.columns and clk.isb_qzs.abs().max() > 0:
-            ax.plot(clk_t, clk.isb_qzs, label="ISB QZSS-GPS", color="#E07A2D", lw=1.0)
+            ax.plot(clk_t, clk.isb_qzs, label="ISB QZSS-GPS", color=cols[4], **kw)
             has_isb = True
         if "drift" in clk.columns and clk.drift.abs().max() > 0:
-            ax.plot(clk_t, clk.drift, label="钟漂 (ns/s)", color="#2878B5", lw=1.0, ls="--")
+            ax.plot(clk_t, clk.drift, label="钟漂 (ns/s)", color=cols[5], lw=kw.get("lw", 1.1), ls="--")
         elif not has_isb and "clk_gps" in clk.columns:
-            ax.plot(clk_t, clk.clk_gps, label="接收机钟差 (ns)", color="#2878B5", lw=1.0)
+            ax.plot(clk_t, clk.clk_gps, label="接收机钟差 (ns)", color=cols[0], **kw)
         ax.set(xlabel="时间 (s)", ylabel="偏差 / 漂移 (m 或 ns)", title="接收机钟差漂移与系统间偏差 ($CLK)")
         ax.legend(fontsize=8, loc="upper right")
         ax.grid(self.grid_on.get(), alpha=0.3)
@@ -2673,10 +2812,12 @@ class RTKPlotApp:
         if not has_body:
             ax.text(0.5, 0.5, "缺少航向角数据，无法投影至车体坐标系", ha="center", va="center", transform=ax.transAxes)
             return
+        cols = self._get_mode_colors("Body-Frame Error", 3)
+        kw = self._get_line_kwargs("Body-Frame Error", default_ls="-", default_lw=1.1)
         t_gap, along_gap, cross_gap, vert_gap = insert_time_gaps(p.time, p.along_err, p.cross_err, p.vert_err)
-        ax.plot(t_gap, along_gap, label="沿航向误差 (Along-track)", color="#2878B5", lw=0.9)
-        ax.plot(t_gap, cross_gap, label="跨航向误差 (Cross-track)", color="#d90429", lw=0.9)
-        ax.plot(t_gap, vert_gap, label="垂直高程误差 (Vertical)", color="#36965A", lw=0.8, ls="--")
+        ax.plot(t_gap, along_gap, label="沿航向误差 (Along-track)", color=cols[0], **kw)
+        ax.plot(t_gap, cross_gap, label="跨航向误差 (Cross-track)", color=cols[1], **kw)
+        ax.plot(t_gap, vert_gap, label="垂直高程误差 (Vertical)", color=cols[2], lw=max(0.8, kw.get("lw", 1.1) - 0.1), ls="--")
         ax.axhline(0, color="k", lw=0.5, ls=":")
         if hasattr(self, "_apply_robust_ylim"):
             self._apply_robust_ylim(ax, [p.along_err, p.cross_err, p.vert_err], is_symmetric=True, min_span=2.0)
@@ -2685,16 +2826,18 @@ class RTKPlotApp:
         ax.grid(self.grid_on.get(), alpha=0.3)
 
     def _draw_ar_ratio(self, ax, p):
+        cols = self._get_mode_colors("AR Ratio", 2)
+        kw = self._get_line_kwargs("AR Ratio", default_ls="-", default_lw=1.0)
         t_gap, ratio_gap = insert_time_gaps(p.time, p.ratio)
-        ax.plot(t_gap, ratio_gap, color="#1f77b4", lw=0.75, label="AR Ratio (模糊度检验值)")
-        ax.axhline(3.0, color="#d90429", ls="--", lw=1.2, alpha=0.85, label="判定门限 (Threshold = 3.0)")
+        ax.plot(t_gap, ratio_gap, color=cols[0], label="AR Ratio (模糊度检验值)", **kw)
+        ax.axhline(3.0, color="#E5002B", ls="--", lw=1.2, alpha=0.85, label="判定门限 (Threshold = 3.0)")
         if self.data.get("has_truth"):
             eh = p.eh if "eh" in p.columns else np.hypot(p.de, p.dn)
             e3d = p.e3d if "e3d" in p.columns else np.sqrt(p.de**2 + p.dn**2 + p.du**2)
             m_ff = (p.ratio >= 3.0) & ((eh > 1.0) | (e3d > 3.0))
             if m_ff.any():
                 ff_p = p[m_ff]
-                ax.scatter(ff_p.time, ff_p.ratio, marker="^", s=45, color="#d90429",
+                ax.scatter(ff_p.time, ff_p.ratio, marker="^", s=45, color="#E5002B",
                            edgecolors="white", linewidths=0.9, zorder=6,
                            label=f"假固定 (Ratio≥3 且 水平>1m 或 3D>3m, n={len(ff_p)})")
         if hasattr(self, "_apply_robust_ylim"):
@@ -2768,88 +2911,89 @@ class RTKPlotApp:
         cb = self.fig.colorbar(sc, ax=ax3, fraction=0.046, pad=0.04)
         cb.set_label("|Pseudorange Residual| (m, clipped at 15m)", fontsize=9, weight="bold")
 
-        # Setup dynamic satellite artists for 1A, 1B, 1C
-        sc_sky1 = ax1.scatter([], [], s=85, facecolors="none", edgecolors=[], linewidths=2.0, zorder=15)
-        labels_sky1 = [ax1.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
-                                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#dc2626", alpha=0.9, lw=1.1), zorder=16)
-                       for _ in range(35)]
+        if not getattr(self, "_is_exporting", False):
+            # Setup dynamic satellite artists for 1A, 1B, 1C
+            sc_sky1 = ax1.scatter([], [], s=85, facecolors="none", edgecolors=[], linewidths=2.0, zorder=15)
+            labels_sky1 = [ax1.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
+                                    bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#dc2626", alpha=0.9, lw=1.1), zorder=16)
+                           for _ in range(35)]
 
-        sc_sky2 = ax2.scatter([], [], s=85, facecolors="none", edgecolors=[], linewidths=2.0, zorder=15)
-        labels_sky2 = [ax2.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
-                                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#2563eb", alpha=0.9, lw=1.1), zorder=16)
-                       for _ in range(35)]
+            sc_sky2 = ax2.scatter([], [], s=85, facecolors="none", edgecolors=[], linewidths=2.0, zorder=15)
+            labels_sky2 = [ax2.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
+                                    bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#2563eb", alpha=0.9, lw=1.1), zorder=16)
+                           for _ in range(35)]
 
-        sc_snr = ax3.scatter([], [], s=95, facecolors="none", edgecolors=[], linewidths=2.0, zorder=15)
-        labels_snr = [ax3.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
-                               bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#dc2626", alpha=0.9, lw=1.1), zorder=16)
-                      for _ in range(35)]
+            sc_snr = ax3.scatter([], [], s=95, facecolors="none", edgecolors=[], linewidths=2.0, zorder=15)
+            labels_snr = [ax3.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
+                                   bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#dc2626", alpha=0.9, lw=1.1), zorder=16)
+                          for _ in range(35)]
 
-        dyn_artists_3in1 = [sc_sky1] + labels_sky1 + [sc_sky2] + labels_sky2 + [sc_snr] + labels_snr
-        self.custom_dynamic_artists.extend(dyn_artists_3in1)
+            dyn_artists_3in1 = [sc_sky1] + labels_sky1 + [sc_sky2] + labels_sky2 + [sc_snr] + labels_snr
+            self.custom_dynamic_artists.extend(dyn_artists_3in1)
 
-        def update_3in1(i, r, current_sat):
-            cur = current_sat[(current_sat.freq == 1) & (current_sat.snr > 0) & (current_sat.el > 0)].drop_duplicates("prn")
-            if not cur.empty:
-                import matplotlib.pyplot as _plt
-                turbo = _plt.cm.turbo
-                az = cur.az.to_numpy()
-                el = cur.el.to_numpy()
-                snr = cur.snr.to_numpy()
-                prn = cur.prn.to_numpy()
-                th1 = np.deg2rad(az)
-                r1_curr = 90.0 - el
-                sc_sky1.set_offsets(np.c_[th1, r1_curr])
+            def update_3in1(i, r, current_sat):
+                cur = current_sat[(current_sat.freq == 1) & (current_sat.snr > 0) & (current_sat.el > 0)].drop_duplicates("prn")
+                if not cur.empty:
+                    import matplotlib.pyplot as _plt
+                    turbo = _plt.cm.turbo
+                    az = cur.az.to_numpy()
+                    el = cur.el.to_numpy()
+                    snr = cur.snr.to_numpy()
+                    prn = cur.prn.to_numpy()
+                    th1 = np.deg2rad(az)
+                    r1_curr = 90.0 - el
+                    sc_sky1.set_offsets(np.c_[th1, r1_curr])
 
-                hd = float(getattr(r, "heading", 0.0)) if ("heading" in r and np.isfinite(r.heading)) else 0.0
-                az_body = (az - hd) % 360.0
-                th2 = np.deg2rad(az_body)
-                sc_sky2.set_offsets(np.c_[th2, r1_curr])
+                    hd = float(getattr(r, "heading", 0.0)) if ("heading" in r and np.isfinite(r.heading)) else 0.0
+                    az_body = (az - hd) % 360.0
+                    th2 = np.deg2rad(az_body)
+                    sc_sky2.set_offsets(np.c_[th2, r1_curr])
 
-                sc_snr.set_offsets(np.c_[el, snr])
+                    sc_snr.set_offsets(np.c_[el, snr])
 
-                sat_edgecolors = []
-                sat_facecolors = []
-                for k, (_, sat_row) in enumerate(cur.iterrows()):
-                    resp_val = float(sat_row.resp) if ("resp" in sat_row and pd.notna(sat_row.resp)) else 0.0
-                    abs_r = abs(resp_val)
-                    col = turbo(np.clip(abs_r / 15.0, 0.0, 1.0))
-                    sat_edgecolors.append(col)
-                    sat_facecolors.append([col[0], col[1], col[2], 0.22])
+                    sat_edgecolors = []
+                    sat_facecolors = []
+                    for k, (_, sat_row) in enumerate(cur.iterrows()):
+                        resp_val = float(sat_row.resp) if ("resp" in sat_row and pd.notna(sat_row.resp)) else 0.0
+                        abs_r = abs(resp_val)
+                        col = turbo(np.clip(abs_r / 15.0, 0.0, 1.0))
+                        sat_edgecolors.append(col)
+                        sat_facecolors.append([col[0], col[1], col[2], 0.22])
 
-                    if k < 35:
-                        labels_sky1[k].set_position((th1[k], r1_curr[k]))
-                        labels_sky1[k].set_text(prn[k])
-                        labels_sky1[k].get_bbox_patch().set_edgecolor(col)
-                        labels_sky1[k].set_visible(True)
+                        if k < 35:
+                            labels_sky1[k].set_position((th1[k], r1_curr[k]))
+                            labels_sky1[k].set_text(prn[k])
+                            labels_sky1[k].get_bbox_patch().set_edgecolor(col)
+                            labels_sky1[k].set_visible(True)
 
-                        labels_sky2[k].set_position((th2[k], r1_curr[k]))
-                        labels_sky2[k].set_text(prn[k])
-                        labels_sky2[k].get_bbox_patch().set_edgecolor(col)
-                        labels_sky2[k].set_visible(True)
+                            labels_sky2[k].set_position((th2[k], r1_curr[k]))
+                            labels_sky2[k].set_text(prn[k])
+                            labels_sky2[k].get_bbox_patch().set_edgecolor(col)
+                            labels_sky2[k].set_visible(True)
 
-                        labels_snr[k].set_position((el[k] + 0.8, snr[k] + 0.5))
-                        labels_snr[k].set_text(prn[k])
-                        labels_snr[k].get_bbox_patch().set_edgecolor(col)
-                        labels_snr[k].set_visible(True)
+                            labels_snr[k].set_position((el[k] + 0.8, snr[k] + 0.5))
+                            labels_snr[k].set_text(prn[k])
+                            labels_snr[k].get_bbox_patch().set_edgecolor(col)
+                            labels_snr[k].set_visible(True)
 
-                for sc_item in [sc_sky1, sc_sky2, sc_snr]:
-                    sc_item.set_edgecolors(sat_edgecolors)
-                    sc_item.set_facecolors(sat_facecolors)
+                    for sc_item in [sc_sky1, sc_sky2, sc_snr]:
+                        sc_item.set_edgecolors(sat_edgecolors)
+                        sc_item.set_facecolors(sat_facecolors)
 
-                for k in range(len(cur), 35):
-                    labels_sky1[k].set_visible(False)
-                    labels_sky2[k].set_visible(False)
-                    labels_snr[k].set_visible(False)
-            else:
-                sc_sky1.set_offsets(np.empty((0, 2)))
-                sc_sky2.set_offsets(np.empty((0, 2)))
-                sc_snr.set_offsets(np.empty((0, 2)))
-                for k in range(35):
-                    labels_sky1[k].set_visible(False)
-                    labels_sky2[k].set_visible(False)
-                    labels_snr[k].set_visible(False)
+                    for k in range(len(cur), 35):
+                        labels_sky1[k].set_visible(False)
+                        labels_sky2[k].set_visible(False)
+                        labels_snr[k].set_visible(False)
+                else:
+                    sc_sky1.set_offsets(np.empty((0, 2)))
+                    sc_sky2.set_offsets(np.empty((0, 2)))
+                    sc_snr.set_offsets(np.empty((0, 2)))
+                    for k in range(35):
+                        labels_sky1[k].set_visible(False)
+                        labels_sky2[k].set_visible(False)
+                        labels_snr[k].set_visible(False)
 
-        self.custom_updaters.append(update_3in1)
+            self.custom_updaters.append(update_3in1)
 
         self.plot_axes = [ax1, ax2, ax3]
         self.ax = ax1
@@ -2866,6 +3010,7 @@ class RTKPlotApp:
 
         p = self._filtered()
         full = self.data["pos"]
+        is_exp = getattr(self, "_is_exporting", False)
 
         gs_main = GridSpec(1, 2, figure=self.fig, width_ratios=[1.1, 1.4], wspace=0.22)
         gs_left = GridSpecFromSubplotSpec(2, 1, subplot_spec=gs_main[0], hspace=0.45)
@@ -2892,17 +3037,19 @@ class RTKPlotApp:
         ax_sky.set_title('(a) 空间多路径与建筑物遮挡星空图', fontsize=11, weight='bold', pad=10)
         ax_sky._base_title = '(a) 空间多路径与建筑物遮挡星空图'
 
-        # Dynamic satellite artists for active epoch
-        sky_curr = ax_sky.scatter([], [], s=100, marker="o", facecolors="none", edgecolors=[], linewidths=2.2, zorder=12)
-        sky_labels = [ax_sky.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
-                                  bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#d90429", lw=1.2, alpha=0.92), zorder=14) for _ in range(35)]
-        self.sky_plots.append((ax_sky, sky_curr, sky_labels))
+        if not is_exp:
+            # Dynamic satellite artists for active epoch
+            sky_curr = ax_sky.scatter([], [], s=100, marker="o", facecolors="none", edgecolors=[], linewidths=2.2, zorder=12)
+            sky_labels = [ax_sky.text(0, 0, "", fontsize=7.5, weight="bold", color="#111",
+                                      bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#d90429", lw=1.2, alpha=0.92), zorder=14) for _ in range(35)]
+            self.sky_plots.append((ax_sky, sky_curr, sky_labels))
 
         # 2. Left-Bottom: El vs SNR & Resp (采用已有独立子图实现，包含包络、残差Colorbar与动态星标)
         ax_el = self.fig.add_subplot(gs_left[1])
         self._draw_el_snr_resp(ax_el)
         ax_el.set_title('(b) 卫星高度角 - 载噪比 - 残差联合分布', fontsize=11, weight='bold', pad=6)
-        self._register_custom_dynamic("El vs SNR & Resp", ax_el, p, full)
+        if not is_exp:
+            self._register_custom_dynamic("El vs SNR & Resp", ax_el, p, full)
 
         # 3. Right-Top: Satellites Stack (多系统有效星数 + 实时显示各系统卫星数量)
         ax_sat = self.fig.add_subplot(gs_right[0])
@@ -2912,7 +3059,7 @@ class RTKPlotApp:
             t_con = con_counts.index.to_numpy()
             c_names = [c for c in ['GPS', 'GLONASS', 'Galileo', 'BeiDou', 'QZSS'] if c in con_counts.columns]
             y_stack = [con_counts[c].to_numpy() for c in c_names]
-            stack_colors = [diag.COLORS.get(c, '#2878B5') for c in c_names]
+            stack_colors = [diag.COLORS.get(c, '#FF6D00') for c in c_names]
             short_names = {'GPS': 'GPS', 'GLONASS': 'GLO', 'Galileo': 'GAL', 'BeiDou': 'BDS', 'QZSS': 'QZS'}
             disp_labels = [short_names.get(c, c) for c in c_names]
             ax_sat.stackplot(t_con, *y_stack, labels=disp_labels, colors=stack_colors, alpha=0.85)
@@ -2922,41 +3069,42 @@ class RTKPlotApp:
         ax_sat.grid(self.grid_on.get(), ls='--', alpha=0.35)
         ax_sat.tick_params(labelsize=9, labelbottom=False)
 
-        # 实时各系统卫星数量徽章
-        sat_badge = ax_sat.text(
-            0.985, 0.92, "", transform=ax_sat.transAxes,
-            fontsize=8.0, weight="bold", color="#0B2B52",
-            ha="right", va="top",
-            bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="#2878B5", alpha=0.92, lw=1.0),
-            zorder=15
-        )
+        if not is_exp:
+            # 实时各系统卫星数量徽章
+            sat_badge = ax_sat.text(
+                0.985, 0.92, "", transform=ax_sat.transAxes,
+                fontsize=8.0, weight="bold", color="#0B2B52",
+                ha="right", va="top",
+                bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="#2878B5", alpha=0.92, lw=1.0),
+                zorder=15
+            )
 
-        def update_sat_counts(i, r, current_sat):
-            if current_sat is None or current_sat.empty:
-                sat_badge.set_text("无实时卫星数据")
+            def update_sat_counts(i, r, current_sat):
+                if current_sat is None or current_sat.empty:
+                    sat_badge.set_text("无实时卫星数据")
+                    sat_badge.set_visible(True)
+                    return
+                sub_l1 = current_sat[current_sat.freq == 1]
+                if "vsat" in sub_l1.columns and (sub_l1["vsat"] == 1).any():
+                    sub_used = sub_l1[sub_l1.vsat == 1].drop_duplicates("prn")
+                elif "resp" in sub_l1.columns and (sub_l1["resp"] != 0).any():
+                    sub_used = sub_l1[sub_l1.resp != 0].drop_duplicates("prn")
+                else:
+                    sub_used = sub_l1.drop_duplicates("prn")
+                sub_trk = sub_l1.drop_duplicates("prn")
+                c_counts = sub_used["constellation"].value_counts().to_dict()
+                parts = []
+                for full_c, short_c in [("GPS", "GPS"), ("GLONASS", "GLO"), ("Galileo", "GAL"), ("BeiDou", "BDS"), ("QZSS", "QZS")]:
+                    cnt = c_counts.get(full_c, 0)
+                    if cnt > 0:
+                        parts.append(f"{short_c}: {cnt}")
+                c_str = " · ".join(parts) if parts else "0"
+                trk_info = f" / 跟踪: {len(sub_trk)}" if len(sub_trk) > len(sub_used) else ""
+                sat_badge.set_text(f"{c_str} (有效: {len(sub_used)}{trk_info}颗)")
                 sat_badge.set_visible(True)
-                return
-            sub_l1 = current_sat[current_sat.freq == 1]
-            if "vsat" in sub_l1.columns and (sub_l1["vsat"] == 1).any():
-                sub_used = sub_l1[sub_l1.vsat == 1].drop_duplicates("prn")
-            elif "resp" in sub_l1.columns and (sub_l1["resp"] != 0).any():
-                sub_used = sub_l1[sub_l1.resp != 0].drop_duplicates("prn")
-            else:
-                sub_used = sub_l1.drop_duplicates("prn")
-            sub_trk = sub_l1.drop_duplicates("prn")
-            c_counts = sub_used["constellation"].value_counts().to_dict()
-            parts = []
-            for full_c, short_c in [("GPS", "GPS"), ("GLONASS", "GLO"), ("Galileo", "GAL"), ("BeiDou", "BDS"), ("QZSS", "QZS")]:
-                cnt = c_counts.get(full_c, 0)
-                if cnt > 0:
-                    parts.append(f"{short_c}: {cnt}")
-            c_str = " · ".join(parts) if parts else "0"
-            trk_info = f" / 跟踪: {len(sub_trk)}" if len(sub_trk) > len(sub_used) else ""
-            sat_badge.set_text(f"{c_str} (有效: {len(sub_used)}{trk_info}颗)")
-            sat_badge.set_visible(True)
 
-        self.custom_dynamic_artists.append(sat_badge)
-        self.custom_updaters.append(update_sat_counts)
+            self.custom_dynamic_artists.append(sat_badge)
+            self.custom_updaters.append(update_sat_counts)
 
         # 4. Right-Middle: Directional DOP (采用已有独立子图实现，包含空间PDOP、水平HDOP、门限与动态徽章)
         ax_dop = self.fig.add_subplot(gs_right[1], sharex=ax_sat)
@@ -2965,7 +3113,8 @@ class RTKPlotApp:
         ax_dop.set_ylabel('DOP 精度因子', fontsize=10, weight='bold')
         ax_dop.set_xlabel('')
         ax_dop.tick_params(labelsize=9, labelbottom=False)
-        self._register_custom_dynamic("Directional DOP", ax_dop, p, full)
+        if not is_exp:
+            self._register_custom_dynamic("Directional DOP", ax_dop, p, full)
 
         # 5. Right-Bottom: Residual Triad (采用已有独立子图实现，包含三线时序、3.0m粗差门限与动态徽章)
         ax_tri = self.fig.add_subplot(gs_right[2], sharex=ax_sat)
@@ -2974,14 +3123,16 @@ class RTKPlotApp:
         ax_tri.set_ylabel('伪距残差 (m)', fontsize=10, weight='bold')
         ax_tri.set_xlabel('观测时间 (s)', fontsize=10, weight='bold')
         ax_tri.tick_params(labelsize=9)
-        self._register_custom_dynamic("Residual Triad", ax_tri, p, full)
+        if not is_exp:
+            self._register_custom_dynamic("Residual Triad", ax_tri, p, full)
 
         self.fig.align_ylabels([ax_sat, ax_dop, ax_tri])
         self.plot_axes = [ax_sky, ax_el, ax_sat, ax_dop, ax_tri]
         self.ax = ax_sky
 
         for p_ax in (ax_sat, ax_dop, ax_tri):
-            self.time_cursors.append(p_ax.axvline(0, color="#333", ls="--", lw=0.8, alpha=0.7, zorder=10))
+            if not is_exp:
+                self.time_cursors.append(p_ax.axvline(0, color="#333", ls="--", lw=0.8, alpha=0.7, zorder=10))
             self._set_datetime_axis(p_ax)
         for p_ax in (ax_sat, ax_dop):
             p_ax.set_xlabel("")
@@ -3057,29 +3208,37 @@ class RTKPlotApp:
                     for q,g in p.groupby("q"):ax.scatter(g.E,g.N,s=2,color=Q_COLORS.get(int(q),"#777"),label=Q_LABELS.get(int(q),str(q)))
                     ax.set(xlabel="E (m)",ylabel="N (m)",title=name);ax.legend(fontsize=6,ncol=2);ax.set_aspect("equal" if self.equal_scale.get() else "auto")
                 elif name=="ENU Position":
+                    cols = self._get_mode_colors("ENU Position", 3)
+                    kw = self._get_line_kwargs("ENU Position", default_ls="-", default_lw=.95)
                     t_gap, e_g, n_g, u_g = insert_time_gaps(p.time, p.E, p.N, p.U)
-                    for y_arr, col, lbl in zip([e_g, n_g, u_g], ["#2878B5","#E07A2D","#36965A"], ["E", "N", "U"]):
-                        ax.plot(t_gap, y_arr, lw=.65, marker=".", ms=2, markevery=max(1, len(p)//50), label=lbl, color=col)
-                    ax.set(title=name, ylabel="Position (m)"); ax.legend(fontsize=6, ncol=3)
+                    for y_arr, col, lbl in zip([e_g, n_g, u_g], cols, ["E", "N", "U"]):
+                        ax.plot(t_gap, y_arr, marker=".", ms=2, markevery=max(1, len(p)//50), label=lbl, color=col, **kw)
+                    ax.set(title=name, ylabel="Position (m)"); ax.legend(fontsize=6.5, ncol=3)
                 elif name=="Height":
+                    cols = self._get_mode_colors("Height", 2)
+                    kw = self._get_line_kwargs("Height", default_ls="-", default_lw=1.0)
                     t_gap, u_g = insert_time_gaps(p.time, p.U)
-                    ax.plot(t_gap, u_g, lw=.7, marker=".", ms=2, markevery=max(1, len(p)//50), label="RTK U")
+                    ax.plot(t_gap, u_g, color=cols[0], marker=".", ms=2, markevery=max(1, len(p)//50), label="RTK U", **kw)
                     if self.data["has_truth"]:
                         t_gap_gt, gt_u_g = insert_time_gaps(p.time, p.gt_U)
-                        ax.plot(t_gap_gt, gt_u_g, lw=.7, ls="--", label="Truth U")
-                    ax.set(title=name, ylabel="Up (m)"); ax.legend(fontsize=6)
+                        ax.plot(t_gap_gt, gt_u_g, color=cols[1], lw=.9, ls="--", label="Truth U")
+                    ax.set(title=name, ylabel="Up (m)"); ax.legend(fontsize=6.5)
                 elif name=="ENU Error":
                     if self.data["has_truth"]:
+                        cols = self._get_mode_colors("ENU Error", 3)
+                        kw = self._get_line_kwargs("ENU Error", default_ls="-", default_lw=.95)
                         t_gap, de_g, dn_g, du_g = insert_time_gaps(p.time, p.de, p.dn, p.du)
-                        for y_arr, col, lbl in zip([de_g, dn_g, du_g], ["#2878B5","#E07A2D","#36965A"], ["DE", "DN", "DU"]):
-                            ax.plot(t_gap, y_arr, lw=.65, label=lbl, color=col)
-                        ax.axhline(0, color="k", lw=.5); ax.legend(fontsize=6, ncol=3)
+                        for y_arr, col, lbl in zip([de_g, dn_g, du_g], cols, ["DE", "DN", "DU"]):
+                            ax.plot(t_gap, y_arr, label=lbl, color=col, **kw)
+                        ax.axhline(0, color="k", lw=.5); ax.legend(fontsize=6.5, ncol=3)
                         self._apply_robust_ylim(ax, [p.de, p.dn, p.du], is_symmetric=True, min_span=2.0)
                     else:ax.text(.5,.5,"No truth",ha="center",transform=ax.transAxes)
                     ax.set(title=name,ylabel="Error (m)")
                 elif name=="Solution Status":
+                    cols = self._get_mode_colors("Solution Status", 1)
+                    kw = self._get_line_kwargs("Solution Status", default_ls="-", default_lw=1.0)
                     t_gap, q_g = insert_time_gaps(p.time, p.q)
-                    ax.step(t_gap, q_g, where="post", lw=.65, marker=".", ms=2, markevery=max(1, len(p)//50))
+                    ax.step(t_gap, q_g, where="post", color=cols[0], lw=kw.get("lw", 1.0), marker=".", ms=2, markevery=max(1, len(p)//50))
                     ax.set(title=name, ylabel="Q")
                 elif name=="AR Ratio":self._draw_ar_ratio(ax,p)
                 elif name=="Differential Age":self._draw_differential_age(ax,p)
@@ -3124,9 +3283,11 @@ class RTKPlotApp:
                 elif name=="3D Ground Track":self._draw_3d_track(ax,p,full)
                 elif name in ("Position Error", "Position error"):
                     if self.data["has_truth"]:
+                        cols = self._get_mode_colors("Position Error", 2)
+                        kw = self._get_line_kwargs("Position Error", default_ls="-", default_lw=1.0)
                         t_gap, eh_gap, e3d_gap = insert_time_gaps(p.time, p.eh, p.e3d)
-                        ax.plot(t_gap, eh_gap, lw=.8, label="Horizontal")
-                        ax.plot(t_gap, e3d_gap, lw=.8, label="3D")
+                        ax.plot(t_gap, eh_gap, color=cols[0], label="Horizontal", **kw)
+                        ax.plot(t_gap, e3d_gap, color=cols[1], label="3D", **kw)
                         self._apply_robust_ylim(ax, [p.eh, p.e3d], non_negative=True, min_span=2.0)
                         ax.legend(fontsize=7, loc="best")
                         ax.set(title="Position Error", ylabel="Error (m)")
@@ -3136,7 +3297,8 @@ class RTKPlotApp:
                 elif name in ("Elevation vs C/N0", "Elevation vs C/N₀"):
                     ss = s.query("freq == 1 and snr > 0") if (s is not None and not s.empty) else s
                     if ss is not None and not ss.empty:
-                        ax.scatter(ss.el, ss.snr, s=2, alpha=.15, label="L1 Observations")
+                        cols = self._get_mode_colors("Elevation vs C/N0", 1)
+                        ax.scatter(ss.el, ss.snr, s=2, alpha=.18, color=cols[0], label="L1 Observations")
                         ax.legend(loc="lower right", fontsize=7)
                     ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
                 elif name == "Constellation Summary":
@@ -3145,13 +3307,16 @@ class RTKPlotApp:
                 ax.text(0.5, 0.5, f"绘制 [{name}] 提示:\n{exc}", ha="center", va="center", transform=ax.transAxes, fontsize=8, color="#d90429")
                 ax.set_title(f"{name}")
             ax.grid(self.grid_on.get(),alpha=.28)
+            is_exp = getattr(self, "_is_exporting", False)
             if is_time_series:
                 self._set_datetime_axis(ax);ax.xaxis.set_major_locator(MaxNLocator(3));ax.tick_params(axis="x",labelsize=7,labelrotation=0)
-                self.time_cursors.append(ax.axvline(0,color="#333",ls="--",lw=.7,alpha=.65))
-            try:
-                self._register_custom_dynamic(name,ax,p,full)
-            except Exception:
-                pass
+                if not is_exp:
+                    self.time_cursors.append(ax.axvline(0,color="#333",ls="--",lw=.7,alpha=.65))
+            if not is_exp:
+                try:
+                    self._register_custom_dynamic(name,ax,p,full)
+                except Exception:
+                    pass
         for ax in self.plot_axes:
             box = ax.get_position()
             p_mode = getattr(ax, "_panel_mode", "")
@@ -3194,7 +3359,7 @@ class RTKPlotApp:
 
     def _register_custom_dynamic(self,name,ax,p,full):
         """Add a current-epoch highlight to every plot in a custom grid or single plot view."""
-        if name == "3D Ground Track": return
+        if getattr(self, "_is_exporting", False) or name == "3D Ground Track": return
         def point(color="#111",marker="o",size=7,target=None):
             target=target if target is not None else ax
             return target.plot([],[],linestyle="None",marker=marker,ms=size,mfc=color,mec="white",mew=.7,zorder=12)[0]
@@ -3202,54 +3367,61 @@ class RTKPlotApp:
         if name in ("Gnd Trk", "Trajectory Error Heatmap"):
             trail,=ax.plot([],[],color="#ed3030",lw=1.4,zorder=8);artists=[trail,point("#ed3030","o",9)]
             if self.data["has_truth"]:artists.extend([point("#ffd92f","*",11),ax.plot([],[],color="#d22",ls=":",lw=1,zorder=9)[0]])
-        elif name=="ENU Position":artists=[point(c) for c in ["#2878B5","#E07A2D","#36965A"]]
+        elif name=="ENU Position":artists=[point(c) for c in self._get_mode_colors("ENU Position", 3)]
         elif name=="Height":
-            artists=[point("#16853b")]
-            if self.data["has_truth"]:artists.append(point("#252525"))
-        elif name=="ENU Error" and self.data["has_truth"]:artists=[point(c) for c in ["#2878B5","#E07A2D","#36965A"]]
+            cols = self._get_mode_colors("Height", 2)
+            artists=[point(cols[0])]
+            if self.data["has_truth"]:artists.append(point(cols[1]))
+        elif name=="ENU Error" and self.data["has_truth"]:artists=[point(c) for c in self._get_mode_colors("ENU Error", 3)]
         elif name=="Solution Status":artists=[point("#333","o",8)]
         elif name=="AR Ratio":
-            p_ratio = point("#1f77b4", "o", 8)
+            cols = self._get_mode_colors("AR Ratio", 1)
+            p_ratio = point(cols[0], "o", 8)
             badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
-                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#1f77b4", alpha=0.9, lw=0.8), zorder=15)
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=cols[0], alpha=0.9, lw=0.8), zorder=15)
             artists = [p_ratio, badge]
         elif name=="Differential Age":artists=[point("#dc2626","o",8)]
         elif name=="Satellites":
-            p_trk = point("#2878B5", "o", 8)
-            p_usd = point("#E07A2D", "o", 8)
+            cols = self._get_mode_colors("Satellites", 2)
+            p_trk = point(cols[0], "o", 8)
+            p_usd = point(cols[1], "o", 8)
             badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
-                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#2878B5", alpha=0.9, lw=0.8), zorder=15)
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=cols[0], alpha=0.9, lw=0.8), zorder=15)
             artists = [p_trk, p_usd, badge]
         elif name=="DOP":
-            pts = [point(c, "o", 7) for c in ["#2878B5","#E07A2D","#36965A"]]
+            cols = self._get_mode_colors("DOP", 3)
+            pts = [point(c, "o", 7) for c in cols]
             badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
                             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888", alpha=0.9, lw=0.8), zorder=15)
             artists = pts + [badge]
         elif name=="Directional DOP":
-            pts = [point(c, "o", 7) for c in ["#2878B5", "#E07A2D", "#36965A"]]
+            cols = self._get_mode_colors("Directional DOP", 3)
+            pts = [point(c, "o", 7) for c in cols]
             badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
-                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#2878B5", alpha=0.9, lw=0.8), zorder=15)
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=cols[0], alpha=0.9, lw=0.8), zorder=15)
             artists = pts + [badge]
         elif name=="Residual Triad":
-            p_max = point("#d90429", "o", 8)
-            p_2nd = point("#0077b6", "o", 7)
-            p_rms = point("#0B2B52", "o", 7)
+            cols = self._get_mode_colors("Residual Triad", 3)
+            p_max = point(cols[0], "o", 8)
+            p_2nd = point(cols[1], "o", 7)
+            p_rms = point(cols[2], "o", 7)
             badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
-                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d90429", alpha=0.9, lw=0.8), zorder=15)
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=cols[0], alpha=0.9, lw=0.8), zorder=15)
             artists = [p_max, p_2nd, p_rms, badge]
         elif name=="Body-Frame Error":
-            pts = [point(c, "o", 7) for c in ["#2878B5", "#E07A2D", "#36965A"]]
+            cols = self._get_mode_colors("Body-Frame Error", 3)
+            pts = [point(c, "o", 7) for c in cols]
             badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
-                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d90429", alpha=0.9, lw=0.8), zorder=15)
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=cols[0], alpha=0.9, lw=0.8), zorder=15)
             artists = pts + [badge]
         elif name=="C/N0":artists=[ax.scatter([],[],s=24,edgecolors="#222",linewidths=.5,zorder=11) for _ in range(2)]
         elif name=="Elevation":artists=[ax.scatter([],[],s=18,marker="o",facecolors="none",edgecolors="#222",zorder=11)]
-        elif name=="Residuals":artists=[ax.scatter([],[],s=24,marker="o",facecolors="none",edgecolors=c,zorder=11) for c in ["#2878B5","#E07A2D"]]
+        elif name=="Residuals":artists=[ax.scatter([],[],s=24,marker="o",facecolors="none",edgecolors=c,zorder=11) for c in self._get_mode_colors("Residuals", 2)]
         elif name=="Multipath Proxy":artists=[ax.scatter([],[],s=24,marker="o",facecolors="none",edgecolors="#222",zorder=11)]
-        elif name=="Cycle Slips":artists=[ax.scatter([],[],s=32,marker="x",color="#d00000",zorder=11)]
+        elif name=="Cycle Slips":artists=[ax.scatter([],[],s=22,marker="x",color="#d00000",zorder=11)]
         elif name=="Satellite Visibility Gantt":
-            v_line = ax.axvline(np.nan, color="#e63946", ls="--", lw=1.6, alpha=0.95, zorder=12)
-            sc_active = ax.scatter([], [], s=65, marker="o", facecolors=[], edgecolors="white", linewidths=1.3, zorder=14)
+            v_line = ax.axvline(np.nan, color="#e63946", ls="--", lw=1.4, alpha=0.9, zorder=12)
+            sc_active = ax.scatter([], [], s=22, marker="o", facecolors=[], edgecolors="white", linewidths=0.85, zorder=14)
             badge = ax.text(0.02, 0.95, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
                             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d90429", alpha=0.9, lw=0.8), zorder=15)
             artists = [v_line, sc_active, badge]
@@ -3736,8 +3908,9 @@ class RTKPlotApp:
         self.analysis_info.configure(text="\n".join(lines))
 
     def _draw_enu_positions(self,axes,p):
-        specs=[("E","East (m)","#2878B5","East (E)"),("N","North (m)","#E07A2D","North (N)"),("U","Up (m)","#36965A","Up (U)")]
-        kw=self._get_line_kwargs("ENU Position",default_ls="-",default_lw=.8)
+        cols = self._get_mode_colors("ENU Position", 3)
+        specs=[("E","East (m)",cols[0],"East (E)"),("N","North (m)",cols[1],"North (N)"),("U","Up (m)",cols[2],"Up (U)")]
+        kw=self._get_line_kwargs("ENU Position",default_ls="-",default_lw=1.0)
         t_gap, e_gap, n_gap, u_gap = insert_time_gaps(p.time, p.E, p.N, p.U)
         for ax,(col,label,color,leg_lbl),y_arr in zip(axes,specs,[e_gap, n_gap, u_gap]):
             ax.plot(t_gap,y_arr,color=color,label=leg_lbl,**kw)
@@ -3761,8 +3934,13 @@ class RTKPlotApp:
             sc = ax.scatter(p.E, p.N, c=err, cmap="turbo", s=8, vmin=0, vmax=15.0, alpha=0.9, zorder=4)
             fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
             if fig_target is not None:
-                cb = fig_target.colorbar(sc, ax=ax, pad=0.015, fraction=0.046)
-                cb.set_label("3D Error (m, clipped at 15m)")
+                has_right_neighbor = (ax.get_position().x1 < 0.82)
+                cb = fig_target.colorbar(sc, ax=ax, pad=0.012 if has_right_neighbor else 0.015, fraction=0.036 if has_right_neighbor else 0.046)
+                if has_right_neighbor:
+                    cb.ax.set_title("3D误差(m)", fontsize=7.5, weight="bold", pad=3)
+                else:
+                    cb.set_label("3D Error (m, clipped at 15m)")
+                cb.ax.tick_params(labelsize=7.5 if has_right_neighbor else 8)
             ax.legend(loc="upper right", fontsize=8)
         else:
             ax.set_title("Ground Track / ENU Position — colored by solution status")
@@ -3771,7 +3949,8 @@ class RTKPlotApp:
             ax.legend(loc="upper left",fontsize=8)
 
         ax.set_xlabel("East (m)");ax.set_ylabel("North (m)");ax.set_aspect("equal" if self.equal_scale.get() else "auto",adjustable="box")
-        if not getattr(self, "_is_exporting", False) and hasattr(self, "slider"):
+        is_single_trk = getattr(self, "mode", None) and self.mode.get() == "Gnd Trk"
+        if not getattr(self, "_is_exporting", False) and hasattr(self, "slider") and is_single_trk:
             idx=min(int(self.slider.get()),len(full)-1); cur=full.iloc[idx]
             stride=max(1,(idx+1)//2500)
             sub_t = full.time.iloc[:idx+1:stride]
@@ -3782,7 +3961,7 @@ class RTKPlotApp:
             self.vehicle_marker,=ax.plot([cur.E],[cur.N],marker=(3,0,0),ms=17,mfc="#ff2727",mec="black",mew=1.0,linestyle="None",zorder=8)
             self.vehicle_label=ax.annotate(f"  {idx+1}/{len(full)}  Q={int(cur.q)}:{Q_LABELS.get(int(cur.q),'?')}",(cur.E,cur.N),xytext=(9,8),textcoords="offset points",fontsize=8,weight="bold",bbox=dict(boxstyle="round,pad=.25",fc="white",ec="#888",alpha=.9),zorder=9)
             if self.data["has_truth"] and np.isfinite(cur.gt_E) and np.isfinite(cur.gt_N):
-                self.truth_marker,=ax.plot([cur.gt_E],[cur.gt_N],marker="*",ms=14,mfc="#ffd92f",mec="#222",mew=.8,linestyle="None",zorder=9,label="Current truth")
+                self.truth_marker,=ax.plot([cur.gt_E],[cur.gt_N],marker="*",ms=14,mfc="#ffd92f",mec="#222",mew=.8,linestyle="None",zorder=9)
                 self.error_link,=ax.plot([cur.E,cur.gt_E],[cur.N,cur.gt_N],color="#df2525",lw=1.5,ls=":",zorder=7)
 
     def _draw_trajectory_error_heatmap(self, ax, p, full):
@@ -3799,16 +3978,21 @@ class RTKPlotApp:
             sc = ax.scatter(p.E, p.N, c=err, cmap="turbo", s=8, vmin=0, vmax=15.0, alpha=0.9, zorder=4)
             fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
             if fig_target is not None:
-                cb = fig_target.colorbar(sc, ax=ax, pad=0.015, fraction=0.046)
-                cb.set_label("3D Error (m, clipped at 15m)")
+                has_right_neighbor = (ax.get_position().x1 < 0.82)
+                cb = fig_target.colorbar(sc, ax=ax, pad=0.012 if has_right_neighbor else 0.015, fraction=0.036 if has_right_neighbor else 0.046)
+                if has_right_neighbor:
+                    cb.ax.set_title("3D误差(m)", fontsize=7.5, weight="bold", pad=3)
+                else:
+                    cb.set_label("3D Error (m, clipped at 15m)")
+                cb.ax.tick_params(labelsize=7.5 if has_right_neighbor else 8)
             ax.legend(loc="best", fontsize=8)
         else:
             for q, g in p.groupby("q"):
                 label = f"Q={q}: {Q_LABELS.get(q, 'Other')}"
                 ax.plot(g.E, g.N, ".", ms=3, color=Q_COLORS.get(q, "#666"), label=label, alpha=0.9)
-            ax.text(0.5, 0.5, "未加载参考真值 (Ground Truth is required for Error Heatmap)",
-                    ha="center", va="center", transform=ax.transAxes, fontsize=10, color="#666",
-                    bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+            ax.text(0.5, 0.5, "未加载参考真值\n(需加载 Ground Truth)",
+                    ha="center", va="center", transform=ax.transAxes, fontsize=8.5, color="#555",
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="#cbd5e1", alpha=0.88))
             ax.legend(loc="best", fontsize=8)
 
         ax.set_xlabel("East Offset from Start (m)")
@@ -3818,7 +4002,8 @@ class RTKPlotApp:
         grid_val = self.grid_on.get() if hasattr(self, "grid_on") else True
         ax.grid(grid_val, alpha=0.3, ls=":")
 
-        if not getattr(self, "_is_exporting", False) and hasattr(self, "slider"):
+        is_single_hm = getattr(self, "mode", None) and self.mode.get() == "Trajectory Error Heatmap"
+        if not getattr(self, "_is_exporting", False) and hasattr(self, "slider") and is_single_hm:
             idx = min(int(self.slider.get()), len(full) - 1)
             cur = full.iloc[idx]
             stride = max(1, (idx + 1) // 2500)
@@ -3830,7 +4015,7 @@ class RTKPlotApp:
             self.vehicle_marker, = ax.plot([cur.E], [cur.N], marker=(3, 0, 0), ms=17, mfc="#ff2727", mec="black", mew=1.0, linestyle="None", zorder=8)
             self.vehicle_label = ax.annotate(f"  {idx+1}/{len(full)}  Q={int(cur.q)}:{Q_LABELS.get(int(cur.q),'?')}", (cur.E, cur.N), xytext=(9, 8), textcoords="offset points", fontsize=8, weight="bold", bbox=dict(boxstyle="round,pad=.25", fc="white", ec="#888", alpha=.9), zorder=9)
             if self.data["has_truth"] and np.isfinite(cur.gt_E) and np.isfinite(cur.gt_N):
-                self.truth_marker, = ax.plot([cur.gt_E], [cur.gt_N], marker="*", ms=14, mfc="#ffd92f", mec="#222", mew=0.8, linestyle="None", zorder=9, label="Current truth")
+                self.truth_marker, = ax.plot([cur.gt_E], [cur.gt_N], marker="*", ms=14, mfc="#ffd92f", mec="#222", mew=0.8, linestyle="None", zorder=9)
                 self.error_link, = ax.plot([cur.E, cur.gt_E], [cur.N, cur.gt_N], color="#df2525", lw=1.5, ls=":", zorder=7)
 
     def _draw_3d_track(self, ax, p, full):
@@ -3924,22 +4109,23 @@ class RTKPlotApp:
         ax.scatter([p.E.iloc[0]], [p.N.iloc[0]], [p.U.iloc[0]], s=70, marker="o", color="#22c55e", edgecolors="white", lw=1.5, zorder=9, label="起点 (Start)")
         ax.scatter([p.E.iloc[-1]], [p.N.iloc[-1]], [p.U.iloc[-1]], s=70, marker="s", color="#ef4444", edgecolors="white", lw=1.5, zorder=9, label="终点 (End)")
 
-        # 7. Active Epoch Vehicle Marker & Trail
-        idx = min(int(self.slider.get()), len(full) - 1)
-        cur = full.iloc[idx]
-        cur_u = float(cur.U) if "U" in cur and np.isfinite(cur.U) else 0.0
-        start = max(0, idx - 120); stride = max(1, (idx - start + 1) // 300)
-        sub_e = self._track_e[start:idx+1:stride]
-        sub_n = self._track_n[start:idx+1:stride]
-        sub_u = self._track_u[start:idx+1:stride]
-        self.vehicle_trail_3d, = ax.plot(sub_e, sub_n, sub_u, color="#ff2727", lw=2.5, alpha=0.95, zorder=10)
-        self.vehicle_marker_3d, = ax.plot([cur.E], [cur.N], [cur_u], marker="o", ms=9, mfc="#ff2727", mec="white", mew=1.5, linestyle="None", zorder=11)
-        self.vehicle_label_3d = ax.text(cur.E, cur.N, cur_u + max(2.0, delta_u * 0.04), f"  {idx+1}/{len(full)} Q={int(cur.q)}", fontsize=8, weight="bold", color="#111", bbox=dict(boxstyle="round,pad=.2", fc="white", ec="#ff2727", alpha=0.9), zorder=12)
+        # 7. Active Epoch Vehicle Marker & Trail (in-app interactive only)
+        if not getattr(self, "_is_exporting", False) and hasattr(self, "slider"):
+            idx = min(int(self.slider.get()), len(full) - 1)
+            cur = full.iloc[idx]
+            cur_u = float(cur.U) if "U" in cur and np.isfinite(cur.U) else 0.0
+            start = max(0, idx - 120); stride = max(1, (idx - start + 1) // 300)
+            sub_e = self._track_e[start:idx+1:stride]
+            sub_n = self._track_n[start:idx+1:stride]
+            sub_u = self._track_u[start:idx+1:stride]
+            self.vehicle_trail_3d, = ax.plot(sub_e, sub_n, sub_u, color="#ff2727", lw=2.5, alpha=0.95, zorder=10)
+            self.vehicle_marker_3d, = ax.plot([cur.E], [cur.N], [cur_u], marker="o", ms=9, mfc="#ff2727", mec="white", mew=1.5, linestyle="None", zorder=11)
+            self.vehicle_label_3d = ax.text(cur.E, cur.N, cur_u + max(2.0, delta_u * 0.04), f"  {idx+1}/{len(full)} Q={int(cur.q)}", fontsize=8, weight="bold", color="#111", bbox=dict(boxstyle="round,pad=.2", fc="white", ec="#ff2727", alpha=0.9), zorder=12)
 
-        if self.data["has_truth"] and np.isfinite(cur.get("gt_E", np.nan)) and np.isfinite(cur.get("gt_N", np.nan)):
-            gt_u_cur = float(cur.gt_U) if ("gt_U" in cur and np.isfinite(cur.gt_U)) else 0.0
-            self.truth_marker_3d, = ax.plot([cur.gt_E], [cur.gt_N], [gt_u_cur], marker="*", ms=13, mfc="#ffd92f", mec="#222", mew=0.8, linestyle="None", zorder=11, label="当前真值")
-            self.error_link_3d, = ax.plot([cur.E, cur.gt_E], [cur.N, cur.gt_N], [cur_u, gt_u_cur], color="#df2525", lw=1.8, ls=":", zorder=10)
+            if self.data["has_truth"] and np.isfinite(cur.get("gt_E", np.nan)) and np.isfinite(cur.get("gt_N", np.nan)):
+                gt_u_cur = float(cur.gt_U) if ("gt_U" in cur and np.isfinite(cur.gt_U)) else 0.0
+                self.truth_marker_3d, = ax.plot([cur.gt_E], [cur.gt_N], [gt_u_cur], marker="*", ms=13, mfc="#ffd92f", mec="#222", mew=0.8, linestyle="None", zorder=11)
+                self.error_link_3d, = ax.plot([cur.E, cur.gt_E], [cur.N, cur.gt_N], [cur_u, gt_u_cur], color="#df2525", lw=1.8, ls=":", zorder=10)
 
         ax.set_xlabel("东向 East (m)", fontsize=9, weight="bold", labelpad=8)
         ax.set_ylabel("北向 North (m)", fontsize=9, weight="bold", labelpad=8)
@@ -3963,8 +4149,9 @@ class RTKPlotApp:
             axes[0].text(.5,.5,"Ground truth not loaded — position errors unavailable",ha="center",va="center",transform=axes[0].transAxes)
             for ax in axes[1:]:ax.set_visible(False)
             return
-        specs=[("de","ΔE (m)","#2878B5","ΔE (East Error)"),("dn","ΔN (m)","#E07A2D","ΔN (North Error)"),("du","ΔU (m)","#36965A","ΔU (Up Error)")]
-        kw=self._get_line_kwargs("ENU Error",default_ls="-",default_lw=.75)
+        cols = self._get_mode_colors("ENU Error", 3)
+        specs=[("de","ΔE (m)",cols[0],"ΔE (East Error)"),("dn","ΔN (m)",cols[1],"ΔN (North Error)"),("du","ΔU (m)",cols[2],"ΔU (Up Error)")]
+        kw=self._get_line_kwargs("ENU Error",default_ls="-",default_lw=1.0)
         t_gap, de_gap, dn_gap, du_gap = insert_time_gaps(p.time, p.de, p.dn, p.du)
         for ax,(col,label,color,leg_lbl),y_arr in zip(axes,specs,[de_gap, dn_gap, du_gap]):
             ax.plot(t_gap,y_arr,color=color,label=leg_lbl,**kw);ax.axhline(0,color="#222",lw=.6);ax.set_ylabel(label);ax.grid(self.grid_on.get(),ls="--",alpha=.4)
@@ -3978,10 +4165,11 @@ class RTKPlotApp:
             self.data["_cached_sat_epoch"] = diag._sat_epoch(self.data)
         e = self.data["_cached_sat_epoch"]
         if e.empty:return
-        kw=self._get_line_kwargs("Satellites",default_ls="-",default_lw=1.0)
+        cols = self._get_mode_colors("Satellites", 2)
+        kw=self._get_line_kwargs("Satellites",default_ls="-",default_lw=1.15)
         t_gap, trk_g, used_g = insert_time_gaps(e.time, e.tracked, e.used)
-        ax.plot(t_gap, trk_g, label="Tracked satellites", color="#2878B5", **kw)
-        ax.plot(t_gap, used_g, label="Used satellites", color="#e07a2d", **kw)
+        ax.plot(t_gap, trk_g, label="Tracked satellites", color=cols[0], **kw)
+        ax.plot(t_gap, used_g, label="Used satellites", color=cols[1], **kw)
         ax.set(xlabel="Time from start (s)",ylabel="Satellites",title="Tracked and Used Satellites");ax.legend()
         if hasattr(self, "_apply_robust_ylim"):
             self._apply_robust_ylim(ax, [e.tracked, e.used], non_negative=True, min_span=5.0, default_max=20.0)
@@ -3992,10 +4180,11 @@ class RTKPlotApp:
         d = self.data["_cached_dop"]
         self.dop_frames[ax]=d
         if d.empty:ax.text(.5,.5,"Not enough satellite geometry for DOP",ha="center",va="center",transform=ax.transAxes);return
-        kw=self._get_line_kwargs("DOP",default_ls="-",default_lw=.8)
+        cols = self._get_mode_colors("DOP", 3)
+        kw=self._get_line_kwargs("DOP",default_ls="-",default_lw=1.1)
         t_gap, pdop_g, hdop_g, vdop_g = insert_time_gaps(d.time, d.PDOP, d.HDOP, d.VDOP)
-        for y_arr, c in zip([pdop_g, hdop_g, vdop_g], ["PDOP","HDOP","VDOP"]):
-            ax.plot(t_gap, y_arr, label=c, **kw)
+        for y_arr, c, col in zip([pdop_g, hdop_g, vdop_g], ["PDOP","HDOP","VDOP"], cols):
+            ax.plot(t_gap, y_arr, label=c, color=col, **kw)
         if hasattr(self, "_apply_robust_ylim"):
             self._apply_robust_ylim(ax, [d.PDOP, d.HDOP, d.VDOP], non_negative=True, min_span=3.0, default_max=8.0)
         ax.set(xlabel="Time from start (s)",ylabel="DOP",title="DOP from satellite geometry");ax.legend()
@@ -4025,34 +4214,42 @@ class RTKPlotApp:
             except Exception:
                 pass
 
-        self.sky_current=ax.scatter([],[],s=100,marker="o",facecolors="none",edgecolors=[],linewidths=2.2,zorder=12)
-        labels=[ax.text(0,0,"",fontsize=7.5,weight="bold",color="#111",
-                        bbox=dict(boxstyle="round,pad=0.15",fc="white",ec="#d90429",lw=1.2,alpha=0.92),zorder=14) for _ in range(35)]
-        self.sky_plots.append((ax,self.sky_current,labels))
+        if not getattr(self, "_is_exporting", False):
+            self.sky_current=ax.scatter([],[],s=100,marker="o",facecolors="none",edgecolors=[],linewidths=2.2,zorder=12)
+            labels=[ax.text(0,0,"",fontsize=7.5,weight="bold",color="#111",
+                            bbox=dict(boxstyle="round,pad=0.15",fc="white",ec="#d90429",lw=1.2,alpha=0.92),zorder=14) for _ in range(35)]
+            self.sky_plots.append((ax,self.sky_current,labels))
         ax.set_title("Satellite Skyplot",pad=18)
 
     def _draw_cn0(self,ax):
         s=self.data["sat"];s=s[s.snr>0]
         if s.empty:return
         s=self._display_sample(s,60000)
-        for f,g in s.groupby("freq"):ax.scatter(g.time,g.snr,s=3,alpha=.16,label=f"Frequency {f}")
+        freqs = sorted(s.freq.unique())
+        cols = self._get_mode_colors("C/N0", max(2, len(freqs)))
+        for idx_f, (f, g) in enumerate(s.groupby("freq")):
+            ax.scatter(g.time, g.snr, s=3, alpha=.2, color=cols[idx_f % len(cols)], label=f"Frequency {f}")
         ax.set(xlabel="Time from start (s)",ylabel="C/N₀ (dB-Hz)",title="Signal Strength by Frequency");ax.legend()
 
     def _draw_elevation(self,ax):
         s=self.data["sat"];s=s[s.freq==1]
         if s.empty:return
-        for _,g in s.groupby("prn"):
+        prns = sorted(s.prn.unique())
+        cols = self._get_mode_colors("Elevation", max(6, len(prns)))
+        kw = self._get_line_kwargs("Elevation", default_ls="-", default_lw=.65)
+        for idx_p, (_, g) in enumerate(s.groupby("prn")):
             g=self._display_sample(g,400)
             t_gap, el_gap = insert_time_gaps(g.time, g.el)
-            ax.plot(t_gap, el_gap, lw=.5, alpha=.45)
+            ax.plot(t_gap, el_gap, alpha=.65, color=cols[idx_p % len(cols)], **kw)
         ax.set(xlabel="Time from start (s)",ylabel="Elevation (°)",title="Satellite Elevation vs Time")
 
     def _draw_residuals(self,ax):
         s=self.data["sat"]
         if s.empty:return
         s=self._display_sample(s,60000)
-        g=s[(s.resp!=0)&(s.freq==1)];ax.scatter(g.time,g.resp,s=3,alpha=.16,label="Pseudorange residual")
-        h=s[(s.resc!=0)&(s.freq==1)];ax.scatter(h.time,h.resc*100,s=3,alpha=.12,label="Carrier residual (cm)")
+        cols = self._get_mode_colors("Residuals", 2)
+        g=s[(s.resp!=0)&(s.freq==1)];ax.scatter(g.time,g.resp,s=3,alpha=.2,color=cols[0],label="Pseudorange residual")
+        h=s[(s.resc!=0)&(s.freq==1)];ax.scatter(h.time,h.resc*100,s=3,alpha=.16,color=cols[1],label="Carrier residual (cm)")
         if hasattr(self, "_apply_robust_ylim"):
             self._apply_robust_ylim(ax, [g.resp], is_symmetric=True, min_span=2.0)
         ax.set(xlabel="Time from start (s)",ylabel="Residual (m / cm)",title="RTKLIB Post-fit Residuals");ax.legend()
@@ -4067,8 +4264,9 @@ class RTKPlotApp:
             ax.text(0.5, 0.5, "No usable pseudorange residuals", ha="center", va="center", transform=ax.transAxes)
             return
 
+        cols = self._get_mode_colors("Multipath Proxy", 3)
         sampled = self._display_sample(g, 60000)
-        ax.scatter(sampled.el, sampled.resp.abs(), s=4, alpha=0.15, color="#1f77b4", edgecolors="none", label="Observed |Residual|")
+        ax.scatter(sampled.el, sampled.resp.abs(), s=4, alpha=0.16, color=cols[5 % len(cols)] if len(cols) > 5 else "#0066FF", edgecolors="none", label="Observed |Residual|")
 
         if "_cached_mp_binned" not in self.data:
             bins = np.arange(0, 95, 5)
@@ -4083,8 +4281,8 @@ class RTKPlotApp:
 
         centers, med, p95 = self.data["_cached_mp_binned"]
         if len(centers) > 0:
-            ax.plot(centers, med, color="#d95f02", lw=2.0, marker="o", ms=3.5, label="Median (50%)", zorder=5)
-            ax.plot(centers, p95, color="#e7298a", lw=1.8, ls="--", marker="s", ms=3.0, label="P95 Envelope", zorder=5)
+            ax.plot(centers, med, color=cols[0], lw=2.0, marker="o", ms=3.5, label="Median (50%)", zorder=5)
+            ax.plot(centers, p95, color=cols[3] if len(cols) > 3 else "#E5002B", lw=1.8, ls="--", marker="s", ms=3.0, label="P95 Envelope", zorder=5)
 
         ax.set_xlim(0, 90)
         ax.set_xticks(np.arange(0, 91, 15))
@@ -4111,7 +4309,7 @@ class RTKPlotApp:
         s=self.data["sat"]
         if s.empty:ax.text(.5,.5,"No .stat satellite records",ha="center",va="center",transform=ax.transAxes);return
         g=s[s.slipc>0];prns=sorted(s.prn.unique());yi={prn:i for i,prn in enumerate(prns)}
-        if not g.empty:ax.scatter(g.time,[yi[x] for x in g.prn],s=18,c=g.slipc,cmap="tab10",edgecolors="none")
+        if not g.empty:ax.scatter(g.time,[yi[x] for x in g.prn],s=7,marker="x",linewidths=0.7,alpha=0.75,c=g.slipc,cmap="tab10")
         ax.set(xlabel="Time from start (s)",ylabel="Satellite PRN",title=f"RTKLIB slipc flags ({len(g)} marked records)")
         ticks=np.linspace(0,max(0,len(prns)-1),min(12,len(prns)),dtype=int);ax.set_yticks(ticks,[prns[i] for i in ticks])
 
@@ -4147,10 +4345,11 @@ class RTKPlotApp:
                 if label:
                     added_labels.add(lbl)
 
-        kw = self._get_line_kwargs("Differential Age", default_ls="-", default_lw=1.0)
-        ax.plot(p.time, p.age, color="#0B2B52", label="Age (s)", zorder=3, **kw)
-        ax.axhline(2.0, color="#d97706", ls="--", lw=1.1, zorder=4, label="Warning (2.0s 预警)")
-        ax.axhline(5.0, color="#dc2626", ls=":", lw=1.3, zorder=4, label="Critical (5.0s 超时)")
+        cols = self._get_mode_colors("Differential Age", 1)
+        kw = self._get_line_kwargs("Differential Age", default_ls="-", default_lw=1.1)
+        ax.plot(p.time, p.age, color=cols[0], label="Age (s)", zorder=3, **kw)
+        ax.axhline(2.0, color="#FF6D00", ls="--", lw=1.1, zorder=4, label="Warning (2.0s 预警)")
+        ax.axhline(5.0, color="#E5002B", ls=":", lw=1.3, zorder=4, label="Critical (5.0s 超时)")
 
         ax.set_ylim(0, ymax)
         ax.set(xlabel="Date/time", ylabel="Differential Age (s)", title="Differential Age & Solution Status (差分时延与解状态)")
@@ -4178,13 +4377,17 @@ class RTKPlotApp:
         resp_vals = np.clip(s_l1.resp.abs().to_numpy(dtype=float), 0, 15.0) if "resp" in s_l1.columns else np.zeros(len(s_l1))
 
         # Scatter swimlane colored by |resp|
-        sc = ax.scatter(s_l1.time, y_vals, c=resp_vals, cmap="turbo", s=9, vmin=0, vmax=15.0, alpha=0.85, edgecolors="none")
+        sc = ax.scatter(s_l1.time, y_vals, c=resp_vals, cmap="turbo", s=9, vmin=0, vmax=15.0, alpha=0.88, edgecolors="none")
 
-        # Overlay cycle slips
-        slips = s[(s.slipc > 0) & (s.prn.isin(prn_to_y))] if "slipc" in s.columns else pd.DataFrame()
+        # Overlay cycle slips (deduplicated per PRN & epoch, subtle small marker so swimlane color isn't obscured)
+        slips = s[(s.slipc > 0) & (s.prn.isin(prn_to_y))].drop_duplicates(["prn", "time"]) if "slipc" in s.columns else pd.DataFrame()
         if not slips.empty:
             slip_y = [prn_to_y[p] for p in slips.prn]
-            ax.scatter(slips.time, slip_y, marker="x", color="black", s=18, lw=1.0, zorder=5, label=f"Cycle Slip (n={len(slips)})")
+            ax.scatter(
+                slips.time, slip_y, marker="x", color="#111111",
+                s=5.5, linewidths=0.55, alpha=0.62, zorder=5,
+                label=f"Cycle Slip (n={len(slips)})"
+            )
 
         # Constellation dividing dashed lines
         for i in range(1, len(sorted_prns)):
@@ -4203,10 +4406,15 @@ class RTKPlotApp:
 
         fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
         if fig_target is not None:
-            cb = fig_target.colorbar(sc, ax=ax, pad=0.015, fraction=0.046)
-            cb.set_label("|Pseudorange Residual| (m)")
+            has_right_neighbor = (ax.get_position().x1 < 0.82)
+            cb = fig_target.colorbar(sc, ax=ax, pad=0.012 if has_right_neighbor else 0.015, fraction=0.036 if has_right_neighbor else 0.046)
+            if has_right_neighbor:
+                cb.ax.set_title("|resp|(m)", fontsize=7.5, weight="bold", pad=3)
+            else:
+                cb.set_label("|Pseudorange Residual| (m)", fontsize=8.5, weight="bold")
+            cb.ax.tick_params(labelsize=7.5 if has_right_neighbor else 8)
         if not slips.empty:
-            ax.legend(loc="upper right", fontsize=8.5, framealpha=0.9)
+            ax.legend(loc="upper right", fontsize=8.5, framealpha=0.9, markerscale=1.45)
         ax.grid(self.grid_on.get(), alpha=0.25, ls=":")
 
     def _draw_multipath_skyplot(self, ax):
@@ -4312,6 +4520,8 @@ class RTKPlotApp:
         ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=7.5, ncol=3, framealpha=0.85)
 
     def _draw_covariance(self, ax, p):
+        cols = self._get_mode_colors("Covariance", 4)
+        kw = self._get_line_kwargs("Covariance", default_ls="-", default_lw=1.1)
         if self.data["has_truth"]:
             sde = p.sigE if "sigE" in p.columns else (p.sde if "sde" in p.columns else pd.Series(0, index=p.index))
             t_gap, de_gap, sde_gap = insert_time_gaps(p.time, p.de, sde)
@@ -4319,9 +4529,9 @@ class RTKPlotApp:
             bound_pos = 3.0 * sde_gap
             bound_neg = -3.0 * sde_gap
 
-            ax.plot(t_gap, de_gap, color="#1f77b4", lw=1.1, label="Actual East Error (m)")
-            ax.plot(t_gap, bound_pos, color="#d62728", ls="--", lw=1.0, label="+3σ Filter Bound (3*sde)")
-            ax.plot(t_gap, bound_neg, color="#d62728", ls="--", lw=1.0, label="-3σ Filter Bound (-3*sde)")
+            ax.plot(t_gap, de_gap, color=cols[0], label="Actual East Error (m)", **kw)
+            ax.plot(t_gap, bound_pos, color=cols[3] if len(cols) > 3 else "#E5002B", ls="--", lw=1.0, label="+3σ Filter Bound (3*sde)")
+            ax.plot(t_gap, bound_neg, color=cols[3] if len(cols) > 3 else "#E5002B", ls="--", lw=1.0, label="-3σ Filter Bound (-3*sde)")
 
             if hasattr(self, "_apply_robust_ylim"):
                 self._apply_robust_ylim(ax, [p.de, 3.0 * sde, -3.0 * sde], is_symmetric=True, min_span=2.0)
@@ -4340,7 +4550,7 @@ class RTKPlotApp:
             sdn = p.sigN if "sigN" in p.columns else p.sdn
             sdu = p.sigU if "sigU" in p.columns else p.sdu
             t_gap, sde_gap, sdn_gap, sdu_gap = insert_time_gaps(p.time, sde, sdn, sdu)
-            for s_arr, col, lbl in [(sde_gap, "#1f77b4", "3σ East"), (sdn_gap, "#ff7f0e", "3σ North"), (sdu_gap, "#2ca02c", "3σ Up")]:
+            for s_arr, col, lbl in [(sde_gap, cols[0], "3σ East"), (sdn_gap, cols[1], "3σ North"), (sdu_gap, cols[2], "3σ Up")]:
                 ax.plot(t_gap, 3.0 * s_arr, color=col, ls="--", lw=1.0, label=f"+{lbl}")
                 ax.plot(t_gap, -3.0 * s_arr, color=col, ls=":", lw=1.0, label=f"-{lbl}")
             ax.set_xlabel("Time from start (s)")
@@ -4415,9 +4625,10 @@ class RTKPlotApp:
             self._draw_trajectory_error_heatmap(ax, p, full)
         elif name == "Position Error":
             if self.data["has_truth"]:
+                cols = self._get_mode_colors("Position Error", 2)
                 t_gap, eh_gap, e3d_gap = insert_time_gaps(p.time, p.eh, p.e3d)
-                ax.plot(t_gap, eh_gap, lw=.6, label="Horizontal")
-                ax.plot(t_gap, e3d_gap, lw=.6, label="3D")
+                ax.plot(t_gap, eh_gap, lw=.85, color=cols[0], label="Horizontal")
+                ax.plot(t_gap, e3d_gap, lw=.85, color=cols[1], label="3D")
                 self._apply_robust_ylim(ax, [p.eh, p.e3d], non_negative=True, min_span=2.0)
                 ax.legend(fontsize=7 if not is_single else 9)
                 ax.set(title="Position Error", xlabel="Time (s)", ylabel="m")
@@ -4425,55 +4636,68 @@ class RTKPlotApp:
                 ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
                 ax.set(title="Position Error")
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Solution Status":
+            cols = self._get_mode_colors("Solution Status", 1)
             t_gap, q_g = insert_time_gaps(p.time, p.q)
-            ax.step(t_gap, q_g, where="post", lw=.65)
+            ax.step(t_gap, q_g, where="post", lw=.85, color=cols[0])
             ax.set(title="Solution Status", xlabel="Time (s)", ylabel="Q")
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "AR Ratio":
             self._draw_ar_ratio(ax, p)
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Differential Age":
             self._draw_differential_age(ax, p)
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Satellites":
             self._draw_sats(ax)
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name in ("Elevation vs C/N0", "Elevation vs C/N₀"):
             ss = s.query("freq == 1 and snr > 0") if not s.empty else s
             if not ss.empty:
-                ax.scatter(ss.el, ss.snr, s=2, alpha=.15)
+                cols = self._get_mode_colors("Elevation vs C/N0", 1)
+                ax.scatter(ss.el, ss.snr, s=2, alpha=.18, color=cols[0])
             ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
         elif name == "Height":
+            cols = self._get_mode_colors("Height", 2)
             t_gap, u_gap = insert_time_gaps(p.time, p.U)
-            ax.plot(t_gap, u_gap, lw=.7, label="RTK U")
+            ax.plot(t_gap, u_gap, lw=.85, color=cols[0], label="RTK U")
             if self.data["has_truth"]:
                 t_gt_gap, gt_u_gap = insert_time_gaps(p.time, p.gt_U)
-                ax.plot(t_gt_gap, gt_u_gap, lw=.7, ls="--", label="Truth U")
+                ax.plot(t_gt_gap, gt_u_gap, lw=.85, color=cols[1], ls="--", label="Truth U")
             ax.set(title=name, ylabel="Up (m)"); ax.legend(fontsize=7)
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "DOP":
             self._draw_dop(ax)
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Residuals":
             self._draw_residuals(ax)
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Cycle Slips":
             self._draw_slips(ax)
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Satellite Visibility Gantt":
             self._draw_satellite_visibility_gantt(ax, s)
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "Multipath Skyplot":
             self._draw_multipath_skyplot(ax)
         elif name == "Per-PRN Residuals":
@@ -4481,29 +4705,34 @@ class RTKPlotApp:
         elif name == "Covariance":
             self._draw_covariance(ax, p)
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "False Fix Analysis":
             self._draw_false_fix(ax, p)
         elif name == "ENU Position":
+            cols = self._get_mode_colors("ENU Position", 3)
             t_gap, e_gap, n_gap, u_gap = insert_time_gaps(p.time, p["E"], p["N"], p["U"])
-            for c_val, col, c_name in zip([e_gap, n_gap, u_gap], ["#2878B5", "#E07A2D", "#36965A"], ["E", "N", "U"]):
-                ax.plot(t_gap, c_val, lw=.65, label=c_name, color=col)
+            for c_val, col, c_name in zip([e_gap, n_gap, u_gap], cols, ["E", "N", "U"]):
+                ax.plot(t_gap, c_val, lw=.85, label=c_name, color=col)
             ax.set(title=name, ylabel="Position (m)")
             ax.legend(fontsize=6 if not is_single else 8, ncol=3)
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name == "ENU Error":
             if self.data["has_truth"]:
+                cols = self._get_mode_colors("ENU Error", 3)
                 t_gap, de_gap, dn_gap, du_gap = insert_time_gaps(p.time, p["de"], p["dn"], p["du"])
-                for c_val, col, c_name in zip([de_gap, dn_gap, du_gap], ["#2878B5", "#E07A2D", "#36965A"], ["DE", "DN", "DU"]):
-                    ax.plot(t_gap, c_val, lw=.65, label=c_name, color=col)
+                for c_val, col, c_name in zip([de_gap, dn_gap, du_gap], cols, ["DE", "DN", "DU"]):
+                    ax.plot(t_gap, c_val, lw=.85, label=c_name, color=col)
                 ax.axhline(0, color="k", lw=.5)
                 ax.legend(fontsize=6 if not is_single else 8, ncol=3)
             else:
                 ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
             ax.set(title=name, ylabel="Error (m)")
             self._set_datetime_axis(ax)
-            self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
+            if not getattr(self, "_is_exporting", False):
+                self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=.7, alpha=.65))
         elif name in ("C/N0", "C/N₀"):
             self._draw_cn0(ax)
             ax.set_title(name)
@@ -5262,10 +5491,77 @@ class RTKPlotApp:
         index=int(np.argmin(distance))
         return index,float(distance[index])
 
+    def _on_color_combo_changed(self, _e=None):
+        val = self.line_color.get() if hasattr(self, "line_color") else LINE_COLOR_OPTIONS[0]
+        if "Custom" in val or "自定义" in val:
+            self._pick_custom_line_color()
+            return
+        cols = self._resolve_palette_from_option(val, getattr(self, "custom_picked_color", "#FF6D00"))
+        if hasattr(self, "color_swatch_btn") and cols:
+            self.color_swatch_btn.configure(bg=cols[0])
+        self._on_style_changed()
+
+    def _pick_custom_line_color(self):
+        from tkinter import colorchooser
+        init_c = getattr(self, "custom_picked_color", "#FF6D00")
+        rgb, hex_c = colorchooser.askcolor(color=init_c, title="选择曲线颜色 (Pick Line Color)", parent=self.root)
+        if hex_c:
+            self.custom_picked_color = hex_c
+            if hasattr(self, "line_color"):
+                self.line_color.set("Custom... (自定义颜色 🎨)")
+            if hasattr(self, "color_swatch_btn"):
+                self.color_swatch_btn.configure(bg=hex_c)
+            self._on_style_changed()
+
+    @staticmethod
+    def _resolve_palette_from_option(opt_str: str, custom_hex: str = "#FF6D00") -> list[str]:
+        if not opt_str or "Default" in opt_str or "默认" in opt_str:
+            return list(VIVID_LINE_PALETTE)
+        if "Warm-Cool" in opt_str:
+            return ["#0066FF", "#E5002B", "#00A843", "#FF6D00", "#111111", "#9D00FF", "#757575", "#00B4D8"]
+        if "Publication" in opt_str:
+            return ["#111111", "#E5002B", "#0066FF", "#00A843", "#FF6D00", "#757575", "#9D00FF", "#00B4D8"]
+        single_map = {
+            "Orange": "#FF6D00",
+            "Green": "#00A843",
+            "Black": "#111111",
+            "Red": "#E5002B",
+            "Gray": "#757575",
+            "Blue": "#0066FF",
+            "Purple": "#9D00FF",
+            "Cyan": "#00B4D8",
+        }
+        picked = custom_hex or "#FF6D00"
+        for k, hex_v in single_map.items():
+            if opt_str.startswith(k):
+                picked = hex_v
+                break
+        rest = [c for c in VIVID_LINE_PALETTE if c.lower() != picked.lower()]
+        return [picked] + rest
+
+    def _get_mode_colors(self, mode_name=None, count=None) -> list[str]:
+        style = self.curve_styles.get(mode_name) if mode_name else None
+        if not style:
+            style = self.curve_styles.get("global")
+        if style and "line_color" in style:
+            opt = style["line_color"]
+            chex = style.get("custom_hex", getattr(self, "custom_picked_color", "#FF6D00"))
+            pal = self._resolve_palette_from_option(opt, chex)
+        else:
+            pal = list(VIVID_LINE_PALETTE)
+        if count:
+            if count > len(pal):
+                pal = (pal * ((count // len(pal)) + 1))[:count]
+            else:
+                pal = pal[:count]
+        return pal
+
     def _on_style_changed(self):
         scope = self.line_scope.get()
         style_dict = {
             "line_style": self.line_style.get(),
+            "line_color": self.line_color.get() if hasattr(self, "line_color") else LINE_COLOR_OPTIONS[0],
+            "custom_hex": getattr(self, "custom_picked_color", "#FF6D00"),
             "line_width": float(self.line_width.get()),
             "marker_style": self.marker_style.get(),
             "marker_size": float(self.marker_size.get()),
@@ -5275,7 +5571,12 @@ class RTKPlotApp:
             if current_mode == "Dashboard":
                 current_mode = self.dashboard_modes[self.selected_dashboard_index] if self.dashboard_modes else "Dashboard"
             elif current_mode == "Custom Analysis":
-                current_mode = self.custom_modes[self.selected_custom_panel] if self.custom_modes else "Custom Analysis"
+                if self.custom_panels and 0 <= self.selected_custom_panel < len(self.custom_panels):
+                    current_mode = self.custom_panels[self.selected_custom_panel].get("mode") or "Custom Analysis"
+                elif self.custom_modes and 0 <= self.selected_custom_panel < len(self.custom_modes):
+                    current_mode = self.custom_modes[self.selected_custom_panel]
+                else:
+                    current_mode = "Custom Analysis"
             self.curve_styles[current_mode] = style_dict
         else:
             self.curve_styles["global"] = style_dict
@@ -5284,6 +5585,11 @@ class RTKPlotApp:
     def _reset_curve_styles(self):
         self.curve_styles.clear()
         self.line_style.set("Solid (―)")
+        if hasattr(self, "line_color"):
+            self.line_color.set(LINE_COLOR_OPTIONS[0])
+        self.custom_picked_color = "#FF6D00"
+        if hasattr(self, "color_swatch_btn"):
+            self.color_swatch_btn.configure(bg="#FF6D00")
         self.line_width.set(1.2)
         self.marker_style.set("None")
         self.marker_size.set(3.0)
@@ -5666,8 +5972,113 @@ class RTKPlotApp:
         handles, labels = ax.get_legend_handles_labels()
         if handles:
             by_label = dict(zip(labels, handles))
-            ax.legend(by_label.values(), by_label.keys(), loc="upper right", bbox_to_anchor=(1.15, 1.05), fontsize=8)
-        ax.set_title("Satellite Skyplot", pad=18, fontsize=12, weight="bold")
+            ax.legend(by_label.values(), by_label.keys(), loc="upper right", bbox_to_anchor=(1.15, 1.05), fontsize=12)
+        ax.set_title("Satellite Skyplot", pad=18, fontsize=16.5, weight="bold")
+
+    def _apply_export_typography(self, fig, mode_name):
+        """Scale up fonts and curve weights for crisp, publication/presentation-grade exported figures."""
+        is_composite = mode_name in ("Custom Analysis", "Dashboard", "Env & Geometry Combined", "Skyplot & C/N0 (Env)")
+        sup = getattr(fig, "_suptitle", None)
+        if sup is not None:
+            sup.set_fontsize(18.5 if is_composite else 18.0)
+            sup.set_weight("bold")
+
+        title_sz = 13.5 if is_composite else 16.5
+        label_sz = 11.5 if is_composite else 14.0
+        tick_sz = 10.5 if is_composite else 12.5
+        leg_sz = 10.0 if is_composite else 12.5
+        cb_label_sz = 11.0 if is_composite else 13.5
+        cb_tick_sz = 10.0 if is_composite else 11.5
+
+        plot_ax_set = set(self.plot_axes)
+        twin_ax_set = set(getattr(self, "cov_twin_axes", {}).values())
+
+        for ax in list(fig.axes):
+            if ax in plot_ax_set:
+                p_mode = getattr(ax, "_panel_mode", mode_name)
+                try:
+                    t_txt = ax.get_title()
+                    if t_txt:
+                        ax.set_title(
+                            t_txt,
+                            fontsize=title_sz,
+                            weight="bold",
+                            pad=14 if getattr(ax, "name", "") == "polar" else 8
+                        )
+                    for loc in ("left", "right"):
+                        sub_t = ax.get_title(loc=loc)
+                        if sub_t:
+                            ax.set_title(sub_t, loc=loc, fontsize=max(11.0, title_sz - 2.5), weight="bold")
+                except Exception:
+                    pass
+
+                try:
+                    if ax.get_xlabel():
+                        ax.xaxis.label.set_size(label_sz)
+                        ax.xaxis.label.set_weight("bold")
+                    if ax.get_ylabel():
+                        ax.yaxis.label.set_size(label_sz)
+                        ax.yaxis.label.set_weight("bold")
+                    if hasattr(ax, "zaxis") and hasattr(ax, "get_zlabel") and ax.get_zlabel():
+                        ax.zaxis.label.set_size(label_sz)
+                        ax.zaxis.label.set_weight("bold")
+                except Exception:
+                    pass
+
+                try:
+                    if p_mode == "Satellite Visibility Gantt" and len(ax.get_yticks()) > 22:
+                        ax.tick_params(axis="x", labelsize=tick_sz)
+                        ax.tick_params(axis="y", labelsize=9.5 if is_composite else 10.5)
+                    elif p_mode == "Per-PRN Residuals" and len(ax.get_xticks()) > 22:
+                        ax.tick_params(axis="x", labelsize=9.5 if is_composite else 10.5)
+                        ax.tick_params(axis="y", labelsize=tick_sz)
+                    else:
+                        ax.tick_params(axis="both", which="major", labelsize=tick_sz)
+                    if hasattr(ax, "zaxis"):
+                        ax.tick_params(axis="z", which="major", labelsize=tick_sz - 1.0)
+                except Exception:
+                    pass
+
+                leg = ax.get_legend()
+                if leg is not None:
+                    try:
+                        texts = leg.get_texts()
+                        target_leg_sz = leg_sz - 1.0 if len(texts) >= 5 else leg_sz
+                        for txt in texts:
+                            txt.set_fontsize(target_leg_sz)
+                        if leg.get_title():
+                            leg.get_title().set_fontsize(target_leg_sz)
+                    except Exception:
+                        pass
+
+                if not is_composite:
+                    for line in ax.get_lines():
+                        try:
+                            lw = float(line.get_linewidth())
+                            ls = line.get_linestyle()
+                            if lw > 0 and ls not in (":", "--", "None", "none", "") and lw < 1.35:
+                                line.set_linewidth(1.4)
+                        except Exception:
+                            pass
+            elif ax in twin_ax_set:
+                try:
+                    ax.yaxis.label.set_size(cb_label_sz)
+                    ax.yaxis.label.set_weight("bold")
+                    ax.tick_params(axis="y", labelsize=cb_tick_sz)
+                except Exception:
+                    pass
+            else:
+                # Colorbar axes
+                try:
+                    if ax.get_ylabel():
+                        ax.yaxis.label.set_size(cb_label_sz)
+                        ax.yaxis.label.set_weight("bold")
+                    if ax.get_xlabel():
+                        ax.xaxis.label.set_size(cb_label_sz)
+                        ax.xaxis.label.set_weight("bold")
+                    ax.tick_params(labelsize=cb_tick_sz)
+                except Exception:
+                    pass
 
     def _finalize_export_overlays_and_zoom(self, orig_data, focus_seg_idx, use_full_context):
         """Hide interactive scrub cursors/badges and apply segment bands & focus window zoom."""
@@ -5817,17 +6228,17 @@ class RTKPlotApp:
                     ax.grid(self.grid_on.get(), alpha=0.3)
                 fig.suptitle("RTKLIB Solution Dashboard", fontsize=15, weight="bold")
             elif mode_name == "Skyplot":
-                fig.set_size_inches(8, 8)
+                fig.set_size_inches(9, 8.5)
                 ax = fig.add_subplot(111, projection="polar")
                 self.plot_axes = [ax]
                 self._draw_sky_export(ax, s)
             elif mode_name == "3D Ground Track":
-                fig.set_size_inches(11, 7.5)
+                fig.set_size_inches(11.5, 8)
                 ax = fig.add_subplot(111, projection="3d")
                 self.plot_axes = [ax]
                 self._draw_3d_track(ax, pos_sub, orig_data["pos"])
             elif mode_name == "ENU Position":
-                fig.set_size_inches(10, 6)
+                fig.set_size_inches(11.5, 7.2)
                 axs = fig.subplots(3, 1, sharex=True)
                 self.plot_axes = list(axs)
                 self._draw_enu_positions(axs, p)
@@ -5836,12 +6247,13 @@ class RTKPlotApp:
                 for a in axs[:-1]:
                     a.set_xlabel("")
                     a.tick_params(labelbottom=False)
+                fig.align_ylabels(axs)
             elif mode_name == "ENU Error":
-                fig.set_size_inches(10, 6)
+                fig.set_size_inches(11.5, 7.2)
                 if not self.data["has_truth"]:
                     ax = fig.add_subplot(111)
                     self.plot_axes = [ax]
-                    ax.text(0.5, 0.5, "No Ground Truth Loaded — Position Errors Unavailable", ha="center", va="center", transform=ax.transAxes, fontsize=11)
+                    ax.text(0.5, 0.5, "No Ground Truth Loaded — Position Errors Unavailable", ha="center", va="center", transform=ax.transAxes, fontsize=14)
                 else:
                     axs = fig.subplots(3, 1, sharex=True)
                     self.plot_axes = list(axs)
@@ -5851,29 +6263,32 @@ class RTKPlotApp:
                     for a in axs[:-1]:
                         a.set_xlabel("")
                         a.tick_params(labelbottom=False)
+                    fig.align_ylabels(axs)
             elif mode_name == "Multipath Skyplot":
-                fig.set_size_inches(8, 8)
+                fig.set_size_inches(9, 8.5)
                 ax = fig.add_subplot(111, projection="polar")
                 self.plot_axes = [ax]
                 self._draw_multipath_skyplot(ax)
             elif mode_name == "Per-PRN Residuals":
-                fig.set_size_inches(13, 5)
+                fig.set_size_inches(13.5, 6.2)
                 ax = fig.add_subplot(111)
                 self.plot_axes = [ax]
                 self._draw_per_prn_residuals(ax)
                 ax.grid(self.grid_on.get(), alpha=0.3)
             elif mode_name == "Error Histogram":
-                fig.set_size_inches(13, 4.5)
+                fig.set_size_inches(14, 5.5)
                 axs = fig.subplots(1, 3, sharey=True)
                 self.plot_axes = list(axs)
                 self._draw_error_histogram(axs, p)
+                fig.align_xlabels(axs)
             elif mode_name == "Constellation Summary":
-                fig.set_size_inches(13, 4.5)
+                fig.set_size_inches(13.5, 5.8)
                 axs = fig.subplots(1, 2)
                 self.plot_axes = list(axs)
                 self._draw_constellation_summary(axs, s)
+                fig.align_xlabels(axs)
             else:
-                fig.set_size_inches(10, 6)
+                fig.set_size_inches(11.5, 6.8)
                 ax = fig.add_subplot(111)
                 self.plot_axes = [ax]
                 if mode_name == "Gnd Trk":
@@ -5881,20 +6296,22 @@ class RTKPlotApp:
                 elif mode_name == "Trajectory Error Heatmap":
                     self._draw_trajectory_error_heatmap(ax, p, full)
                 elif mode_name == "Height":
-                    kw = self._get_line_kwargs("Height")
+                    cols = self._get_mode_colors("Height", 2)
+                    kw = self._get_line_kwargs("Height", default_ls="-", default_lw=1.4)
                     t_gap, u_gap = insert_time_gaps(p.time, p.U)
-                    ax.plot(t_gap, u_gap, label="RTK U", **kw)
+                    ax.plot(t_gap, u_gap, color=cols[0], label="RTK U", **kw)
                     if self.data["has_truth"]:
                         t_gt_gap, gt_u_gap = insert_time_gaps(p.time, p.gt_U)
-                        ax.plot(t_gt_gap, gt_u_gap, ls="--", color="#cf4b43", lw=kw.get("lw", 1.2), label="Truth U")
+                        ax.plot(t_gt_gap, gt_u_gap, ls="--", color=cols[1], lw=kw.get("lw", 1.4), label="Truth U")
                     ax.set(title="Height (Up component)", xlabel="Date/time", ylabel="Up (m)")
                     ax.legend(loc="best")
                     self._set_datetime_axis(ax)
                 elif mode_name == "Solution Status":
+                    cols = self._get_mode_colors("Solution Status", 1)
                     t_gap, q_g = insert_time_gaps(p.time, p.q)
-                    ax.step(t_gap, q_g, where="post", lw=1.2, color="#0B2B52", label="Solution Status Q")
+                    ax.step(t_gap, q_g, where="post", lw=1.5, color=cols[0], label="Solution Status Q")
                     ax.set(title="Solution Status (Q: 1=FIX, 2=FLOAT, 5=SINGLE)", xlabel="Date/time", ylabel="Q")
-                    ax.legend(loc="best", fontsize=8)
+                    ax.legend(loc="best", fontsize=12)
                     self._set_datetime_axis(ax)
                 elif mode_name == "AR Ratio":
                     self._draw_ar_ratio(ax, p)
@@ -5937,16 +6354,19 @@ class RTKPlotApp:
                 elif mode_name in ("Elevation vs C/N0", "Elevation vs C/N₀"):
                     ss = s.query("freq == 1 and snr > 0") if (s is not None and not s.empty) else s
                     if ss is not None and not ss.empty:
-                        ax.scatter(ss.el, ss.snr, s=2, alpha=.15, label="L1 Observations")
-                        ax.legend(loc="lower right", fontsize=8)
+                        cols = self._get_mode_colors("Elevation vs C/N0", 1)
+                        ax.scatter(ss.el, ss.snr, s=5, alpha=.2, color=cols[0], label="L1 Observations")
+                        ax.legend(loc="lower right", fontsize=12)
                     ax.set(title="Elevation vs C/N₀", xlabel="Elevation (°)", ylabel="dB-Hz")
                 elif mode_name in ("Position Error", "Position error"):
                     if self.data["has_truth"]:
+                        cols = self._get_mode_colors("Position Error", 2)
+                        kw = self._get_line_kwargs("Position Error", default_ls="-", default_lw=1.4)
                         t_gap, eh_gap, e3d_gap = insert_time_gaps(p.time, p.eh, p.e3d)
-                        ax.plot(t_gap, eh_gap, lw=.8, label="Horizontal")
-                        ax.plot(t_gap, e3d_gap, lw=.8, label="3D")
+                        ax.plot(t_gap, eh_gap, color=cols[0], label="Horizontal", **kw)
+                        ax.plot(t_gap, e3d_gap, color=cols[1], label="3D", **kw)
                         self._apply_robust_ylim(ax, [p.eh, p.e3d], non_negative=True, min_span=2.0)
-                        ax.legend(fontsize=8, loc="best")
+                        ax.legend(fontsize=12, loc="best")
                         ax.set(title="Position Error", xlabel="Time (s)", ylabel="Error (m)")
                     else:
                         ax.text(.5, .5, "No truth loaded", ha="center", transform=ax.transAxes)
@@ -5972,6 +6392,9 @@ class RTKPlotApp:
 
             # Apply colored segment bands / tracks and segment focus zoom
             self._finalize_export_overlays_and_zoom(orig_data, focus_seg_idx, use_full_context)
+
+            # Apply presentation-grade large typography to exported plots
+            self._apply_export_typography(fig, mode_name)
 
             if need_tight:
                 try:

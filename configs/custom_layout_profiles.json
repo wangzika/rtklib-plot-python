@@ -112,5 +112,40 @@
       "Covariance",
       "Body-Frame Error"
     ]
+  },
+  "RTK3方案 (6图)": {
+    "preset": "Auto Grid (自适应等分)",
+    "modes": [
+      "Satellites",
+      "Residual Triad",
+      "Trajectory Error Heatmap",
+      "DOP",
+      "Satellite Visibility Gantt",
+      "ENU Error"
+    ]
+  },
+  "RTK精细全维度对比 (8图全景)": {
+    "preset": "Auto Grid (自适应等分)",
+    "modes": [
+      "Gnd Trk",
+      "ENU Error Curves",
+      "Used Satellites",
+      "DOP Full Compare",
+      "Pseudorange Variance",
+      "Residual Triad",
+      "Satellite Visibility Gantt",
+      "AR Ratio"
+    ]
+  },
+  "误差与几何专项对比 (6图)": {
+    "preset": "Auto Grid (自适应等分)",
+    "modes": [
+      "Gnd Trk",
+      "ENU Error Curves",
+      "DOP Full Compare",
+      "Used Satellites",
+      "Pseudorange Variance",
+      "Error CDF"
+    ]
   }
 }

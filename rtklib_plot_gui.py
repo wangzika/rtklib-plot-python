@@ -96,14 +96,14 @@ PLOT_CATEGORIES = {
         "Gnd Trk", "Trajectory Error Heatmap", "3D Ground Track", "ENU Position", "Height", "Body-Frame Error"
     ],
     "定位误差与精度评估 (Accuracy & Errors)": [
-        "ENU Error", "Trajectory Error Heatmap", "3D Ground Track", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad", "Body-Frame Error"
+        "ENU Error", "ENU Error Curves", "Trajectory Error Heatmap", "3D Ground Track", "False Fix Analysis", "Error CDF", "Error Histogram", "Covariance", "Residual Triad", "Pseudorange Variance", "Body-Frame Error"
     ],
     "解算状态与可靠性 (Status & Reliability)": [
         "Solution Status", "AR Ratio", "Differential Age", "False Fix Analysis", "Innovation / NIS"
     ],
     "卫星观测与信号质量 (Satellites & Signal Quality)": [
-        "Satellites", "DOP", "Directional DOP", "Skyplot & C/N0 (Env)", "Skyplot", "C/N0", "Satellite Elevation",
-        "Residuals", "Residual Triad", "Multipath Proxy", "Multipath Skyplot", "Cycle Slips",
+        "Satellites", "Used Satellites", "DOP", "DOP Full Compare", "Directional DOP", "Skyplot & C/N0 (Env)", "Skyplot", "C/N0", "Satellite Elevation",
+        "Residuals", "Residual Triad", "Pseudorange Variance", "Multipath Proxy", "Multipath Skyplot", "Cycle Slips",
         "Satellite Visibility Gantt", "Per-PRN Residuals", "Top Outlier Satellites", "El vs SNR & Resp", "Clock Bias & ISB"
     ]
 }
@@ -124,14 +124,18 @@ MODE_BILINGUAL = {
     "ENU Position": "ENU位置时序 (ENU Pos)",
     "Height": "大地高程 (Height)",
     "ENU Error": "ENU定位误差 (ENU Error)",
+    "ENU Error Curves": "ENU各分量误差对比 (ENU Error Curves)",
     "Solution Status": "解状态 (Solution Status)",
     "AR Ratio": "Ratio比值检验 (AR Ratio)",
     "Differential Age": "差分时延与解状态 (Age & Q)",
     "Satellites": "卫星数量 (Satellites)",
+    "Used Satellites": "卫星使用数量对比 (Used Satellites)",
     "DOP": "DOP精度因子 (DOP)",
+    "DOP Full Compare": "DOP全几何因子对比 (PDOP/HDOP/VDOP)",
     "Directional DOP": "方向DOP几何因子 (Directional DOP)",
     "Residuals": "伪距与载波残差 (Residuals)",
     "Residual Triad": "残差统计三线时序 (Residual Triad)",
+    "Pseudorange Variance": "伪距残差方差对比 (Pseudorange Variance)",
     "El vs SNR & Resp": "高度角-载噪比-残差 (El vs SNR & Resp)",
     "Top Outlier Satellites": "粗差卫星贡献排行 (Top Outliers)",
     "Multipath Proxy": "多路径效应 (Multipath)",
@@ -189,14 +193,73 @@ DIAGNOSTIC_WORKSPACES = [
     }
 ]
 
+COMPARE_PRESETS = {
+    "⭐ RTK3方案 (6图标准对比)": [
+        "Satellites",
+        "Residual Triad",
+        "Gnd Trk",
+        "DOP",
+        "Satellite Visibility Gantt",
+        "ENU Error"
+    ],
+    "🚀 RTK精细全维度对比 (8图全景)": [
+        "Gnd Trk",
+        "ENU Error Curves",
+        "Used Satellites",
+        "DOP Full Compare",
+        "Pseudorange Variance",
+        "Residual Triad",
+        "Satellite Visibility Gantt",
+        "AR Ratio"
+    ],
+    "📊 误差与几何专项对比 (6图)": [
+        "Gnd Trk",
+        "ENU Error Curves",
+        "DOP Full Compare",
+        "Used Satellites",
+        "Pseudorange Variance",
+        "Error CDF"
+    ],
+    "经典2图 (轨迹 + 水平误差)": [
+        "Gnd Trk",
+        "ENU Error"
+    ],
+    "精简4图 (轨迹 + 误差 + 卫星 + DOP)": [
+        "Gnd Trk",
+        "ENU Error",
+        "Satellites",
+        "DOP"
+    ],
+    "精度与状态 (4图)": [
+        "Gnd Trk",
+        "ENU Error",
+        "Solution Status",
+        "AR Ratio"
+    ],
+    "全维度8图对比": [
+        "Satellites",
+        "Residual Triad",
+        "Gnd Trk",
+        "DOP",
+        "Satellite Visibility Gantt",
+        "ENU Error",
+        "Solution Status",
+        "AR Ratio"
+    ],
+}
+
 PLOT_UNIT_GROUPS = {
     # 距离定位误差 (米) - 以 0 为中心对称
     "ENU Error": "error_m",
+    "ENU Error Curves": "error_m",
     "Body-Frame Error": "error_m",
     "Compare Error": "error_m",
     # 测量残差 (米) - 以 0 为中心对称
     "Residuals": "residual_m",
     "Residual Triad": "triad_m",
+    "Pseudorange Variance": "var_m2",
+    "Used Satellites": "sats_count",
+    "DOP Full Compare": "dop_ratio",
     "Per-PRN Residuals": "prn_residual_m",
     # 卫星颗数
     "Satellites": "sat_count",
@@ -258,6 +321,16 @@ class RTKPlotApp:
         self.selected_dashboard_index = 0; self.focused_dashboard_subplot = None
         self.multi_solutions = []; self.multi_compare_colors = list(VIVID_LINE_PALETTE[:6])
         self.selected_compare_subplot = 0; self.focused_compare_subplot = None
+        self.compare_layout_preset = tk.StringVar(value="⭐ RTK3方案 (6图标准对比)")
+        self.compare_modes = [
+            "Satellites",
+            "Residual Triad",
+            "Gnd Trk",
+            "DOP",
+            "Satellite Visibility Gantt",
+            "ENU Error"
+        ]
+        self.compare_gantt_solution_idx = 0
         self.time_cursors=[];self.sky_current=None;self.sky_labels=[];self.sky_plots=[];self.custom_modes=[];self.custom_panels=[];self.selected_custom_panel=0;self.focused_custom_panel=None;self.visible_panel_indices=[];self._drag_plot_name=None
         self.custom_page=0;self.custom_page_size=6
         self.custom_updaters=[];self.custom_dynamic_artists=[];self.dop_frames={};self.cov_twin_axes={}
@@ -308,8 +381,12 @@ class RTKPlotApp:
         self.root.bind("<R>", lambda _e: self.redraw())
         self.root.bind("<y>", lambda _e: self._toggle_global_robust_view())
         self.root.bind("<Y>", lambda _e: self._toggle_global_robust_view())
-        if pos and Path(pos).exists(): self.load_solution(Path(pos), reference)
-        elif diag.DEFAULT_POS.exists(): self.load_solution(diag.DEFAULT_POS, diag.DEFAULT_REF if diag.DEFAULT_REF.exists() else None)
+        if pos and Path(pos).exists():
+            stat = self._find_stat_file(Path(pos))
+            self.load_solution(Path(pos), reference, stat)
+        elif diag.DEFAULT_POS.exists():
+            stat = self._find_stat_file(diag.DEFAULT_POS)
+            self.load_solution(diag.DEFAULT_POS, diag.DEFAULT_REF if diag.DEFAULT_REF.exists() else None, stat)
         else: self.draw_empty("打开 RTKLIB .pos 文件开始绘图")
 
     def _step_epoch(self, step):
@@ -802,16 +879,52 @@ class RTKPlotApp:
         # Initial populate plot list
         self._refresh_plot_list()
 
-        # Multi-compare sidebar (Solution overlay manager)
+        # Multi-compare sidebar (Solution overlay & preset manager)
         self.compare_sidebar = ttk.Frame(self.scrollable_content)
-        ttk.Label(self.compare_sidebar, text="Multi-Compare", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 4))
-        ttk.Label(self.compare_sidebar, text="Overlay 2–4 solutions side-by-side with ground truth.", wraplength=180, justify=tk.LEFT).pack(anchor="w", pady=(0, 6))
-        ttk.Button(self.compare_sidebar, text="+ Add Solution (.pos)…", command=self.add_compare_solution).pack(fill=tk.X, pady=2)
-        ttk.Button(self.compare_sidebar, text="Open Reference (.csv)…", command=self.open_reference_file).pack(fill=tk.X, pady=2)
-        ttk.Separator(self.compare_sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
-        ttk.Label(self.compare_sidebar, text="Loaded Solutions:", font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        self.compare_list_container = ttk.Frame(self.compare_sidebar); self.compare_list_container.pack(fill=tk.BOTH, expand=True, pady=(4, 6))
-        ttk.Button(self.compare_sidebar, text="Clear Extra Solutions", command=self.clear_compare_solutions).pack(fill=tk.X, pady=2)
+
+        # 1. Title & Preset Selector Card
+        preset_card = ttk.LabelFrame(self.compare_sidebar, text="排版方案 (Layout Presets)", padding=6)
+        preset_card.pack(fill=tk.X, pady=(0, 6))
+
+        preset_row = ttk.Frame(preset_card)
+        preset_row.pack(fill=tk.X, pady=2)
+        ttk.Label(preset_row, text="方案:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 4))
+        self.compare_preset_combo = ttk.Combobox(
+            preset_row,
+            textvariable=self.compare_layout_preset,
+            values=list(COMPARE_PRESETS.keys()),
+            state="readonly",
+            font=("Segoe UI", 8)
+        )
+        self.compare_preset_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.compare_preset_combo.bind("<<ComboboxSelected>>", self._on_compare_preset_changed)
+
+        btn_row = ttk.Frame(preset_card)
+        btn_row.pack(fill=tk.X, pady=(4, 2))
+        ttk.Button(btn_row, text="➕ 加对比子图…", command=self._popup_add_compare_subplot_picker).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        ttk.Button(btn_row, text="↺ 恢复RTK3方案", command=self._reset_to_rtk3_preset).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
+
+        # 2. Add Solutions & Reference
+        action_card = ttk.LabelFrame(self.compare_sidebar, text="方案管理 (Solutions)", padding=6)
+        action_card.pack(fill=tk.X, pady=(0, 6))
+        ttk.Button(action_card, text="➕ 添加对比方案 (.pos + .stat)…", command=self.add_compare_solution).pack(fill=tk.X, pady=2)
+        ttk.Button(action_card, text="📂 关联/更换真值 (.csv)…", command=self.open_reference_file).pack(fill=tk.X, pady=2)
+
+        # 3. Gantt target solution selector
+        gantt_row = ttk.Frame(action_card)
+        gantt_row.pack(fill=tk.X, pady=(4, 2))
+        ttk.Label(gantt_row, text="泳道聚焦:", font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(0, 4))
+        self.compare_gantt_combo = ttk.Combobox(gantt_row, state="readonly", font=("Segoe UI", 8), width=13)
+        self.compare_gantt_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.compare_gantt_combo.bind("<<ComboboxSelected>>", self._on_compare_gantt_solution_changed)
+
+        # 4. Loaded Solutions List
+        sol_list_card = ttk.LabelFrame(self.compare_sidebar, text="已载入方案列表 (Loaded Solutions)", padding=6)
+        sol_list_card.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
+        self.compare_list_container = ttk.Frame(sol_list_card)
+        self.compare_list_container.pack(fill=tk.BOTH, expand=True, pady=(2, 4))
+
+        ttk.Button(self.compare_sidebar, text="清空除主方案外的对比方案", command=self.clear_compare_solutions).pack(fill=tk.X, pady=2)
 
         self.canvas=FigureCanvasTkAgg(self.fig,master=self.plot_frame); self.canvas.get_tk_widget().pack(side=tk.TOP,fill=tk.BOTH,expand=True)
         self.canvas.mpl_connect("draw_event",self._on_canvas_draw)
@@ -885,20 +998,40 @@ class RTKPlotApp:
         self.epoch_row_visible=not self.epoch_row_visible
         self.root.update_idletasks();self.canvas.draw_idle()
 
+    def _find_stat_file(self, pos_path: Path | str) -> Path | None:
+        if not pos_path: return None
+        p = Path(pos_path)
+        candidates = [
+            Path(str(p) + ".stat"),
+            p.with_suffix(".stat"),
+            p.parent / (p.stem + ".pos.stat"),
+            p.parent / (p.stem + ".stat"),
+        ]
+        for c in candidates:
+            if c.exists() and c.is_file():
+                return c
+        try:
+            lower_map = {f.name.lower(): f for f in p.parent.iterdir() if f.is_file()}
+            for c in candidates:
+                if c.name.lower() in lower_map:
+                    return lower_map[c.name.lower()]
+        except Exception:
+            pass
+        return None
+
     def open_file(self):
-        name=filedialog.askopenfilename(title="Open RTKLIB solution",filetypes=[("RTKLIB position files","*.pos *.txt *.csv"),("All files","*.*")])
-        if not name:return
-        pos=Path(name); stat=Path(str(pos)+".stat")
-        if not stat.exists():
-            if messagebox.askyesno("Satellite status file (.stat)", f"No matching status file found at:\n{stat.name}\n\nDo you want to select a .stat file manually?"):
-                stat_chosen=filedialog.askopenfilename(title="Select satellite status (.stat) file",filetypes=[("RTKLIB status files","*.stat *.txt"),("All files","*.*")])
-                stat=Path(stat_chosen) if stat_chosen else None
-            else:
-                stat=None
-        ref=self._find_reference(pos)
-        if ref is None and messagebox.askyesno("Reference data","Select a ground-truth CSV for position-error plots?"):
-            chosen=filedialog.askopenfilename(title="Select reference CSV",filetypes=[("CSV files","*.csv"),("All files","*.*")]); ref=Path(chosen) if chosen else None
-        self.load_solution(pos,ref,stat if (stat and Path(stat).exists()) else None)
+        name = filedialog.askopenfilename(title="Open RTKLIB solution", filetypes=[("RTKLIB position files", "*.pos *.txt *.csv"), ("All files", "*.*")])
+        if not name: return
+        pos = Path(name)
+        stat = self._find_stat_file(pos)
+        if not stat:
+            if messagebox.askyesno("Satellite status file (.stat)", f"No matching status file found at:\n{pos.name}.stat\n\nDo you want to select a .stat file manually?"):
+                stat_chosen = filedialog.askopenfilename(title="Select satellite status (.stat) file", filetypes=[("RTKLIB status files", "*.stat *.txt"), ("All files", "*.*")])
+                stat = Path(stat_chosen) if stat_chosen else None
+        ref = self._find_reference(pos)
+        if ref is None and messagebox.askyesno("Reference data", "Select a ground-truth CSV for position-error plots?"):
+            chosen = filedialog.askopenfilename(title="Select reference CSV", filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]); ref = Path(chosen) if chosen else None
+        self.load_solution(pos, ref, stat if (stat and Path(stat).exists()) else None)
 
     def open_stat_file(self):
         if self.data is None or self.pos_path is None:
@@ -960,6 +1093,7 @@ class RTKPlotApp:
         self.multi_solutions=[{
             "name": self.pos_path.stem,
             "path": self.pos_path,
+            "stat_path": self.stat_path,
             "data": self.data,
             "color": self.multi_compare_colors[0],
             "visible": tk.BooleanVar(value=True)
@@ -986,58 +1120,244 @@ class RTKPlotApp:
         if not hasattr(self, "compare_list_container"): return
         for child in self.compare_list_container.winfo_children():
             child.destroy()
+
+        if hasattr(self, "compare_gantt_combo"):
+            names = [f"[{i+1}] {s['name']}" for i, s in enumerate(self.multi_solutions)]
+            self.compare_gantt_combo.configure(values=names)
+            cur_idx = getattr(self, "compare_gantt_solution_idx", 0)
+            if names:
+                if cur_idx >= len(names):
+                    self.compare_gantt_solution_idx = 0
+                    cur_idx = 0
+                self.compare_gantt_combo.current(cur_idx)
+
         for idx, sol in enumerate(self.multi_solutions):
-            row = ttk.Frame(self.compare_list_container, padding=(2, 2))
-            row.pack(fill=tk.X, pady=2)
-            c_canvas = tk.Canvas(row, width=13, height=13, bg=sol["color"], highlightthickness=1, relief=tk.SOLID)
-            c_canvas.pack(side=tk.LEFT, padx=(0, 5))
-            disp_name = sol["name"] if len(sol["name"]) <= 14 else sol["name"][:13] + "…"
-            cb = ttk.Checkbutton(row, text=disp_name, variable=sol["visible"], command=self.redraw)
+            row = ttk.Frame(self.compare_list_container, relief=tk.GROOVE, borderwidth=1, padding=(4, 3))
+            row.pack(fill=tk.X, pady=3)
+
+            # Row 1: Swatch Button + Checkbox + Del/Main
+            top_bar = ttk.Frame(row)
+            top_bar.pack(fill=tk.X)
+
+            c_btn = tk.Button(
+                top_bar, width=2, height=1, bg=sol["color"], activebackground=sol["color"],
+                relief=tk.FLAT, bd=1, cursor="hand2",
+                command=lambda i=idx: self._pick_solution_color(i)
+            )
+            c_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+            disp_name = sol["name"] if len(sol["name"]) <= 16 else sol["name"][:15] + "…"
+            cb = ttk.Checkbutton(top_bar, text=disp_name, variable=sol["visible"], command=self.redraw)
             cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
             if idx > 0:
-                del_btn = ttk.Button(row, text="✕", width=2, command=lambda i=idx: self.remove_compare_solution(i))
+                del_btn = ttk.Button(top_bar, text="✕", width=2, command=lambda i=idx: self.remove_compare_solution(i))
                 del_btn.pack(side=tk.RIGHT)
+            else:
+                main_lbl = ttk.Label(top_bar, text="[主方案]", font=("Segoe UI", 7, "bold"), foreground="#0070C0")
+                main_lbl.pack(side=tk.RIGHT)
+
+            # Row 2: .stat file info & association button
+            stat_bar = ttk.Frame(row)
+            stat_bar.pack(fill=tk.X, pady=(2, 0))
+            sat_cnt = len(sol["data"].get("sat", []))
+            if sat_cnt > 0:
+                s_lbl = ttk.Label(stat_bar, text=f"📊 .stat: {sat_cnt:,}条", font=("Segoe UI", 7), foreground="#008000")
+                s_lbl.pack(side=tk.LEFT)
+                s_btn = ttk.Button(stat_bar, text="换.stat", width=6, command=lambda i=idx: self._choose_stat_for_solution(i))
+                s_btn.pack(side=tk.RIGHT)
+            else:
+                s_lbl = ttk.Label(stat_bar, text="⚠️ 无.stat数据", font=("Segoe UI", 7), foreground="#d90429")
+                s_lbl.pack(side=tk.LEFT)
+                s_btn = ttk.Button(stat_bar, text="+选.stat", width=6, command=lambda i=idx: self._choose_stat_for_solution(i))
+                s_btn.pack(side=tk.RIGHT)
+
+            # Row 3: Metrics preview
+            p = sol["data"].get("pos")
+            if p is not None and not p.empty:
+                m_bar = ttk.Frame(row)
+                m_bar.pack(fill=tk.X, pady=(1, 0))
+                fix_rate = (p.q == 1).mean() * 100 if "q" in p else 0
+                sat_mean = p.ns.mean() if "ns" in p else 0
+                h_rms = np.sqrt(np.mean(p.eh.dropna()**2)) if ("eh" in p and p.eh.dropna().size) else None
+                m_text = f"Fix:{fix_rate:.0f}% | 卫星:{sat_mean:.1f}颗"
+                if h_rms is not None:
+                    m_text += f" | RMS:{h_rms:.2f}m"
+                ttk.Label(m_bar, text=m_text, font=("Segoe UI", 7), foreground="#555").pack(side=tk.LEFT)
+
         self._update_sidebar_scroll()
 
     def add_compare_solution(self):
         if self.data is None:
-            messagebox.showwarning("Add solution", "Please open a primary .pos solution file first.")
+            messagebox.showwarning("提示", "请先打开主解算文件 (.pos)。")
             return
-        if len(self.multi_solutions) >= 6:
-            messagebox.showinfo("Limit reached", "You have reached the limit of 6 overlay solutions.")
+        if len(self.multi_solutions) >= 8:
+            messagebox.showinfo("提示", "已达到对比方案上限 (8 组)。")
             return
-        name = filedialog.askopenfilename(title="Add RTKLIB solution for comparison", filetypes=[("RTKLIB position files", "*.pos *.txt *.csv"), ("All files", "*.*")])
+        names = filedialog.askopenfilenames(
+            title="选择要对比的 RTKLIB 解算文件 (.pos / .txt / .csv)",
+            filetypes=[("RTKLIB 解算文件", "*.pos *.txt *.csv"), ("所有文件", "*.*")]
+        )
+        if not names: return
+        added_count = 0
+        for name in names:
+            if len(self.multi_solutions) >= 8:
+                break
+            pos_path = Path(name)
+            stat_path = self._find_stat_file(pos_path)
+            ref_path = self.ref_path or self._find_reference(pos_path)
+            if not stat_path and len(names) == 1:
+                if messagebox.askyesno("卫星状态文件 (.stat)", f"未自动找到解算文件对应的 .stat 状态文件：\n{pos_path.name}.stat\n\n是否手动选择对应的 .stat 文件以支持残差与周跳对比？"):
+                    chosen_stat = filedialog.askopenfilename(
+                        title=f"为 [{pos_path.name}] 选择卫星状态文件 (.stat)",
+                        filetypes=[("RTKLIB .stat 文件", "*.stat *.pos.stat *.txt"), ("所有文件", "*.*")]
+                    )
+                    if chosen_stat:
+                        stat_path = Path(chosen_stat)
+            try:
+                sol_data = diag.load_data(pos_path, ref_path, stat_path)
+            except Exception as exc:
+                messagebox.showerror("加载解算失败", f"加载 {pos_path.name} 失败:\n{str(exc)}")
+                continue
+            idx = len(self.multi_solutions)
+            color = self.multi_compare_colors[idx % len(self.multi_compare_colors)]
+            self.multi_solutions.append({
+                "name": pos_path.stem,
+                "path": pos_path,
+                "stat_path": stat_path,
+                "data": sol_data,
+                "color": color,
+                "visible": tk.BooleanVar(value=True)
+            })
+            added_count += 1
+        if added_count > 0:
+            self._refresh_multi_solution_ui()
+            self.segment_status.configure(text=f"已成功追加 {added_count} 组对比方案，当前共 {len(self.multi_solutions)} 组。")
+            self.redraw()
+
+    def _choose_stat_for_solution(self, idx):
+        if not (0 <= idx < len(self.multi_solutions)): return
+        sol = self.multi_solutions[idx]
+        pos_path = sol["path"]
+        name = filedialog.askopenfilename(
+            title=f"为方案 [{sol['name']}] 选择卫星状态文件 (.stat)",
+            filetypes=[("RTKLIB .stat 文件", "*.stat *.pos.stat *.txt"), ("所有文件", "*.*")]
+        )
         if not name: return
-        pos_path = Path(name)
+        stat_path = Path(name)
         ref_path = self.ref_path or self._find_reference(pos_path)
         try:
-            sol_data = diag.load_data(pos_path, ref_path)
+            sol_data = diag.load_data(pos_path, ref_path, stat_path)
+            sol["data"] = sol_data
+            sol["stat_path"] = stat_path
+            if idx == 0:
+                self.data = sol_data
+                self.stat_path = stat_path
+            self.segment_status.configure(text=f"已为方案 [{sol['name']}] 关联 .stat: {stat_path.name} ({len(sol_data['sat']):,} 条记录)")
+            self._refresh_multi_solution_ui()
+            self.redraw()
         except Exception as exc:
-            messagebox.showerror("Failed to load solution", str(exc)); return
-        idx = len(self.multi_solutions)
-        color = self.multi_compare_colors[idx % len(self.multi_compare_colors)]
-        self.multi_solutions.append({
-            "name": pos_path.stem,
-            "path": pos_path,
-            "data": sol_data,
-            "color": color,
-            "visible": tk.BooleanVar(value=True)
-        })
-        self._refresh_multi_solution_ui()
+            messagebox.showerror("加载 .stat 失败", f"加载失败:\n{str(exc)}")
+
+    def _pick_solution_color(self, idx):
+        if not (0 <= idx < len(self.multi_solutions)): return
+        sol = self.multi_solutions[idx]
+        from tkinter import colorchooser
+        chosen = colorchooser.askcolor(initialcolor=sol["color"], title=f"选择方案 [{sol['name']}] 曲线颜色")
+        if chosen and chosen[1]:
+            sol["color"] = chosen[1]
+            self._refresh_multi_solution_ui()
+            self.redraw()
+
+    def _on_compare_preset_changed(self, event=None):
+        preset_name = self.compare_layout_preset.get()
+        if preset_name in COMPARE_PRESETS:
+            self.compare_modes = list(COMPARE_PRESETS[preset_name])
+            self.selected_compare_subplot = 0
+            self.focused_compare_subplot = None
+            self.segment_status.configure(text=f"已切换多方案对比布局为: [{preset_name}] ({len(self.compare_modes)} 图)")
+            self.redraw()
+
+    def _on_compare_gantt_solution_changed(self, event=None):
+        if hasattr(self, "compare_gantt_combo"):
+            idx = self.compare_gantt_combo.current()
+            if 0 <= idx < len(self.multi_solutions):
+                self.compare_gantt_solution_idx = idx
+                self.segment_status.configure(text=f"已将泳道图聚焦方案切换为: [{self.multi_solutions[idx]['name']}]")
+                self.redraw()
+
+    def _reset_to_rtk3_preset(self):
+        self.compare_layout_preset.set("⭐ RTK3方案 (6图标准对比)")
+        self.compare_modes = list(COMPARE_PRESETS["⭐ RTK3方案 (6图标准对比)"])
+        self.selected_compare_subplot = 0
+        self.focused_compare_subplot = None
+        self.segment_status.configure(text="已恢复为 RTK3方案 (6图标准协同对比)")
         self.redraw()
+
+    def _popup_add_compare_subplot_picker(self):
+        picker = tk.Toplevel(self.root)
+        picker.title("向多方案对比添加子图 (Add Compare Subplot)")
+        picker.geometry("380x420")
+        picker.transient(self.root)
+        picker.grab_set()
+
+        ttk.Label(picker, text="请选择要加入对比排版的子图:", font=("Segoe UI", 9, "bold")).pack(padx=10, pady=(10, 4), anchor="w")
+
+        lb_frame = ttk.Frame(picker)
+        lb_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+        lb = tk.Listbox(lb_frame, font=("Segoe UI", 9))
+        sb = ttk.Scrollbar(lb_frame, orient=tk.VERTICAL, command=lb.yview)
+        lb.configure(yscrollcommand=sb.set)
+        lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        available_modes = [
+            "ENU Error Curves", "Used Satellites", "DOP Full Compare", "Pseudorange Variance",
+            "Satellites", "Residual Triad", "Gnd Trk", "DOP", "Satellite Visibility Gantt",
+            "ENU Error", "Solution Status", "AR Ratio", "Error CDF", "Directional DOP",
+            "El vs SNR & Resp", "Covariance", "Body-Frame Error"
+        ]
+        for m in available_modes:
+            disp = MODE_BILINGUAL.get(m, m)
+            is_in = "✓ " if m in self.compare_modes else "  "
+            lb.insert(tk.END, f"{is_in}{disp}")
+
+        def do_add():
+            sel = lb.curselection()
+            if not sel: return
+            idx = sel[0]
+            chosen_m = available_modes[idx]
+            if chosen_m in self.compare_modes:
+                messagebox.showinfo("提示", f"图表 [{chosen_m}] 已经在当前排版中。")
+                picker.destroy(); return
+            self.compare_modes.append(chosen_m)
+            self.compare_layout_preset.set("自定义子图")
+            self.selected_compare_subplot = len(self.compare_modes) - 1
+            self.focused_compare_subplot = None
+            picker.destroy()
+            self.segment_status.configure(text=f"已添加对比子图: [{chosen_m}]，当前共 {len(self.compare_modes)} 图。")
+            self.redraw()
+
+        btn_box = ttk.Frame(picker)
+        btn_box.pack(fill=tk.X, padx=10, pady=10)
+        ttk.Button(btn_box, text="添加所选 (Add)", command=do_add).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+        ttk.Button(btn_box, text="取消 (Cancel)", command=picker.destroy).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(4, 0))
 
     def remove_compare_solution(self, index):
         if 0 <= index < len(self.multi_solutions):
             removed = self.multi_solutions.pop(index)
+            if getattr(self, "compare_gantt_solution_idx", 0) >= len(self.multi_solutions):
+                self.compare_gantt_solution_idx = max(0, len(self.multi_solutions) - 1)
             self._refresh_multi_solution_ui()
-            self.segment_status.configure(text=f"Removed comparison solution: {removed['name']}.")
+            self.segment_status.configure(text=f"已移除对比方案: {removed['name']}。")
             self.redraw()
 
     def clear_compare_solutions(self):
         if len(self.multi_solutions) > 1:
             self.multi_solutions = self.multi_solutions[:1]
+            self.compare_gantt_solution_idx = 0
             self._refresh_multi_solution_ui()
-            self.segment_status.configure(text="Cleared extra comparison solutions.")
+            self.segment_status.configure(text="已清空所有额外对比方案，仅保留主方案。")
             self.redraw()
 
     def set_mode(self, name):
@@ -1756,6 +2076,8 @@ class RTKPlotApp:
             return ["Multipath Skyplot", "El vs SNR & Resp", "Satellites", "Directional DOP", "Residual Triad"]
         elif cur_mode == "Skyplot & C/N0 (Env)":
             return ["Multipath Skyplot", "C/N0", "El vs SNR & Resp"]
+        elif cur_mode == "Multi-Compare":
+            return list(self.compare_modes) if getattr(self, "compare_modes", None) else ["Satellites", "Residual Triad", "Gnd Trk", "DOP", "Satellite Visibility Gantt", "ENU Error"]
         elif cur_mode == "Custom Analysis":
             if self.custom_panels:
                 return [p["mode"] for p in self.custom_panels if p.get("mode")]
@@ -1794,6 +2116,24 @@ class RTKPlotApp:
             self.selected_dashboard_index = len(self.dashboard_modes) - 1
             self.focused_dashboard_subplot = None
             self.segment_status.configure(text=f"已向 Dashboard 追加 {len(to_add)} 个新子图，当前共 {len(self.dashboard_modes)} 个。")
+            self.redraw()
+        elif mode == "Multi-Compare":
+            to_add = [m for m in modes_to_add if m not in self.compare_modes]
+            if not to_add:
+                for idx, m in enumerate(self.compare_modes):
+                    if m in modes_to_add:
+                        self.selected_compare_subplot = idx
+                        break
+                disp_name = MODE_BILINGUAL.get(modes_to_add[0], modes_to_add[0])
+                self.segment_status.configure(text=f"提示: 对比子图 [{disp_name}] 已存在于当前排版中，已直接聚焦。")
+                self.redraw()
+                return
+            for m in to_add:
+                self.compare_modes.append(m)
+            self.compare_layout_preset.set("自定义子图")
+            self.selected_compare_subplot = len(self.compare_modes) - 1
+            self.focused_compare_subplot = None
+            self.segment_status.configure(text=f"已向 Multi-Compare 追加 {len(to_add)} 个新对比子图，当前共 {len(self.compare_modes)} 个。")
             self.redraw()
         else:
             current_modes = self._get_active_layout_modes()
@@ -3268,6 +3608,14 @@ class RTKPlotApp:
                 elif name=="Cycle Slips":self._draw_slips(ax)
                 elif name=="Satellite Visibility Gantt":self._draw_satellite_visibility_gantt(ax,s)
                 elif name=="Per-PRN Residuals":self._draw_per_prn_residuals(ax)
+                elif name in ("ENU Error Curves", "ENU Error Curves Compare"):
+                    self._draw_compare_enu_error_curves(ax, [{"name": "当前方案", "color": self._get_mode_colors("ENU Position", 1)[0], "data": self.data, "visible": type("V", (), {"get": lambda s: True})()}])
+                elif name == "DOP Full Compare":
+                    self._draw_compare_dop_full(ax, [{"name": "当前方案", "color": self._get_mode_colors("DOP", 1)[0], "data": self.data, "visible": type("V", (), {"get": lambda s: True})()}])
+                elif name == "Used Satellites":
+                    self._draw_compare_used_satellites(ax, [{"name": "当前方案", "color": self._get_mode_colors("Satellites", 1)[0], "data": self.data, "visible": type("V", (), {"get": lambda s: True})()}])
+                elif name == "Pseudorange Variance":
+                    self._draw_compare_pseudorange_variance(ax, [{"name": "当前方案", "color": self._get_mode_colors("Residuals", 1)[0], "data": self.data, "visible": type("V", (), {"get": lambda s: True})()}])
                 elif name=="Covariance":self._draw_covariance(ax,p)
                 elif name=="False Fix Analysis":self._draw_false_fix(ax,p)
                 elif name=="Innovation / NIS":self._draw_nis(ax)
@@ -3445,6 +3793,29 @@ class RTKPlotApp:
                              bbox=dict(boxstyle="round,pad=0.12", fc="#ffffff", ec="#dc2626", alpha=0.88, lw=1.2),
                              zorder=16) for _ in range(35)]
             artists = [sc_curr] + texts
+        elif name in ("ENU Error Curves", "ENU Error Curves Compare") and self.data["has_truth"]:
+            pe = point("#0066FF", "o", 7)
+            pn = point("#FF6D00", "s", 6)
+            pu = point("#00A843", "^", 6)
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888", alpha=0.9, lw=0.8), zorder=15)
+            artists = [pe, pn, pu, badge]
+        elif name == "DOP Full Compare":
+            cols = ["#0066FF", "#FF6D00", "#00A843"]
+            pts = [point(cols[0], "o", 7), point(cols[1], "s", 6), point(cols[2], "^", 6)]
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888", alpha=0.9, lw=0.8), zorder=15)
+            artists = pts + [badge]
+        elif name == "Used Satellites":
+            p_usd = point("#00A843", "o", 8)
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#00A843", alpha=0.9, lw=0.8), zorder=15)
+            artists = [p_usd, badge]
+        elif name == "Pseudorange Variance":
+            p_var = point("#FF6D00", "o", 8)
+            badge = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=8, weight="bold", color="#111",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#FF6D00", alpha=0.9, lw=0.8), zorder=15)
+            artists = [p_var, badge]
         elif name=="Innovation / NIS":
             artists=[ax.text(.5,.12,"",transform=ax.transAxes,ha="center",va="center",fontsize=9,color="#555")]
         if not artists:return
@@ -3686,6 +4057,56 @@ class RTKPlotApp:
                     artists[0].set_offsets(np.empty((0, 2)))
                     for k in range(35):
                         artists[k + 1].set_visible(False)
+            elif name in ("ENU Error Curves", "ENU Error Curves Compare") and self.data["has_truth"]:
+                for art, col in zip(artists[:3], ["de", "dn", "du"]):
+                    val = getattr(r, col, np.nan)
+                    set_point(art, x, val, visible and np.isfinite(val))
+                if len(artists) > 3 and np.isfinite(getattr(r, "de", np.nan)):
+                    artists[3].set_text(f"E:{r.de:+.2f} N:{r.dn:+.2f} U:{r.du:+.2f}m")
+            elif name == "DOP Full Compare":
+                d_df = self.data.get("_cached_dop")
+                if d_df is not None and not d_df.empty:
+                    d_tow = self.data.get("_cached_dop_tows")
+                    if d_tow is None:
+                        d_tow = d_df.tow.to_numpy()
+                        self.data["_cached_dop_tows"] = d_tow
+                    k = int(np.clip(np.searchsorted(d_tow, r.tow), 0, len(d_tow) - 1))
+                    d_row = d_df.iloc[k]
+                    set_point(artists[0], d_row.time, d_row.PDOP, visible)
+                    set_point(artists[1], d_row.time, d_row.HDOP, visible)
+                    set_point(artists[2], d_row.time, d_row.VDOP, visible)
+                    if len(artists) > 3:
+                        artists[3].set_text(f"P:{d_row.PDOP:.1f} H:{d_row.HDOP:.1f} V:{d_row.VDOP:.1f}")
+            elif name == "Used Satellites":
+                used_val = r.ns
+                e_df = self.data.get("_cached_sat_epoch")
+                if e_df is not None and not e_df.empty:
+                    e_tow = self.data.get("_cached_epoch_tows")
+                    if e_tow is None:
+                        e_tow = e_df.tow.to_numpy()
+                        self.data["_cached_epoch_tows"] = e_tow
+                    k = int(np.clip(np.searchsorted(e_tow, r.tow), 0, len(e_tow) - 1))
+                    used_val = e_df.iloc[k].used
+                set_point(artists[0], x, used_val, visible)
+                if len(artists) > 1:
+                    artists[1].set_text(f"用星: {int(used_val)}颗")
+            elif name == "Pseudorange Variance":
+                triad = self.data.get("_cached_triad")
+                if triad is not None and not triad.empty:
+                    t_tow = self.data.get("_cached_triad_tows")
+                    if t_tow is None:
+                        t_tow = triad.tow.to_numpy()
+                        self.data["_cached_triad_tows"] = t_tow
+                    k = int(np.clip(np.searchsorted(t_tow, r.tow), 0, len(t_tow) - 1))
+                    v_val = float(triad.iloc[k].rms_resp)**2
+                    set_point(artists[0], triad.iloc[k].time, v_val, visible)
+                    if len(artists) > 1:
+                        artists[1].set_text(f"σ²: {v_val:.2f} m²")
+                elif "sde" in r:
+                    tr_val = float(r.sde**2 + r.sdn**2 + r.sdu**2)
+                    set_point(artists[0], x, tr_val, visible)
+                    if len(artists) > 1:
+                        artists[1].set_text(f"Tr[Cov]: {tr_val:.3f} m²")
             elif name=="Innovation / NIS":
                 artists[0].set_text(f"当前历元：{dt:%Y-%m-%d %H:%M:%S} CST · Q={int(r.q)}")
 
@@ -4780,84 +5201,942 @@ class RTKPlotApp:
             ax.text(.5, .5, f"{name}", ha="center", transform=ax.transAxes)
 
     def _draw_multi_compare(self):
-        self.fig.clear(); self.plot_axes = []; self.time_cursors = []
+        self.fig.clear(); self.plot_axes = []; self.time_cursors = []; self.track_axes = []; self.datetime_axes = []
+        self.custom_dynamic_artists = []; self.custom_updaters = []
         visible_sols = [s for s in self.multi_solutions if s["visible"].get()]
         if not visible_sols:
             ax = self.fig.add_subplot(111)
-            ax.text(0.5, 0.5, "No solutions visible for comparison.\nClick '+ Add Solution (.pos)...' or check solutions in the left panel.",
+            ax.text(0.5, 0.5, "未勾选任何可见对比方案。\n请在左侧【方案管理】面板中勾选至少一个方案，或点击「➕ 添加对比方案」。",
                     ha="center", va="center", transform=ax.transAxes, fontsize=11, color="#666")
             ax.set_axis_off(); self.plot_axes = [ax]; self.ax = ax
-            self.fig.suptitle("Multi-Solution Comparison Overview", fontsize=14, weight="bold")
+            self.fig.suptitle("多方案横向对比 (Multi-Solution Comparison)", fontsize=14, weight="bold")
             self.fig.tight_layout(); return
 
-        if self.focused_compare_subplot is not None and self.focused_compare_subplot in (0, 1):
+        modes = list(self.compare_modes) if getattr(self, "compare_modes", None) else [
+            "Satellites", "Residual Triad", "Gnd Trk", "DOP", "Satellite Visibility Gantt", "ENU Error"
+        ]
+
+        if self.focused_compare_subplot is not None and 0 <= self.focused_compare_subplot < len(modes):
             ax = self.fig.add_subplot(111)
             self.plot_axes = [ax]; self.ax = ax
-            if self.focused_compare_subplot == 0:
-                self._draw_compare_track(ax, visible_sols)
-                self.fig.suptitle("Ground Track Comparison (Maximized — Right-click to restore)", fontsize=13, weight="bold")
-            else:
-                self._draw_compare_error(ax, visible_sols)
-                self.fig.suptitle("Horizontal Error Comparison (Maximized — Right-click to restore)", fontsize=13, weight="bold")
+            foc_mode = modes[self.focused_compare_subplot]
+            self._render_compare_subplot(ax, foc_mode, visible_sols)
+            mode_disp = MODE_BILINGUAL.get(foc_mode, foc_mode)
+            self.fig.suptitle(f"多方案对比 — {mode_disp} (已全屏最大化 — 双击或右键可恢复多图)", fontsize=13, weight="bold")
             for spine in ax.spines.values():
                 spine.set_edgecolor("#168aad"); spine.set_linewidth(1.8)
             ax.grid(self.grid_on.get(), alpha=.3)
-            self.fig.tight_layout(); return
+            self.fig.tight_layout()
+            self._register_compare_dynamic()
+            return
 
-        axs = self.fig.subplots(2, 1)
-        self.plot_axes = list(axs); self.ax = axs[0]
-
-        # Top: Track Overlay
-        self._draw_compare_track(axs[0], visible_sols)
-        is_sel_0 = (self.selected_compare_subplot == 0)
-        for spine in axs[0].spines.values():
-            spine.set_edgecolor("#168aad" if is_sel_0 else "#b9c0c8")
-            spine.set_linewidth(1.8 if is_sel_0 else 0.75)
-        axs[0].grid(self.grid_on.get(), alpha=.3)
-
-        # Bottom: Error Timeseries Overlay
-        self._draw_compare_error(axs[1], visible_sols)
-        is_sel_1 = (self.selected_compare_subplot == 1)
-        for spine in axs[1].spines.values():
-            spine.set_edgecolor("#168aad" if is_sel_1 else "#b9c0c8")
-            spine.set_linewidth(1.8 if is_sel_1 else 0.75)
-        axs[1].grid(self.grid_on.get(), alpha=.3)
-
-        self.fig.suptitle("Multi-Solution Comparison (Track & Horizontal Error)", fontsize=14, weight="bold")
-        self.fig.tight_layout()
-
-    def _draw_compare_track(self, ax, visible_sols):
-        self.track_axes.append(ax)
-        has_truth = any(s["data"]["has_truth"] for s in visible_sols)
-        if has_truth:
-            for s in visible_sols:
-                if s["data"]["has_truth"]:
-                    gt_e = s["data"]["pos"]["gt_E"]
-                    gt_n = s["data"]["pos"]["gt_N"]
-                    ax.plot(gt_e, gt_n, "k--", lw=1.1, label="Truth", zorder=3)
-                    break
-        for s in visible_sols:
-            p = s["data"]["pos"]
-            ax.plot(p.E, p.N, color=s["color"], lw=1.2, alpha=0.85, label=s["name"], zorder=4)
-        ax.set(xlabel="East (m)", ylabel="North (m)", title="Ground Track Comparison (Horizontal Trajectory)")
-        ax.axis("equal" if self.equal_scale.get() else "auto")
-        ax.legend(fontsize=8, loc="best")
-
-    def _draw_compare_error(self, ax, visible_sols):
-        has_any_truth = False
-        for s in visible_sols:
-            p = s["data"]["pos"]
-            if s["data"]["has_truth"] and "eh" in p:
-                has_any_truth = True
-                rmse = np.sqrt(np.mean(p.eh.dropna()**2))
-        if has_any_truth:
-            ax.legend(fontsize=8, loc="upper right")
+        n = len(modes)
+        if n == 6:
+            nrows, ncols = 2, 3
+        elif n == 2:
+            nrows, ncols = 2, 1
+        elif n == 4:
+            nrows, ncols = 2, 2
+        elif n <= 3:
+            nrows, ncols = n, 1
+        elif n <= 8:
+            nrows, ncols = 2, 4
         else:
-            ax.text(0.5, 0.5, "Ground truth (.csv) required to plot position errors.\nClick 'Open Reference' in the left sidebar to load truth data.",
-                    ha="center", va="center", transform=ax.transAxes, fontsize=10, color="#666")
-        ax.set(xlabel="Date/time", ylabel="Horizontal Error (m)", title="Horizontal Positioning Error vs Time")
+            ncols = 3
+            nrows = int(np.ceil(n / ncols))
+
+        axs = self.fig.subplots(nrows, ncols)
+        axs_flat = np.atleast_1d(axs).flatten()
+        self.plot_axes = list(axs_flat[:n]); self.ax = self.plot_axes[0]
+
+        for i, m in enumerate(modes):
+            ax = axs_flat[i]
+            self._render_compare_subplot(ax, m, visible_sols)
+            is_sel = (self.selected_compare_subplot == i)
+            is_exp = getattr(self, "_is_exporting", False)
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#94a3b8" if is_exp else ("#168aad" if is_sel else "#b9c0c8"))
+                spine.set_linewidth(0.85 if is_exp else (1.8 if is_sel else 0.75))
+            ax.grid(self.grid_on.get(), alpha=.3)
+
+        for i in range(n, len(axs_flat)):
+            axs_flat[i].set_axis_off()
+
+        preset_name = self.compare_layout_preset.get() if hasattr(self, "compare_layout_preset") else "RTK3方案"
+        clean_preset = preset_name.replace("⭐ ", "").replace("🚀 ", "").replace("📊 ", "")
+        self.fig.suptitle(f"多方案横向对比 ({clean_preset})", fontsize=14, weight="bold")
+        self.fig.tight_layout()
+        self._register_compare_dynamic()
+
+    def _render_compare_subplot(self, ax, mode_name, visible_sols):
+        ax._compare_mode = mode_name
+        if mode_name == "Satellites":
+            self._draw_compare_satellites(ax, visible_sols)
+        elif mode_name == "Used Satellites":
+            self._draw_compare_used_satellites(ax, visible_sols)
+        elif mode_name in ("Residual Triad", "Residuals"):
+            self._draw_compare_residuals(ax, visible_sols)
+        elif mode_name == "Pseudorange Variance":
+            self._draw_compare_pseudorange_variance(ax, visible_sols)
+        elif mode_name in ("Gnd Trk", "Trajectory Error Heatmap", "3D Ground Track"):
+            self._draw_compare_track(ax, visible_sols)
+        elif mode_name in ("DOP", "Directional DOP"):
+            self._draw_compare_dop(ax, visible_sols, show_full_dop=True)
+        elif mode_name == "DOP Full Compare":
+            self._draw_compare_dop_full(ax, visible_sols)
+        elif mode_name in ("Satellite Visibility Gantt", "Cycle Slips"):
+            self._draw_compare_gantt(ax, visible_sols)
+        elif mode_name in ("ENU Error", "Position Error"):
+            self._draw_compare_enu_error(ax, visible_sols)
+        elif mode_name in ("ENU Error Curves", "ENU Error Curves Compare"):
+            self._draw_compare_enu_error_curves(ax, visible_sols)
+        elif mode_name == "Solution Status":
+            self._draw_compare_solution_status(ax, visible_sols)
+        elif mode_name == "AR Ratio":
+            self._draw_compare_ratio(ax, visible_sols)
+        elif mode_name == "Error CDF":
+            self._draw_compare_error_cdf(ax, visible_sols)
+        else:
+            ax.text(0.5, 0.5, f"对比模式: {mode_name}", ha="center", va="center", transform=ax.transAxes)
+
+    def _draw_compare_satellites(self, ax, visible_sols):
+        ax._compare_mode = "Satellites"
+        if len(visible_sols) == 1:
+            s = visible_sols[0]
+            if "_cached_sat_epoch" not in s["data"]:
+                s["data"]["_cached_sat_epoch"] = diag._sat_epoch(s["data"])
+            e = s["data"]["_cached_sat_epoch"]
+            if not e.empty:
+                t_gap, trk_g, used_g = insert_time_gaps(e.time, e.tracked, e.used)
+                ax.plot(t_gap, trk_g, label="Tracked satellites", color="#FF6D00", lw=1.2)
+                ax.plot(t_gap, used_g, label="Used satellites", color="#00A843", lw=1.2)
+                ax.legend(fontsize=7.5, loc="upper right")
+            else:
+                p = s["data"]["pos"]
+                t_gap, ns_g = insert_time_gaps(p.time, p.ns)
+                ax.plot(t_gap, ns_g, label=f"{s['name']} (Mean: {p.ns.mean():.1f})", color=s["color"], lw=1.35)
+                ax.legend(fontsize=7.5, loc="upper right")
+        else:
+            for s in visible_sols:
+                p = s["data"]["pos"]
+                t_gap, ns_g = insert_time_gaps(p.time, p.ns)
+                m_ns = p.ns.mean() if not p.ns.empty else 0
+                ax.plot(t_gap, ns_g, color=s["color"], lw=1.35, label=f"{s['name']} (均值: {m_ns:.1f})")
+            ax.legend(fontsize=7, loc="upper right")
+        ax.set(ylabel="Satellites", title="Tracked and Used Satellites")
         self._set_datetime_axis(ax)
         self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
+    def _draw_compare_used_satellites(self, ax, visible_sols):
+        ax._compare_mode = "Used Satellites"
+        has_sat = False
+        for s in visible_sols:
+            sat = s["data"].get("sat")
+            used_series = None
+            time_series = None
+            if sat is not None and not sat.empty:
+                if "_cached_sat_epoch" not in s["data"]:
+                    s["data"]["_cached_sat_epoch"] = diag._sat_epoch(s["data"])
+                e = s["data"]["_cached_sat_epoch"]
+                if not e.empty and "used" in e:
+                    used_series = e.used
+                    time_series = e.time
+            if used_series is None or used_series.empty:
+                p = s["data"]["pos"]
+                if not p.empty and "ns" in p:
+                    used_series = p.ns
+                    time_series = p.time
+
+            if used_series is not None and not used_series.empty:
+                has_sat = True
+                t_gap, used_g = insert_time_gaps(time_series, used_series)
+                m_used = used_series.mean()
+                min_used = int(used_series.min())
+                max_used = int(used_series.max())
+                ax.plot(t_gap, used_g, color=s["color"], lw=1.35, label=f"{s['name']} (均:{m_used:.1f}, 范围:[{min_used}-{max_used}])")
+            else:
+                ax.plot([], [], color=s["color"], ls="none", label=f"{s['name']} (无星数数据)")
+
+        ax.axhline(4, color="#e63946", ls=":", lw=1.0, alpha=0.85, label="3D定位最低门限 (4颗)")
+        ax.axhline(6, color="#2a9d8f", ls="--", lw=0.9, alpha=0.85, label="稳健RTK推荐 (6颗)")
+        ax.set_ylim(0, max(ax.get_ylim()[1], 16))
+        ax.set(ylabel="Used Sats", title="卫星使用数量对比 (Used Satellites Count)")
+        ax.legend(fontsize=7, loc="upper right")
+        if not has_sat:
+            ax.text(0.5, 0.5, "无可用的卫星数量数据", ha="center", va="center", transform=ax.transAxes, color="#555")
+        self._set_datetime_axis(ax)
+        self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
+    def _draw_compare_residuals(self, ax, visible_sols):
+        ax._compare_mode = "Residual Triad"
+        if len(visible_sols) == 1:
+            s = visible_sols[0]
+            if "_cached_triad" not in s["data"]:
+                s["data"]["_cached_triad"] = diag.compute_residual_triad(s["data"])
+            triad = s["data"]["_cached_triad"]
+            if not triad.empty:
+                cols = ["#0066FF", "#FF6D00", "#00A843"]
+                t_gap, max_g, sec_g, rms_g = insert_time_gaps(triad.time, triad.max_resp, triad.sec_resp, triad.rms_resp)
+                ax.plot(t_gap, max_g, color=cols[0], label="第一大残差 (Max)", lw=1.15)
+                ax.plot(t_gap, sec_g, color=cols[1], label="第二大残差 (2nd)", lw=1.15)
+                ax.plot(t_gap, rms_g, color=cols[2], lw=1.2, ls="--", label="全场RMS")
+                ax.axhline(3.0, color="#757575", ls=":", lw=0.95, alpha=0.8, label="粗差门限 3.0m")
+                ax.legend(fontsize=7, loc="upper right", ncol=2)
+            else:
+                ax.text(0.5, 0.5, f"方案 [{s['name']}] 无伪距残差数据 (需 .stat 文件)", ha="center", va="center", transform=ax.transAxes)
+        else:
+            has_stat = False
+            for s in visible_sols:
+                sat = s["data"].get("sat")
+                if sat is not None and not sat.empty and "resp" in sat:
+                    has_stat = True
+                    if "_cached_triad" not in s["data"]:
+                        s["data"]["_cached_triad"] = diag.compute_residual_triad(s["data"])
+                    triad = s["data"]["_cached_triad"]
+                    if not triad.empty:
+                        t_gap, rms_g = insert_time_gaps(triad.time, triad.rms_resp)
+                        overall_rms = np.sqrt(np.mean(sat.resp.dropna()**2))
+                        max_val = np.abs(sat.resp.dropna()).max() if sat.resp.dropna().size else 0
+                        ax.plot(t_gap, rms_g, color=s["color"], lw=1.35, label=f"{s['name']} (全场RMS: {overall_rms:.2f}m, Max: {max_val:.1f}m)")
+                else:
+                    ax.plot([], [], color=s["color"], ls="none", label=f"{s['name']} (无.stat数据)")
+            ax.axhline(3.0, color="#757575", ls=":", lw=0.95, alpha=0.8, label="粗差门限 3.0m")
+            ax.legend(fontsize=7, loc="upper right")
+            if not has_stat:
+                ax.text(0.5, 0.5, "所有方案均未关联 .stat 卫星文件\n请在左侧面板点击「+选.stat」关联", ha="center", va="center", transform=ax.transAxes, color="#555")
+        ax.set(ylabel="伪距残差 (m)", title="伪距残差统计三线时序 (Max / 2nd Max / RMS)")
+        self._set_datetime_axis(ax)
+        self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
+    def _draw_compare_pseudorange_variance(self, ax, visible_sols):
+        ax._compare_mode = "Pseudorange Variance"
+        has_var = False
+        for s in visible_sols:
+            sat = s["data"].get("sat")
+            if sat is not None and not sat.empty and "resp" in sat:
+                if "_cached_triad" not in s["data"]:
+                    s["data"]["_cached_triad"] = diag.compute_residual_triad(s["data"])
+                triad = s["data"]["_cached_triad"]
+                if not triad.empty and "rms_resp" in triad:
+                    has_var = True
+                    var_resp = triad.rms_resp ** 2
+                    t_gap, var_g = insert_time_gaps(triad.time, var_resp)
+                    overall_var = np.mean(sat.resp.dropna()**2)
+                    overall_rms = np.sqrt(overall_var)
+                    ax.plot(t_gap, var_g, color=s["color"], lw=1.3, label=f"{s['name']} (均方差:{overall_var:.2f} m², RMS:{overall_rms:.2f} m)")
+            else:
+                p = s["data"]["pos"]
+                if "sde" in p and "sdn" in p and "sdu" in p and p.sde.dropna().size:
+                    has_var = True
+                    tr_cov = p.sde**2 + p.sdn**2 + p.sdu**2
+                    t_gap, tr_g = insert_time_gaps(p.time, tr_cov)
+                    m_tr = tr_cov.mean()
+                    ax.plot(t_gap, tr_g, color=s["color"], lw=1.1, ls="--", label=f"{s['name']} (解方差迹 Tr[Cov]: {m_tr:.3f} m²)")
+                else:
+                    ax.plot([], [], color=s["color"], ls="none", label=f"{s['name']} (需.stat残差数据)")
+
+        ax.axhline(9.0, color="#d90429", ls=":", lw=0.95, alpha=0.85, label="粗差方差门限 (9.0 m² / 3m 3σ)")
+        ax.axhline(1.0, color="#2a9d8f", ls="--", lw=0.85, alpha=0.7, label="优质残差基准 (1.0 m²)")
+        ax.legend(fontsize=7, loc="upper right")
+        if not has_var:
+            ax.text(0.5, 0.5, "所有方案均缺少 .stat 伪距残差数据\n请在左侧面板点击「+选.stat」关联以计算方差", ha="center", va="center", transform=ax.transAxes, color="#555")
+        ax.set(ylabel="Variance (m²)", title="伪距残差方差对比 (Pseudorange Residual Variance)")
+        self._set_datetime_axis(ax)
+        self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
+    def _draw_compare_track(self, ax, visible_sols):
+        ax._compare_mode = "Gnd Trk"
+        self.track_axes.append(ax)
+        has_truth = any(s["data"].get("has_truth") for s in visible_sols)
+        if has_truth:
+            for s in visible_sols:
+                if s["data"].get("has_truth"):
+                    full = s["data"]["pos"]
+                    gt_t, gt_e, gt_n = insert_time_gaps(full.time, full.gt_E, full.gt_N)
+                    ax.plot(gt_e, gt_n, color="#444444", lw=1.1, ls="--", alpha=0.75, label="Reference GT", zorder=3)
+                    valid_idx = np.where(np.isfinite(full.gt_E) & np.isfinite(full.gt_N))[0]
+                    if len(valid_idx) > 0:
+                        s_i, e_i = valid_idx[0], valid_idx[-1]
+                        ax.scatter([full.gt_E.iloc[s_i]], [full.gt_N.iloc[s_i]], color="#3a0ca3", s=28, marker="o", zorder=6)
+                        ax.text(full.gt_E.iloc[s_i], full.gt_N.iloc[s_i], " 起点", fontsize=7.5, color="#1e1b4b", weight="bold", zorder=7)
+                        ax.scatter([full.gt_E.iloc[e_i]], [full.gt_N.iloc[e_i]], color="#2b0938", s=28, marker="s", zorder=6)
+                        ax.text(full.gt_E.iloc[e_i], full.gt_N.iloc[e_i], " 终点", fontsize=7.5, color="#1e1b4b", weight="bold", zorder=7)
+                    break
+        if len(visible_sols) == 1:
+            p = visible_sols[0]["data"]["pos"]
+            if visible_sols[0]["data"].get("has_truth") and "e3d" in p:
+                err = np.clip(p.e3d.fillna(0).to_numpy(dtype=float), 0, 15.0)
+                sc = ax.scatter(p.E, p.N, c=err, cmap="turbo", s=8, vmin=0, vmax=15.0, alpha=0.9, zorder=4)
+                fig_target = ax.figure if getattr(ax, "figure", None) is not None else getattr(self, "fig", None)
+                if fig_target is not None:
+                    has_right_neighbor = (ax.get_position().x1 < 0.82)
+                    cb = fig_target.colorbar(sc, ax=ax, pad=0.012 if has_right_neighbor else 0.015, fraction=0.036 if has_right_neighbor else 0.046)
+                    if has_right_neighbor:
+                        cb.ax.set_title("3D误差(m)", fontsize=7.5, weight="bold", pad=3)
+                    else:
+                        cb.set_label("3D Error (m, clipped at 15m)")
+                    cb.ax.tick_params(labelsize=7.5 if has_right_neighbor else 8)
+                h_rms = np.sqrt(np.mean(p.eh.dropna()**2))
+                ax.plot([], [], color=visible_sols[0]["color"], label=f"{visible_sols[0]['name']} (RMS: {h_rms:.2f}m)")
+            else:
+                ax.plot(p.E, p.N, color=visible_sols[0]["color"], lw=1.3, label=visible_sols[0]["name"], zorder=4)
+        else:
+            for s in visible_sols:
+                p = s["data"]["pos"]
+                if s["data"].get("has_truth") and "eh" in p and p.eh.dropna().size:
+                    h_rms = np.sqrt(np.mean(p.eh.dropna()**2))
+                    h_max = p.eh.max()
+                    lbl = f"{s['name']} (RMS: {h_rms:.2f}m, Max: {h_max:.2f}m)"
+                else:
+                    lbl = s["name"]
+                ax.plot(p.E, p.N, color=s["color"], lw=1.35, alpha=0.88, label=lbl, zorder=4)
+        ax.set(xlabel="East Offset from Start (m)", ylabel="North Offset from Start (m)", title="二维轨迹误差热力图 (Trajectory Error Heatmap)")
+        ax.axis("equal" if self.equal_scale.get() else "auto")
+        ax.legend(fontsize=7, loc="best")
+
+    def _draw_compare_dop_full(self, ax, visible_sols):
+        ax._compare_mode = "DOP Full Compare"
+        self._draw_compare_dop(ax, visible_sols, show_full_dop=True)
+
+    def _draw_compare_dop(self, ax, visible_sols, show_full_dop=True):
+        ax._compare_mode = "DOP Full Compare" if show_full_dop else "DOP"
+        if len(visible_sols) == 1:
+            s = visible_sols[0]
+            if "_cached_dop" not in s["data"]:
+                s["data"]["_cached_dop"] = diag._compute_dop(s["data"]["sat"])
+            d = s["data"]["_cached_dop"]
+            if not d.empty and "PDOP" in d:
+                cols = ["#0066FF", "#FF6D00", "#00A843"]
+                t_gap, pdop_g, hdop_g, vdop_g = insert_time_gaps(d.time, d.PDOP, d.HDOP, d.VDOP)
+                ax.plot(t_gap, pdop_g, label=f"PDOP (均:{d.PDOP.mean():.1f})", color=cols[0], lw=1.25)
+                ax.plot(t_gap, hdop_g, label=f"HDOP (均:{d.HDOP.mean():.1f})", color=cols[1], lw=1.1, ls="--")
+                ax.plot(t_gap, vdop_g, label=f"VDOP (均:{d.VDOP.mean():.1f})", color=cols[2], lw=1.0, ls=":")
+                ax.legend(fontsize=7.5, loc="upper right")
+            else:
+                ax.text(0.5, 0.5, "无法计算 DOP (需 .stat 卫星仰角方位角)", ha="center", va="center", transform=ax.transAxes)
+        else:
+            has_dop = False
+            for s in visible_sols:
+                sat = s["data"].get("sat")
+                if sat is not None and not sat.empty:
+                    if "_cached_dop" not in s["data"]:
+                        s["data"]["_cached_dop"] = diag._compute_dop(sat)
+                    d = s["data"]["_cached_dop"]
+                    if not d.empty and "PDOP" in d:
+                        has_dop = True
+                        mean_p = d.PDOP.mean(); mean_h = d.HDOP.mean(); mean_v = d.VDOP.mean()
+                        if show_full_dop:
+                            t_gap, pdop_g, hdop_g, vdop_g = insert_time_gaps(d.time, d.PDOP, d.HDOP, d.VDOP)
+                            ax.plot(t_gap, pdop_g, color=s["color"], lw=1.35, ls="-", label=f"{s['name']} (P:{mean_p:.1f}, H:{mean_h:.1f}, V:{mean_v:.1f})")
+                            ax.plot(t_gap, hdop_g, color=s["color"], lw=1.0, ls="--", alpha=0.85)
+                            ax.plot(t_gap, vdop_g, color=s["color"], lw=0.9, ls=":", alpha=0.75)
+                        else:
+                            t_gap, pdop_g = insert_time_gaps(d.time, d.PDOP)
+                            ax.plot(t_gap, pdop_g, color=s["color"], lw=1.35, label=f"{s['name']} (均:{mean_p:.1f}, 最大:{d.PDOP.max():.1f})")
+                    else:
+                        ax.plot([], [], color=s["color"], ls="none", label=f"{s['name']} (DOP计算失败)")
+                else:
+                    ax.plot([], [], color=s["color"], ls="none", label=f"{s['name']} (无.stat数据)")
+            if show_full_dop and has_dop:
+                ax.plot([], [], color="#555", ls="-", lw=1.2, label="— PDOP (实)")
+                ax.plot([], [], color="#555", ls="--", lw=1.0, label="-- HDOP (虚)")
+                ax.plot([], [], color="#555", ls=":", lw=1.0, label="··· VDOP (点)")
+            ax.legend(fontsize=7, loc="upper right", ncol=2 if len(visible_sols) > 1 else 1)
+            if not has_dop:
+                ax.text(0.5, 0.5, "未加载 .stat 数据，无法计算几何 DOP", ha="center", va="center", transform=ax.transAxes, color="#555")
+        ax.axhline(2.5, color="#757575", ls=":", lw=0.8, alpha=0.75, label="优质几何门限 2.5")
+        ax.set_ylim(0, min(8.0, max(ax.get_ylim()[1], 4.0)))
+        ax.set(ylabel="DOP", title="DOP 全几何因子对比 (PDOP / HDOP / VDOP)" if show_full_dop else "DOP from satellite geometry")
+        self._set_datetime_axis(ax)
+        self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
+    def _draw_compare_gantt(self, ax, visible_sols):
+        ax._compare_mode = "Satellite Visibility Gantt"
+        target_idx = getattr(self, "compare_gantt_solution_idx", 0) % len(visible_sols)
+        target_sol = visible_sols[target_idx]
+        sat = target_sol["data"].get("sat")
+        if sat is None or sat.empty:
+            ax.text(0.5, 0.5, f"方案 [{target_sol['name']}] 无 .stat 卫星观测数据\n请在左侧面板点击「+选.stat」关联", ha="center", va="center", transform=ax.transAxes)
+            ax.set(title=f"[{target_sol['name']}] 卫星伪距残差与周跳泳道图")
+            return
+        self._draw_satellite_visibility_gantt(ax, sat)
+        slips_cnt = len(sat[(sat.slipc > 0)].drop_duplicates(["prn", "time"])) if "slipc" in sat.columns else 0
+        ax.set_title(f"[{target_sol['name']}] 卫星伪距残差与周跳泳道图 (周跳 n={slips_cnt})", fontsize=10, weight="bold")
+        self._set_datetime_axis(ax)
+        self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
+    def _draw_compare_enu_error(self, ax, visible_sols):
+        ax._compare_mode = "ENU Error"
+        if len(visible_sols) == 1:
+            p = visible_sols[0]["data"]["pos"]
+            if visible_sols[0]["data"].get("has_truth"):
+                cols = ["#0066FF", "#FF6D00", "#00A843"]
+                t_gap, de_g, dn_g, du_g = insert_time_gaps(p.time, p.de, p.dn, p.du)
+                ax.plot(t_gap, de_g, label="DE", color=cols[0], lw=1.1)
+                ax.plot(t_gap, dn_g, label="DN", color=cols[1], lw=1.1)
+                ax.plot(t_gap, du_g, label="DU", color=cols[2], lw=1.1)
+                ax.axhline(0, color="k", lw=.5)
+                ax.legend(fontsize=7.5, loc="upper right", ncol=3)
+                if hasattr(self, "_apply_robust_ylim"):
+                    self._apply_robust_ylim(ax, [p.de, p.dn, p.du], is_symmetric=True, min_span=2.0)
+            else:
+                ax.text(0.5, 0.5, "未加载参考真值 (.csv)\n请在左侧点击「关联/更换真值」", ha="center", va="center", transform=ax.transAxes)
+        else:
+            has_truth = False
+            for s in visible_sols:
+                p = s["data"]["pos"]
+                if s["data"].get("has_truth") and "eh" in p and p.eh.dropna().size:
+                    has_truth = True
+                    t_gap, eh_g = insert_time_gaps(p.time, p.eh)
+                    h_rms = np.sqrt(np.mean(p.eh.dropna()**2))
+                    v_rms = np.sqrt(np.mean(p.du.dropna()**2)) if "du" in p else 0
+                    e3d_rms = np.sqrt(np.mean(p.e3d.dropna()**2)) if "e3d" in p else 0
+                    ax.plot(t_gap, eh_g, color=s["color"], lw=1.35, label=f"{s['name']} (水平RMS:{h_rms:.2f}m, 3D:{e3d_rms:.2f}m)")
+                    if "du" in p:
+                        t_gap_u, du_g = insert_time_gaps(p.time, np.abs(p.du))
+                        ax.plot(t_gap_u, du_g, color=s["color"], ls="--", lw=0.9, alpha=0.55, label=f"{s['name']} |DU| (高程RMS:{v_rms:.2f}m)")
+                else:
+                    ax.plot([], [], color=s["color"], ls="none", label=f"{s['name']} (未加载真值)")
+            ax.axhline(0, color="k", lw=.5)
+            ax.legend(fontsize=7, loc="upper right")
+            if not has_truth:
+                ax.text(0.5, 0.5, "所有方案均未关联参考真值 (.csv)\n请在左侧面板点击「关联/更换真值」", ha="center", va="center", transform=ax.transAxes, color="#555")
+        ax.set(ylabel="Error (m)", title="ENU Error")
+        self._set_datetime_axis(ax)
+        self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
+    def _draw_compare_enu_error_curves(self, ax, visible_sols):
+        ax._compare_mode = "ENU Error Curves"
+        has_truth = False
+        all_errs = []
+        for s in visible_sols:
+            p = s["data"]["pos"]
+            if s["data"].get("has_truth") and "de" in p and p.de.dropna().size:
+                has_truth = True
+                t_gap, de_g, dn_g, du_g = insert_time_gaps(p.time, p.de, p.dn, p.du)
+                e_rms = np.sqrt(np.mean(p.de.dropna()**2))
+                n_rms = np.sqrt(np.mean(p.dn.dropna()**2))
+                u_rms = np.sqrt(np.mean(p.du.dropna()**2)) if "du" in p else 0.0
+                all_errs.extend([p.de, p.dn, p.du])
+                # Plot 3 curves for each solution: solid for DE, dash-dot for DN, dashed for DU
+                ax.plot(t_gap, de_g, color=s["color"], ls="-", lw=1.2, label=f"{s['name']} (E:{e_rms:.2f}, N:{n_rms:.2f}, U:{u_rms:.2f}m)")
+                ax.plot(t_gap, dn_g, color=s["color"], ls="-.", lw=1.2, alpha=0.9)
+                ax.plot(t_gap, du_g, color=s["color"], ls="--", lw=1.0, alpha=0.8)
+            else:
+                ax.plot([], [], color=s["color"], ls="none", label=f"{s['name']} (未关联真值)")
+
+        ax.axhline(0, color="#222222", lw=0.6, alpha=0.7)
+        if len(visible_sols) > 0 and has_truth:
+            ax.plot([], [], color="#444", ls="-", lw=1.2, label="— DE (东向/实)")
+            ax.plot([], [], color="#444", ls="-.", lw=1.2, label="-·- DN (北向/点划)")
+            ax.plot([], [], color="#444", ls="--", lw=1.0, label="-- DU (天向/虚)")
+        ax.legend(fontsize=7, loc="upper right", ncol=2 if len(visible_sols) > 1 else 1)
+        if not has_truth:
+            ax.text(0.5, 0.5, "未加载参考真值 (.csv)\n请在左侧点击「关联/更换真值」以绘制 ENU 各分量误差", ha="center", va="center", transform=ax.transAxes, color="#555")
+        if all_errs and hasattr(self, "_apply_robust_ylim"):
+            self._apply_robust_ylim(ax, all_errs, is_symmetric=True, min_span=0.6)
+        ax.set(ylabel="Error (m)", title="ENU 各分量定位误差对比 (DE / DN / DU Curves)")
+        self._set_datetime_axis(ax)
+        self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
+    def _draw_compare_solution_status(self, ax, visible_sols):
+        ax._compare_mode = "Solution Status"
+        for s in visible_sols:
+            p = s["data"]["pos"]
+            if "q" in p and not p.empty:
+                fix_rate = (p.q == 1).mean() * 100
+                t_gap, q_g = insert_time_gaps(p.time, p.q)
+                ax.step(t_gap, q_g, where="post", color=s["color"], lw=1.2, label=f"{s['name']} (Fix: {fix_rate:.1f}%)")
+        ax.set_yticks([1, 2, 4, 5])
+        ax.set_yticklabels(["1:Fix", "2:Float", "4:DGPS", "5:Single"], fontsize=7.5)
+        ax.set_ylim(0.5, 5.5)
+        ax.set(ylabel="Q Status", title="Solution Status (解状态对比)")
+        ax.legend(fontsize=7.5, loc="upper right")
+        self._set_datetime_axis(ax)
+        self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
+    def _draw_compare_ratio(self, ax, visible_sols):
+        ax._compare_mode = "AR Ratio"
+        for s in visible_sols:
+            p = s["data"]["pos"]
+            if "ratio" in p and not p.empty and p.ratio.dropna().size:
+                t_gap, r_g = insert_time_gaps(p.time, p.ratio)
+                mean_r = p.ratio.mean()
+                ax.plot(t_gap, r_g, color=s["color"], lw=1.2, label=f"{s['name']} (均值: {mean_r:.1f})")
+        ax.axhline(3.0, color="#d90429", ls="--", lw=1.0, label="Ratio 门限 3.0")
+        ax.set(ylabel="AR Ratio", title="Ambiguity Resolution Ratio Comparison")
+        ax.legend(fontsize=7.5, loc="upper right")
+        self._set_datetime_axis(ax)
+        self.time_cursors.append(ax.axvline(0, color="#333", ls="--", lw=0.7, alpha=0.65))
+
+    def _draw_compare_error_cdf(self, ax, visible_sols):
+        ax._compare_mode = "Error CDF"
+        has_err = False
+        for s in visible_sols:
+            p = s["data"]["pos"]
+            if "eh" in p and p.eh.dropna().size:
+                has_err = True
+                sorted_e = np.sort(p.eh.dropna())
+                cdf_y = np.linspace(0, 100, len(sorted_e))
+                c50 = np.percentile(sorted_e, 50)
+                c95 = np.percentile(sorted_e, 95)
+                ax.plot(sorted_e, cdf_y, color=s["color"], lw=1.4, label=f"{s['name']} (CEP50:{c50:.3f}m, 95%:{c95:.3f}m)")
+        ax.axhline(50, color="#aaa", ls=":", lw=0.8)
+        ax.axhline(95, color="#aaa", ls=":", lw=0.8)
+        ax.set(xlabel="Horizontal Error (m)", ylabel="Cumulative Probability (%)", title="Horizontal Error CDF Comparison")
+        if has_err:
+            ax.legend(fontsize=7.5, loc="lower right")
+        ax.set_ylim(0, 102)
+        if not has_err:
+            ax.text(0.5, 0.5, "需要参考真值以计算误差 CDF", ha="center", va="center", transform=ax.transAxes, color="#555")
+
+    def _register_compare_dynamic(self):
+        """Register real-time dynamic scrubber artists and updater across all multi-compare subplots."""
+        if getattr(self, "_is_exporting", False):
+            return
+        visible_sols = [s for s in self.multi_solutions if s["visible"].get()]
+        if not visible_sols:
+            return
+
+        artists = []
+        track_handlers = []
+        timeseries_handlers = []
+
+        truth_loaded = any(s["data"].get("has_truth") for s in visible_sols)
+
+        for ax in self.plot_axes:
+            mode = getattr(ax, "_compare_mode", "")
+            if not mode:
+                continue
+
+            if mode in ("Gnd Trk", "Trajectory Error Heatmap", "3D Ground Track"):
+                s_artists = []
+                for s in visible_sols:
+                    col = s["color"]
+                    pt = ax.plot([], [], marker="o", ms=8, mfc=col, mec="white", mew=1.0, zorder=12)[0]
+                    trail = ax.plot([], [], color=col, lw=1.4, alpha=0.75, zorder=11)[0]
+                    lbl = ax.text(0, 0, "", fontsize=7.2, weight="bold", color="#111",
+                                  bbox=dict(boxstyle="round,pad=0.15", fc="white", ec=col, alpha=0.88, lw=0.8), zorder=13)
+                    s_artists.append({"sol": s, "point": pt, "trail": trail, "label": lbl})
+                    artists.extend([pt, trail, lbl])
+
+                truth_artist = None
+                err_links = []
+                if truth_loaded:
+                    truth_artist = ax.plot([], [], marker="*", ms=11, mfc="#ffd92f", mec="#b45309", mew=0.8, zorder=14)[0]
+                    artists.append(truth_artist)
+                    for s in visible_sols:
+                        link = ax.plot([], [], color=s["color"], ls=":", lw=1.0, alpha=0.8, zorder=10)[0]
+                        err_links.append({"sol": s, "link": link})
+                        artists.append(link)
+
+                track_handlers.append({
+                    "ax": ax, "sols": s_artists, "truth": truth_artist, "links": err_links
+                })
+
+            elif mode in ("ENU Error Curves", "ENU Error Curves Compare"):
+                sol_pts = []
+                for s in visible_sols:
+                    col = s["color"]
+                    pe = ax.plot([], [], marker="o", ms=6.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    pn = ax.plot([], [], marker="s", ms=5.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    pu = ax.plot([], [], marker="^", ms=5.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    sol_pts.append({"sol": s, "pe": pe, "pn": pn, "pu": pu})
+                    artists.extend([pe, pn, pu])
+                badge = ax.text(0.02, 0.93, "", transform=ax.transAxes, fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888888", alpha=0.88, lw=0.8), zorder=15)
+                artists.append(badge)
+                timeseries_handlers.append({"mode": "enu_curves", "ax": ax, "sols": sol_pts, "badge": badge})
+
+            elif mode in ("DOP", "Directional DOP", "DOP Full Compare"):
+                sol_pts = []
+                for s in visible_sols:
+                    col = s["color"]
+                    pp = ax.plot([], [], marker="o", ms=6.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    ph = ax.plot([], [], marker="s", ms=5.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    pv = ax.plot([], [], marker="^", ms=5.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    sol_pts.append({"sol": s, "pp": pp, "ph": ph, "pv": pv})
+                    artists.extend([pp, ph, pv])
+                badge = ax.text(0.02, 0.93, "", transform=ax.transAxes, fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888888", alpha=0.88, lw=0.8), zorder=15)
+                artists.append(badge)
+                timeseries_handlers.append({"mode": "dop_full", "ax": ax, "sols": sol_pts, "badge": badge})
+
+            elif mode == "Used Satellites":
+                sol_pts = []
+                for s in visible_sols:
+                    col = s["color"]
+                    pt = ax.plot([], [], marker="o", ms=6.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    sol_pts.append({"sol": s, "pt": pt})
+                    artists.append(pt)
+                badge = ax.text(0.02, 0.93, "", transform=ax.transAxes, fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888888", alpha=0.88, lw=0.8), zorder=15)
+                artists.append(badge)
+                timeseries_handlers.append({"mode": "used_sats", "ax": ax, "sols": sol_pts, "badge": badge})
+
+            elif mode == "Pseudorange Variance":
+                sol_pts = []
+                for s in visible_sols:
+                    col = s["color"]
+                    pt = ax.plot([], [], marker="o", ms=6.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    sol_pts.append({"sol": s, "pt": pt})
+                    artists.append(pt)
+                badge = ax.text(0.02, 0.93, "", transform=ax.transAxes, fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888888", alpha=0.88, lw=0.8), zorder=15)
+                artists.append(badge)
+                timeseries_handlers.append({"mode": "var_resp", "ax": ax, "sols": sol_pts, "badge": badge})
+
+            elif mode in ("Residual Triad", "Residuals"):
+                sol_pts = []
+                for s in visible_sols:
+                    col = s["color"]
+                    pt = ax.plot([], [], marker="o", ms=6.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    sol_pts.append({"sol": s, "pt": pt})
+                    artists.append(pt)
+                badge = ax.text(0.02, 0.93, "", transform=ax.transAxes, fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888888", alpha=0.88, lw=0.8), zorder=15)
+                artists.append(badge)
+                timeseries_handlers.append({"mode": "residuals", "ax": ax, "sols": sol_pts, "badge": badge})
+
+            elif mode in ("Satellites",):
+                sol_pts = []
+                for s in visible_sols:
+                    col = s["color"]
+                    pt = ax.plot([], [], marker="o", ms=6.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    sol_pts.append({"sol": s, "pt": pt})
+                    artists.append(pt)
+                badge = ax.text(0.02, 0.93, "", transform=ax.transAxes, fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888888", alpha=0.88, lw=0.8), zorder=15)
+                artists.append(badge)
+                timeseries_handlers.append({"mode": "satellites", "ax": ax, "sols": sol_pts, "badge": badge})
+
+            elif mode in ("ENU Error", "Position Error"):
+                sol_pts = []
+                for s in visible_sols:
+                    col = s["color"]
+                    pt = ax.plot([], [], marker="o", ms=6.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    sol_pts.append({"sol": s, "pt": pt})
+                    artists.append(pt)
+                badge = ax.text(0.02, 0.93, "", transform=ax.transAxes, fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888888", alpha=0.88, lw=0.8), zorder=15)
+                artists.append(badge)
+                timeseries_handlers.append({"mode": "enu_error", "ax": ax, "sols": sol_pts, "badge": badge})
+
+            elif mode == "Solution Status":
+                sol_pts = []
+                for s in visible_sols:
+                    col = s["color"]
+                    pt = ax.plot([], [], marker="o", ms=6.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    sol_pts.append({"sol": s, "pt": pt})
+                    artists.append(pt)
+                badge = ax.text(0.02, 0.93, "", transform=ax.transAxes, fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888888", alpha=0.88, lw=0.8), zorder=15)
+                artists.append(badge)
+                timeseries_handlers.append({"mode": "sol_q", "ax": ax, "sols": sol_pts, "badge": badge})
+
+            elif mode == "AR Ratio":
+                sol_pts = []
+                for s in visible_sols:
+                    col = s["color"]
+                    pt = ax.plot([], [], marker="o", ms=6.5, mfc=col, mec="white", mew=0.7, zorder=14)[0]
+                    sol_pts.append({"sol": s, "pt": pt})
+                    artists.append(pt)
+                badge = ax.text(0.02, 0.93, "", transform=ax.transAxes, fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#888888", alpha=0.88, lw=0.8), zorder=15)
+                artists.append(badge)
+                timeseries_handlers.append({"mode": "ar_ratio", "ax": ax, "sols": sol_pts, "badge": badge})
+
+            elif mode in ("Satellite Visibility Gantt", "Cycle Slips"):
+                v_line = ax.axvline(np.nan, color="#e63946", ls="--", lw=1.4, alpha=0.9, zorder=12)
+                sc_active = ax.scatter([], [], s=22, marker="o", facecolors=[], edgecolors="white", linewidths=0.85, zorder=14)
+                badge = ax.text(0.02, 0.95, "", transform=ax.transAxes, fontsize=7.5, weight="bold", color="#111",
+                                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d90429", alpha=0.88, lw=0.8), zorder=15)
+                artists.extend([v_line, sc_active, badge])
+                timeseries_handlers.append({"mode": "gantt", "ax": ax, "vline": v_line, "sc": sc_active, "badge": badge})
+
+        self.custom_dynamic_artists.extend(artists)
+
+        def _get_matching_index(s, ref_tow):
+            p_s = s["data"]["pos"]
+            if "_cached_tows" not in s["data"]:
+                s["data"]["_cached_tows"] = p_s.tow.to_numpy()
+            tows = s["data"]["_cached_tows"]
+            if len(tows) == 0:
+                return 0
+            idx = int(np.clip(np.searchsorted(tows, ref_tow), 0, len(tows) - 1))
+            if idx > 0 and abs(tows[idx - 1] - ref_tow) < abs(tows[idx] - ref_tow):
+                idx -= 1
+            return idx
+
+        def _update_compare(curr_i, r, current_sat):
+            ref_tow = float(r.tow)
+            # 1. Update track plots
+            for th in track_handlers:
+                if th["truth"] is not None:
+                    if np.isfinite(r.get("gt_E", np.nan)) and np.isfinite(r.get("gt_N", np.nan)):
+                        th["truth"].set_data([r.gt_E], [r.gt_N])
+                    else:
+                        th["truth"].set_data([], [])
+
+                for item in th["sols"]:
+                    s = item["sol"]
+                    idx_s = _get_matching_index(s, ref_tow)
+                    p_s = s["data"]["pos"]
+                    r_s = p_s.iloc[idx_s]
+                    item["point"].set_data([r_s.E], [r_s.N])
+                    start = max(0, idx_s - 120)
+                    stride = max(1, (idx_s - start + 1) // 300)
+                    sub_t = p_s.time.iloc[start:idx_s+1:stride]
+                    sub_e = p_s.E.iloc[start:idx_s+1:stride]
+                    sub_n = p_s.N.iloc[start:idx_s+1:stride]
+                    _tg, eg, ng = insert_time_gaps(sub_t, sub_e, sub_n)
+                    item["trail"].set_data(eg, ng)
+                    item["label"].set_position((r_s.E, r_s.N))
+                    item["label"].set_text(f" {s['name'][:6]} Q={int(r_s.q)}")
+
+                for link_item in th["links"]:
+                    s = link_item["sol"]
+                    idx_s = _get_matching_index(s, ref_tow)
+                    p_s = s["data"]["pos"]
+                    r_s = p_s.iloc[idx_s]
+                    if np.isfinite(r.get("gt_E", np.nan)) and np.isfinite(r_s.E):
+                        link_item["link"].set_data([r_s.E, r.gt_E], [r_s.N, r.gt_N])
+                    else:
+                        link_item["link"].set_data([], [])
+
+            # 2. Update time-series handlers
+            for tsh in timeseries_handlers:
+                t_mode = tsh["mode"]
+                if t_mode == "enu_curves":
+                    b_texts = []
+                    for item in tsh["sols"]:
+                        s = item["sol"]
+                        idx_s = _get_matching_index(s, ref_tow)
+                        p_s = s["data"]["pos"]
+                        r_s = p_s.iloc[idx_s]
+                        t_val = r_s.time
+                        if "de" in r_s and np.isfinite(r_s.de):
+                            item["pe"].set_data([t_val], [r_s.de])
+                            item["pn"].set_data([t_val], [r_s.dn])
+                            item["pu"].set_data([t_val], [r_s.du])
+                            b_texts.append(f"{s['name'][:5]}: E{r_s.de:+.2f} N{r_s.dn:+.2f} U{r_s.du:+.2f}")
+                        else:
+                            item["pe"].set_data([], [])
+                            item["pn"].set_data([], [])
+                            item["pu"].set_data([], [])
+                    if b_texts:
+                        tsh["badge"].set_text(" | ".join(b_texts))
+
+                elif t_mode == "dop_full":
+                    b_texts = []
+                    for item in tsh["sols"]:
+                        s = item["sol"]
+                        dop_df = s["data"].get("_cached_dop")
+                        if dop_df is not None and not dop_df.empty:
+                            if "_cached_dop_tows" not in s["data"]:
+                                s["data"]["_cached_dop_tows"] = dop_df.tow.to_numpy()
+                            dtows = s["data"]["_cached_dop_tows"]
+                            d_idx = int(np.clip(np.searchsorted(dtows, ref_tow), 0, len(dtows) - 1))
+                            if d_idx > 0 and abs(dtows[d_idx - 1] - ref_tow) < abs(dtows[d_idx] - ref_tow):
+                                d_idx -= 1
+                            d_row = dop_df.iloc[d_idx]
+                            t_val = d_row.time
+                            item["pp"].set_data([t_val], [d_row.PDOP])
+                            item["ph"].set_data([t_val], [d_row.HDOP])
+                            item["pv"].set_data([t_val], [d_row.VDOP])
+                            b_texts.append(f"{s['name'][:5]}: P{d_row.PDOP:.1f} H{d_row.HDOP:.1f} V{d_row.VDOP:.1f}")
+                        else:
+                            item["pp"].set_data([], [])
+                            item["ph"].set_data([], [])
+                            item["pv"].set_data([], [])
+                    if b_texts:
+                        tsh["badge"].set_text(" | ".join(b_texts))
+
+                elif t_mode == "used_sats":
+                    b_texts = []
+                    for item in tsh["sols"]:
+                        s = item["sol"]
+                        e_df = s["data"].get("_cached_sat_epoch")
+                        if e_df is not None and not e_df.empty:
+                            if "_cached_epoch_tows" not in s["data"]:
+                                s["data"]["_cached_epoch_tows"] = e_df.tow.to_numpy()
+                            etows = s["data"]["_cached_epoch_tows"]
+                            e_idx = int(np.clip(np.searchsorted(etows, ref_tow), 0, len(etows) - 1))
+                            if e_idx > 0 and abs(etows[e_idx - 1] - ref_tow) < abs(etows[e_idx] - ref_tow):
+                                e_idx -= 1
+                            e_row = e_df.iloc[e_idx]
+                            item["pt"].set_data([e_row.time], [e_row.used])
+                            b_texts.append(f"{s['name'][:5]}: {int(e_row.used)}颗")
+                        else:
+                            idx_s = _get_matching_index(s, ref_tow)
+                            p_s = s["data"]["pos"]
+                            r_s = p_s.iloc[idx_s]
+                            item["pt"].set_data([r_s.time], [r_s.ns])
+                            b_texts.append(f"{s['name'][:5]}: {int(r_s.ns)}颗")
+                    if b_texts:
+                        tsh["badge"].set_text("用星 | " + " | ".join(b_texts))
+
+                elif t_mode == "var_resp":
+                    b_texts = []
+                    for item in tsh["sols"]:
+                        s = item["sol"]
+                        triad = s["data"].get("_cached_triad")
+                        if triad is not None and not triad.empty:
+                            if "_cached_triad_tows" not in s["data"]:
+                                s["data"]["_cached_triad_tows"] = triad.tow.to_numpy()
+                            ttows = s["data"]["_cached_triad_tows"]
+                            t_idx = int(np.clip(np.searchsorted(ttows, ref_tow), 0, len(ttows) - 1))
+                            if t_idx > 0 and abs(ttows[t_idx - 1] - ref_tow) < abs(ttows[t_idx] - ref_tow):
+                                t_idx -= 1
+                            t_row = triad.iloc[t_idx]
+                            cur_var = float(t_row.rms_resp)**2
+                            item["pt"].set_data([t_row.time], [cur_var])
+                            b_texts.append(f"{s['name'][:5]}: {cur_var:.2f}m²")
+                        else:
+                            idx_s = _get_matching_index(s, ref_tow)
+                            p_s = s["data"]["pos"]
+                            r_s = p_s.iloc[idx_s]
+                            if "sde" in r_s:
+                                cur_tr = float(r_s.sde**2 + r_s.sdn**2 + r_s.sdu**2)
+                                item["pt"].set_data([r_s.time], [cur_tr])
+                                b_texts.append(f"{s['name'][:5]}: {cur_tr:.3f}m²")
+                            else:
+                                item["pt"].set_data([], [])
+                    if b_texts:
+                        tsh["badge"].set_text("方差 | " + " | ".join(b_texts))
+
+                elif t_mode == "residuals":
+                    b_texts = []
+                    for item in tsh["sols"]:
+                        s = item["sol"]
+                        triad = s["data"].get("_cached_triad")
+                        if triad is not None and not triad.empty:
+                            if "_cached_triad_tows" not in s["data"]:
+                                s["data"]["_cached_triad_tows"] = triad.tow.to_numpy()
+                            ttows = s["data"]["_cached_triad_tows"]
+                            t_idx = int(np.clip(np.searchsorted(ttows, ref_tow), 0, len(ttows) - 1))
+                            if t_idx > 0 and abs(ttows[t_idx - 1] - ref_tow) < abs(ttows[t_idx] - ref_tow):
+                                t_idx -= 1
+                            t_row = triad.iloc[t_idx]
+                            item["pt"].set_data([t_row.time], [t_row.rms_resp])
+                            b_texts.append(f"{s['name'][:5]}: {t_row.rms_resp:.2f}m")
+                        else:
+                            item["pt"].set_data([], [])
+                    if b_texts:
+                        tsh["badge"].set_text("RMS | " + " | ".join(b_texts))
+
+                elif t_mode == "satellites":
+                    b_texts = []
+                    for item in tsh["sols"]:
+                        s = item["sol"]
+                        idx_s = _get_matching_index(s, ref_tow)
+                        p_s = s["data"]["pos"]
+                        r_s = p_s.iloc[idx_s]
+                        item["pt"].set_data([r_s.time], [r_s.ns])
+                        b_texts.append(f"{s['name'][:5]}: {int(r_s.ns)}颗")
+                    if b_texts:
+                        tsh["badge"].set_text("星数 | " + " | ".join(b_texts))
+
+                elif t_mode == "enu_error":
+                    b_texts = []
+                    for item in tsh["sols"]:
+                        s = item["sol"]
+                        idx_s = _get_matching_index(s, ref_tow)
+                        p_s = s["data"]["pos"]
+                        r_s = p_s.iloc[idx_s]
+                        if "eh" in r_s and np.isfinite(r_s.eh):
+                            item["pt"].set_data([r_s.time], [r_s.eh])
+                            b_texts.append(f"{s['name'][:5]}: 水平{r_s.eh:.2f}m")
+                        else:
+                            item["pt"].set_data([], [])
+                    if b_texts:
+                        tsh["badge"].set_text(" | ".join(b_texts))
+
+                elif t_mode == "sol_q":
+                    b_texts = []
+                    for item in tsh["sols"]:
+                        s = item["sol"]
+                        idx_s = _get_matching_index(s, ref_tow)
+                        p_s = s["data"]["pos"]
+                        r_s = p_s.iloc[idx_s]
+                        item["pt"].set_data([r_s.time], [r_s.q])
+                        b_texts.append(f"{s['name'][:5]}: Q={int(r_s.q)}")
+                    if b_texts:
+                        tsh["badge"].set_text(" | ".join(b_texts))
+
+                elif t_mode == "ar_ratio":
+                    b_texts = []
+                    for item in tsh["sols"]:
+                        s = item["sol"]
+                        idx_s = _get_matching_index(s, ref_tow)
+                        p_s = s["data"]["pos"]
+                        r_s = p_s.iloc[idx_s]
+                        if "ratio" in r_s and np.isfinite(r_s.ratio):
+                            item["pt"].set_data([r_s.time], [r_s.ratio])
+                            b_texts.append(f"{s['name'][:5]}: R={r_s.ratio:.1f}")
+                        else:
+                            item["pt"].set_data([], [])
+                    if b_texts:
+                        tsh["badge"].set_text(" | ".join(b_texts))
+
+                elif t_mode == "gantt":
+                    target_idx = getattr(self, "compare_gantt_solution_idx", 0) % len(visible_sols)
+                    target_sol = visible_sols[target_idx]
+                    tsh["vline"].set_xdata([r.time, r.time])
+                    sat = target_sol["data"].get("sat")
+                    if sat is not None and not sat.empty:
+                        sat_tows = target_sol["data"].get("_cached_sat_tows")
+                        sat_sorted = target_sol["data"].get("_cached_sat_sorted")
+                        if sat_tows is None:
+                            sat_sorted = sat.sort_values("tow")
+                            sat_tows = sat_sorted.tow.to_numpy()
+                            target_sol["data"]["_cached_sat_sorted"] = sat_sorted
+                            target_sol["data"]["_cached_sat_tows"] = sat_tows
+                        if sat_tows.size:
+                            j = int(np.clip(np.searchsorted(sat_tows, ref_tow), 0, len(sat_tows) - 1))
+                            if j > 0 and abs(sat_tows[j - 1] - ref_tow) < abs(sat_tows[j] - ref_tow):
+                                j -= 1
+                            c_tow = sat_tows[j]
+                            lo = np.searchsorted(sat_tows, c_tow - 1e-7, "left")
+                            hi = np.searchsorted(sat_tows, c_tow + 1e-7, "right")
+                            c_sat = sat_sorted.iloc[lo:hi]
+                            active_prns = c_sat[c_sat.freq == 1].prn.unique() if not c_sat.empty else []
+                            prn_to_y = getattr(tsh["ax"], "_gantt_prn_to_y", getattr(self, "_gantt_prn_to_y", {}))
+                            if prn_to_y and len(active_prns) > 0:
+                                y_pts = [prn_to_y[p] for p in active_prns if p in prn_to_y]
+                                x_pts = [r.time] * len(y_pts)
+                                tsh["sc"].set_offsets(np.c_[x_pts, y_pts] if len(x_pts) else np.empty((0, 2)))
+                            else:
+                                tsh["sc"].set_offsets(np.empty((0, 2)))
+                            tsh["badge"].set_text(f"[{target_sol['name'][:6]}] 活跃星: {len(active_prns)}颗")
+
+        self.custom_updaters.append(_update_compare)
+
+    def _remove_compare_subplot(self, idx):
+        if 0 <= idx < len(self.compare_modes) and len(self.compare_modes) > 1:
+            removed = self.compare_modes.pop(idx)
+            self.compare_layout_preset.set("自定义子图")
+            self.selected_compare_subplot = min(idx, len(self.compare_modes) - 1)
+            self.focused_compare_subplot = None
+            self.segment_status.configure(text=f"已移除对比子图: [{removed}]，当前共 {len(self.compare_modes)} 图。")
+            self.redraw()
+
+    def _apply_compare_preset(self, preset_name):
+        if preset_name in COMPARE_PRESETS:
+            self.compare_layout_preset.set(preset_name)
+            self.compare_modes = list(COMPARE_PRESETS[preset_name])
+            self.selected_compare_subplot = 0
+            self.focused_compare_subplot = None
+            self.segment_status.configure(text=f"已切换多方案对比布局为: [{preset_name}] ({len(self.compare_modes)} 图)")
+            self.redraw()
+
+    def _set_compare_gantt_solution(self, idx):
+        if 0 <= idx < len(self.multi_solutions):
+            self.compare_gantt_solution_idx = idx
+            if hasattr(self, "compare_gantt_combo"):
+                self.compare_gantt_combo.current(idx)
+            self.segment_status.configure(text=f"已将泳道图聚焦方案切换为: [{self.multi_solutions[idx]['name']}]")
+            self.redraw()
 
     def on_scrub(self,value):
         if self.data is None:return
@@ -5308,6 +6587,31 @@ class RTKPlotApp:
 
             menu.add_separator()
             menu.add_command(label="🗑️ 删除此子图 (Delete Subplot)", command=lambda: self._delete_subplot(ax))
+        elif mode == "Multi-Compare":
+            idx = self.plot_axes.index(ax) if ax in self.plot_axes else self.selected_compare_subplot
+            modes = getattr(self, "compare_modes", [])
+            menu.add_separator()
+            if len(modes) > 1:
+                menu.add_command(label="🗑️ 移除此对比子图 (Remove Subplot)", command=lambda i=idx: self._remove_compare_subplot(i))
+            menu.add_command(label="➕ 追加新对比子图…", command=self._popup_add_compare_subplot_picker)
+            menu.add_command(label="⭐ 恢复为 RTK3方案 (6图对比)", command=self._reset_to_rtk3_preset)
+
+            preset_m = tk.Menu(menu, tearoff=False)
+            for p_name in COMPARE_PRESETS.keys():
+                preset_m.add_command(
+                    label=p_name,
+                    command=lambda name=p_name: self._apply_compare_preset(name)
+                )
+            menu.add_cascade(label="📐 切换对比预设 (Compare Presets)", menu=preset_m)
+
+            if len(self.multi_solutions) > 1:
+                gantt_m = tk.Menu(menu, tearoff=False)
+                for s_i, s in enumerate(self.multi_solutions):
+                    gantt_m.add_command(
+                        label=f"方案 {s_i+1}: {s['name']}",
+                        command=lambda si=s_i: self._set_compare_gantt_solution(si)
+                    )
+                menu.add_cascade(label="🎯 切换泳道图聚焦方案 (Gantt Target)", menu=gantt_m)
 
         try:
             menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
@@ -5335,10 +6639,13 @@ class RTKPlotApp:
                 return self.custom_panels[panel_idx].get("mode") or "Empty Slot"
             return "Custom Analysis"
         elif mode == "Multi-Compare":
-            idx = self.focused_compare_subplot if self.focused_compare_subplot is not None else self.plot_axes.index(ax)
-            if idx == 0:
-                return "Multi-Compare Trajectory"
-            return "Multi-Compare Horizontal Error"
+            idx = self.focused_compare_subplot if self.focused_compare_subplot is not None else (
+                self.plot_axes.index(ax) if ax in self.plot_axes else 0
+            )
+            modes = getattr(self, "compare_modes", [])
+            if 0 <= idx < len(modes):
+                return modes[idx]
+            return "Multi-Compare"
         else:
             return mode
 
@@ -5422,6 +6729,19 @@ class RTKPlotApp:
                 self.selected_custom_panel = panel_idx
                 self.segment_status.configure(text=f"自定义分区 {panel_idx+1} 已替换为: {new_mode}")
                 self.redraw()
+        elif mode == "Multi-Compare":
+            if self.focused_compare_subplot is not None:
+                idx = self.focused_compare_subplot
+            elif ax in self.plot_axes:
+                idx = self.plot_axes.index(ax)
+            else:
+                idx = self.selected_compare_subplot
+            if 0 <= idx < len(self.compare_modes):
+                self.compare_modes[idx] = new_mode
+                self.compare_layout_preset.set("自定义子图")
+                self.selected_compare_subplot = idx
+                self.segment_status.configure(text=f"对比子图 {idx+1} 已替换为: {new_mode}")
+                self.redraw()
         else:
             self.set_mode(new_mode)
 
@@ -5465,11 +6785,11 @@ class RTKPlotApp:
                 idx = self.focused_compare_subplot if self.focused_compare_subplot is not None else (
                     self.plot_axes.index(ax) if ax in self.plot_axes else 0
                 )
-                if idx == 0:
-                    self._draw_compare_track(temp_ax, visible_sols)
-                else:
-                    self._draw_compare_error(temp_ax, visible_sols)
+                modes = getattr(self, "compare_modes", ["Gnd Trk", "ENU Error"])
+                cur_mode = modes[idx] if 0 <= idx < len(modes) else "Gnd Trk"
+                self._render_compare_subplot(temp_ax, cur_mode, visible_sols)
                 temp_ax.grid(self.grid_on.get(), alpha=0.3)
+                self._apply_export_typography(temp_fig, cur_mode)
                 temp_fig.tight_layout()
             else:
                 pos_sub = self._filtered()
@@ -6287,6 +7607,10 @@ class RTKPlotApp:
                 self.plot_axes = list(axs)
                 self._draw_constellation_summary(axs, s)
                 fig.align_xlabels(axs)
+            elif mode_name == "Multi-Compare":
+                fig.set_size_inches(16, 9.5)
+                self._draw_multi_compare()
+                need_tight = True
             else:
                 fig.set_size_inches(11.5, 6.8)
                 ax = fig.add_subplot(111)
